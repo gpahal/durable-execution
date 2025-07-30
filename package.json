@@ -1,6 +1,6 @@
 {
   "name": "durable-execution",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A durable execution engine for running functions and workflows durably and resiliently",
   "author": "Garvit Pahal <g10pah@gmail.com>",
   "license": "MIT",
@@ -8,7 +8,7 @@
     "type": "git",
     "url": "git+https://github.com/gpahal/durable-execution.git"
   },
-  "homepage": "https://github.com/gpahal/durable-execution",
+  "homepage": "https://gpahal.github.io/durable-execution",
   "bugs": {
     "url": "https://github.com/gpahal/durable-execution/issues"
   },
