@@ -1,0 +1,346 @@
+<!DOCTYPE html><html class="default" lang="en" data-base="./"><head><meta charset="utf-8"/><link rel="canonical" href="https://gpahal.github.io/durable-execution/"/><meta http-equiv="x-ua-compatible" content="IE=edge"/><title>durable-execution - v0.1.0</title><meta name="description" content="Documentation for durable-execution"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="assets/style.css"/><link rel="stylesheet" href="assets/highlight.css"/><script defer src="assets/main.js"></script><script async src="assets/icons.js" id="tsd-icons-script"></script><script async src="assets/search.js" id="tsd-search-script"></script><script async src="assets/navigation.js" id="tsd-nav-script"></script><script async src="assets/hierarchy.js" id="tsd-hierarchy-script"></script>
+<style>
+:root.mermaid-enabled .mermaid-block > pre {
+  display: none;
+}
+:root:not(.mermaid-enabled) .mermaid-block > .mermaid {
+  display: none !important;
+}
+
+.mermaid-block > .mermaid[data-inserted].dark {
+  display: var(--mermaid-dark-display);
+}
+.mermaid-block > .mermaid[data-inserted].light {
+  display: var(--mermaid-light-display);
+}
+
+:root {
+  --mermaid-dark-display: none;
+  --mermaid-light-display: block;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --mermaid-dark-display: none;
+    --mermaid-light-display: block;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mermaid-dark-display: block;
+    --mermaid-light-display: none;
+  }
+}
+body.light, :root[data-theme="light"] {
+  --mermaid-dark-display: none;
+  --mermaid-light-display: block;
+}
+body.dark, :root[data-theme="dark"] {
+  --mermaid-dark-display: block;
+  --mermaid-light-display: none;
+}
+</style>
+</head><body><script>document.documentElement.dataset.theme = localStorage.getItem("tsd-theme") || "os";document.body.style.display="none";setTimeout(() => window.app?app.showPage():document.body.style.removeProperty("display"),500)</script><header class="tsd-page-toolbar"><div class="tsd-toolbar-contents container"><a href="index.html" class="title">durable-execution - v0.1.0</a><div id="tsd-toolbar-links"><a href="https://github.com/gpahal/durable-execution">GitHub</a></div><button id="tsd-search-trigger" class="tsd-widget" aria-label="Search"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-search"></use></svg></button><dialog id="tsd-search" aria-label="Search"><input role="combobox" id="tsd-search-input" aria-controls="tsd-search-results" aria-autocomplete="list" aria-expanded="true" autocapitalize="off" autocomplete="off" placeholder="Search the docs" maxLength="100"/><ul role="listbox" id="tsd-search-results"></ul><div id="tsd-search-status" aria-live="polite" aria-atomic="true"><div>Preparing search index...</div></div></dialog><a href="#" class="tsd-widget menu" id="tsd-toolbar-menu-trigger" data-toggle="menu" aria-label="Menu"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-menu"></use></svg></a></div></header><div class="container container-main"><div class="col-content"><div class="tsd-page-title"><h1>durable-execution - v0.1.0</h1></div><div class="tsd-panel tsd-typography"><p>A durable execution engine for running functions and workflows durably and resiliently.</p>
+<ul>
+<li><strong>Function</strong> is the basic execution unit. It is resilient to function failures, process failures,
+network connectivity issues, and other transient errors. The function should be idempotent as it
+may be executed multiple times if there is a process failure or if the function is retried.</li>
+<li><strong>Workflow</strong> is a collection of functions or workflows that are executed sequentially or in
+parallel. It is marked completed when all the children are completed. If any child fails for any
+reason including timeout and cancellation, the workflow is marked with the status of the first
+failed child.</li>
+</ul>
+<h2 id="properties-of-durable-functions" class="tsd-anchor-link">Properties of durable functions<a href="#properties-of-durable-functions" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ul>
+<li>Functions should be idempotent as they may be executed multiple times if there
+is a process failure.</li>
+<li>The functions don't take any arguments or return any values. They are executed in the background
+and the results are not stored. Functions should be aware of what workflow they are running in
+and can use the root workflow id and execution id to figure out their identity and store anything
+they need in a persistent storage.</li>
+</ul>
+<p>See the <a href="#design">design</a> section for more details on how durable functions and workflows are
+executed.</p>
+<h2 id="installation" class="tsd-anchor-link">Installation<a href="#installation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ul>
+<li>npm</li>
+</ul>
+<pre><code class="bash"><span class="hl-0">npm</span><span class="hl-1"> </span><span class="hl-2">install</span><span class="hl-1"> </span><span class="hl-2">durable-execution</span>
+</code><button type="button">Copy</button></pre>
+
+<ul>
+<li>pnpm</li>
+</ul>
+<pre><code class="bash"><span class="hl-0">pnpm</span><span class="hl-1"> </span><span class="hl-2">add</span><span class="hl-1"> </span><span class="hl-2">durable-execution</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="usage" class="tsd-anchor-link">Usage<a href="#usage" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><ul>
+<li>
+<p>Create a storage implementation that implements the
+<a href="https://gpahal.github.io/durable-execution/types/DurableStorage.html">DurableStorage</a>
+type. A very simple in-memory implementation is provided in the
+<a href="https://github.com/gpahal/durable-execution/blob/main/tests/in-memory-storage.ts" target="_blank" class="external">tests/in-memory-storage.ts</a>
+file. The implementation should support transactions.</p>
+</li>
+<li>
+<p>Create a durable executor and manage its lifecycle. To see other options, see the
+<a href="https://gpahal.github.io/durable-execution/classes/DurableExecutor.html">DurableExecutor</a>
+class.</p>
+</li>
+</ul>
+<pre><code class="ts"><span class="hl-3">import</span><span class="hl-1"> { </span><span class="hl-4">DurableExecutor</span><span class="hl-1"> } </span><span class="hl-3">from</span><span class="hl-1"> </span><span class="hl-2">&#39;durable-execution&#39;</span><br/><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">durableExecutor</span><span class="hl-1"> = </span><span class="hl-5">new</span><span class="hl-1"> </span><span class="hl-0">DurableExecutor</span><span class="hl-1">(</span><span class="hl-4">storage</span><span class="hl-1">)</span><br/><br/><span class="hl-5">async</span><span class="hl-1"> </span><span class="hl-5">function</span><span class="hl-1"> </span><span class="hl-0">durableExecutorApp</span><span class="hl-1">() {</span><br/><span class="hl-3">try</span><span class="hl-1"> {</span><br/><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">durableExecutor</span><span class="hl-1">.</span><span class="hl-0">start</span><span class="hl-1">()</span><br/><span class="hl-1">} </span><span class="hl-3">finally</span><span class="hl-1"> {</span><br/><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">durableExecutor</span><span class="hl-1">.</span><span class="hl-0">shutdown</span><span class="hl-1">()</span><br/><span class="hl-1">}</span><br/><span class="hl-1">}</span><br/><br/><span class="hl-5">async</span><span class="hl-1"> </span><span class="hl-5">function</span><span class="hl-1"> </span><span class="hl-0">app</span><span class="hl-1">() {</span><br/><span class="hl-7">// ... use the durable executor to enqueue functions and workflows</span><br/><span class="hl-1">}</span><br/><br/><span class="hl-8">Promise</span><span class="hl-1">.</span><span class="hl-0">all</span><span class="hl-1">([</span><br/><span class="hl-0">durableExecutorApp</span><span class="hl-1">(),</span><br/><span class="hl-0">app</span><span class="hl-1">(),</span><br/><span class="hl-1">])</span><br/><br/><span class="hl-7">// Shutdown the durable executor when the app is done</span><br/><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">durableExecutor</span><span class="hl-1">.</span><span class="hl-0">shutdown</span><span class="hl-1">()</span>
+</code><button type="button">Copy</button></pre>
+
+<ul>
+<li>Use the durable executor to enqueue functions. To see other options, see the
+<a href="https://gpahal.github.io/durable-execution/types/DurableFunction.html">DurableFunction</a>
+and
+<a href="https://gpahal.github.io/durable-execution/types/DurableFunctionHandle.html">DurableFunctionHandle</a>
+types.</li>
+</ul>
+<pre><code class="ts"><span class="hl-4">durableExecutor</span><span class="hl-1">.</span><span class="hl-0">addFunction</span><span class="hl-1">({</span><br/><span class="hl-4">id:</span><span class="hl-1"> </span><span class="hl-2">&#39;uploadFile&#39;</span><span class="hl-1">,</span><br/><span class="hl-4">timeoutMs:</span><span class="hl-1"> </span><span class="hl-9">10_000</span><span class="hl-1">, </span><span class="hl-7">// 10 seconds</span><br/><span class="hl-0">execute</span><span class="hl-4">:</span><span class="hl-1"> </span><span class="hl-5">async</span><span class="hl-1"> (</span><span class="hl-4">ctx</span><span class="hl-1">) </span><span class="hl-5">=&gt;</span><span class="hl-1"> {</span><br/><span class="hl-7">// ... upload a file</span><br/><span class="hl-1">},</span><br/><span class="hl-1">})</span><br/><br/><span class="hl-4">durableExecutor</span><span class="hl-1">.</span><span class="hl-0">addFunction</span><span class="hl-1">({</span><br/><span class="hl-4">id:</span><span class="hl-1"> </span><span class="hl-2">&#39;extractFileTitle&#39;</span><span class="hl-1">,</span><br/><span class="hl-4">timeoutMs:</span><span class="hl-1"> </span><span class="hl-9">10_000</span><span class="hl-1">, </span><span class="hl-7">// 10 seconds</span><br/><span class="hl-0">execute</span><span class="hl-4">:</span><span class="hl-1"> </span><span class="hl-5">async</span><span class="hl-1"> (</span><span class="hl-4">ctx</span><span class="hl-1">) </span><span class="hl-5">=&gt;</span><span class="hl-1"> {</span><br/><span class="hl-7">// ... extract the file title</span><br/><span class="hl-1">},</span><br/><span class="hl-1">})</span><br/><br/><span class="hl-4">durableExecutor</span><span class="hl-1">.</span><span class="hl-0">addFunction</span><span class="hl-1">({</span><br/><span class="hl-4">id:</span><span class="hl-1"> </span><span class="hl-2">&#39;summarizeFile&#39;</span><span class="hl-1">,</span><br/><span class="hl-4">timeoutMs:</span><span class="hl-1"> </span><span class="hl-9">10_000</span><span class="hl-1">, </span><span class="hl-7">// 10 seconds</span><br/><span class="hl-0">execute</span><span class="hl-4">:</span><span class="hl-1"> </span><span class="hl-5">async</span><span class="hl-1"> (</span><span class="hl-4">ctx</span><span class="hl-1">) </span><span class="hl-5">=&gt;</span><span class="hl-1"> {</span><br/><span class="hl-7">// ... summarize the file</span><br/><span class="hl-1">},</span><br/><span class="hl-1">})</span><br/><br/><span class="hl-5">async</span><span class="hl-1"> </span><span class="hl-5">function</span><span class="hl-1"> </span><span class="hl-0">app</span><span class="hl-1">() {</span><br/><span class="hl-7">// Enqueue the upload file function</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">uploadFileHandle</span><span class="hl-1"> = </span><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">durableExecutor</span><span class="hl-1">.</span><span class="hl-0">enqueueFunction</span><span class="hl-1">(</span><span class="hl-2">&#39;uploadFile&#39;</span><span class="hl-1">, </span><span class="hl-2">&#39;uploadFileExecution0&#39;</span><span class="hl-1">)</span><br/><span class="hl-7">// Get the execution of the upload file function</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">uploadFileExecution</span><span class="hl-1"> = </span><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">uploadFileHandle</span><span class="hl-1">.</span><span class="hl-0">getExecution</span><span class="hl-1">()</span><br/><span class="hl-7">// Wait for the upload file function to be finished with status completed, failed, timed out, or cancelled</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">uploadFileFinishedExecution</span><span class="hl-1"> = </span><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">uploadFileHandle</span><span class="hl-1">.</span><span class="hl-0">waitAndGetExecution</span><span class="hl-1">()</span><br/><span class="hl-7">// Cancel the upload file function</span><br/><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">uploadFileHandle</span><span class="hl-1">.</span><span class="hl-0">cancel</span><span class="hl-1">()</span><br/><span class="hl-1">}</span>
+</code><button type="button">Copy</button></pre>
+
+<ul>
+<li>Use the durable executor to enqueue workflows. To see other options, see the
+<a href="https://gpahal.github.io/durable-execution/types/DurableWorkflow.html">DurableWorkflow</a>
+and
+<a href="https://gpahal.github.io/durable-execution/types/DurableWorkflowHandle.html">DurableWorkflowHandle</a>
+types.</li>
+</ul>
+<pre><code class="ts"><span class="hl-4">durableExecutor</span><span class="hl-1">.</span><span class="hl-0">addWorkflow</span><span class="hl-1">({</span><br/><span class="hl-4">id:</span><span class="hl-1"> </span><span class="hl-2">&#39;uploadedFileWorkflow&#39;</span><span class="hl-1">,</span><br/><span class="hl-4">children:</span><span class="hl-1"> [</span><br/><span class="hl-1">{ </span><span class="hl-4">type:</span><span class="hl-1"> </span><span class="hl-2">&#39;function&#39;</span><span class="hl-1">, </span><span class="hl-4">fnId:</span><span class="hl-1"> </span><span class="hl-2">&#39;extractFileTitle&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">{ </span><span class="hl-4">type:</span><span class="hl-1"> </span><span class="hl-2">&#39;function&#39;</span><span class="hl-1">, </span><span class="hl-4">fnId:</span><span class="hl-1"> </span><span class="hl-2">&#39;summarizeFile&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">],</span><br/><span class="hl-4">isParallel:</span><span class="hl-1"> </span><span class="hl-5">true</span><span class="hl-1">,</span><br/><span class="hl-1">})</span><br/><br/><span class="hl-4">durableExecutor</span><span class="hl-1">.</span><span class="hl-0">addWorkflow</span><span class="hl-1">({</span><br/><span class="hl-4">id:</span><span class="hl-1"> </span><span class="hl-2">&#39;fileWorkflow&#39;</span><span class="hl-1">,</span><br/><span class="hl-4">children:</span><span class="hl-1"> [</span><br/><span class="hl-1">{ </span><span class="hl-4">type:</span><span class="hl-1"> </span><span class="hl-2">&#39;function&#39;</span><span class="hl-1">, </span><span class="hl-4">fnId:</span><span class="hl-1"> </span><span class="hl-2">&#39;uploadFile&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">{ </span><span class="hl-4">type:</span><span class="hl-1"> </span><span class="hl-2">&#39;workflow&#39;</span><span class="hl-1">, </span><span class="hl-4">workflowId:</span><span class="hl-1"> </span><span class="hl-2">&#39;uploadedFileWorkflow&#39;</span><span class="hl-1"> },</span><br/><span class="hl-1">],</span><br/><span class="hl-4">isParallel:</span><span class="hl-1"> </span><span class="hl-5">false</span><span class="hl-1">,</span><br/><span class="hl-1">})</span><br/><br/><span class="hl-5">async</span><span class="hl-1"> </span><span class="hl-5">function</span><span class="hl-1"> </span><span class="hl-0">app</span><span class="hl-1">() {</span><br/><span class="hl-7">// Enqueue the workflow</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">workflowHandle</span><span class="hl-1"> = </span><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">durableExecutor</span><span class="hl-1">.</span><span class="hl-0">enqueueWorkflow</span><span class="hl-1">(</span><span class="hl-2">&#39;fileWorkflow&#39;</span><span class="hl-1">, </span><span class="hl-2">&#39;fileWorkflowExecution0&#39;</span><span class="hl-1">)</span><br/><span class="hl-7">// Get the execution of the workflow</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">workflowExecution</span><span class="hl-1"> = </span><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">workflowHandle</span><span class="hl-1">.</span><span class="hl-0">getExecution</span><span class="hl-1">()</span><br/><span class="hl-7">// Wait for the workflow to be finished with status completed, failed, timed out, or cancelled</span><br/><span class="hl-5">const</span><span class="hl-1"> </span><span class="hl-6">workflowFinishedExecution</span><span class="hl-1"> = </span><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">workflowHandle</span><span class="hl-1">.</span><span class="hl-0">waitAndGetExecution</span><span class="hl-1">()</span><br/><span class="hl-7">// Cancel the workflow</span><br/><span class="hl-3">await</span><span class="hl-1"> </span><span class="hl-4">workflowHandle</span><span class="hl-1">.</span><span class="hl-0">cancel</span><span class="hl-1">()</span><br/><span class="hl-1">}</span>
+</code><button type="button">Copy</button></pre>
+
+<h2 id="design" class="tsd-anchor-link">Design<a href="#design" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><h3 id="durable-function-execution" class="tsd-anchor-link">Durable function execution<a href="#durable-function-execution" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>The following diagram shows the internal state transition of the durable function execution once it
+is enqueued.</p>
+<div class="mermaid-block"><div class="mermaid dark">%%{init:{"theme":"dark"}}%%
+flowchart TD
+A[Enqueue function]--&gt;B[status=ready&lt;br/&gt;is_finalized=false]
+B--&gt;C[status=running]
+C--&gt;D[status=completed]
+C--&gt;E[status=failed]
+C--&gt;F[status=timed_out]
+C--&gt;G[status=cancelled]
+D--&gt;H[is_finalized=true]
+E--&gt;H
+F--&gt;H
+G--&gt;H</div><div class="mermaid light">%%{init:{"theme":"default"}}%%
+flowchart TD
+A[Enqueue function]--&gt;B[status=ready&lt;br/&gt;is_finalized=false]
+B--&gt;C[status=running]
+C--&gt;D[status=completed]
+C--&gt;E[status=failed]
+C--&gt;F[status=timed_out]
+C--&gt;G[status=cancelled]
+D--&gt;H[is_finalized=true]
+E--&gt;H
+F--&gt;H
+G--&gt;H</div><pre><code class="language-mermaid">flowchart TD
+A[Enqueue function]--&gt;B[status=ready&lt;br/&gt;is_finalized=false]
+B--&gt;C[status=running]
+C--&gt;D[status=completed]
+C--&gt;E[status=failed]
+C--&gt;F[status=timed_out]
+C--&gt;G[status=cancelled]
+D--&gt;H[is_finalized=true]
+E--&gt;H
+F--&gt;H
+G--&gt;H</code></pre></div>
+<p>The following diagram shows the sequence of events in between the durable executor and the function
+execution in storage.</p>
+<ul>
+<li>The dotted lines represent events that happen in the background</li>
+<li>The activations on function execution (light thin vertical boxes) represent transactions</li>
+<li><code>finishedStatuses = completed | failed | timed_out | cancelled</code></li>
+</ul>
+<div class="mermaid-block"><div class="mermaid dark">%%{init:{"theme":"dark"}}%%
+sequenceDiagram
+participant A as Executor
+participant B as Function Execution
+Note right of A: Received enqueueFunction(fnId#44; executionId)
+link A: DurableExecutor docs @ https://gpahal.github.io/durable-execution/classes/DurableExecutor.html
+A-&gt;&gt;B: 🖥️ insertFunctionExecution&lt;br/&gt;fnId#58; fnId&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; ready&lt;br/&gt;isFinalized#58; false&lt;br/&gt;... other fields
+B-&gt;&gt;A: 🗄️ execution&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; ready&lt;br/&gt;isFinalized#58; false&lt;br/&gt;... other fields
+Note right of A: Return execution
+Note over A,B: Wait for background process to run function
+A--&gt;&gt;B: 🖥️ getReadyFunctionExecution&lt;br/&gt;where#58; { status#58; ready#44; startAt &lt; now }&lt;br/&gt;update#58; { status#58; running }
+activate B
+B-&gt;&gt;A: 🗄️ execution&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; running&lt;br/&gt;isFinalized#58; false&lt;br/&gt;... other fields
+deactivate B
+Note right of A: newStatus = runFunction(execution)
+A-&gt;&gt;B: 🖥️ updateFunctionExecution&lt;br/&gt;execution#58; execution&lt;br/&gt;status#58; newStatus
+Note over A,B: Wait for background process to finalize function execution
+A--&gt;&gt;B: 🖥️ getFinishedFunctionExecutions&lt;br/&gt;where#58; { status in finishedStatuses }&lt;br/&gt;update#58; { isFinalized#58; true }
+activate B
+B-&gt;&gt;A: 🗄️ execution&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; oneOf finishedStatuses&lt;br/&gt;isFinalized#58; true&lt;br/&gt;... other fields
+A-&gt;&gt;B: 🖥️ finalizeFunctionExecution&lt;br/&gt;execution#58; execution
+deactivate B</div><div class="mermaid light">%%{init:{"theme":"default"}}%%
+sequenceDiagram
+participant A as Executor
+participant B as Function Execution
+Note right of A: Received enqueueFunction(fnId#44; executionId)
+link A: DurableExecutor docs @ https://gpahal.github.io/durable-execution/classes/DurableExecutor.html
+A-&gt;&gt;B: 🖥️ insertFunctionExecution&lt;br/&gt;fnId#58; fnId&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; ready&lt;br/&gt;isFinalized#58; false&lt;br/&gt;... other fields
+B-&gt;&gt;A: 🗄️ execution&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; ready&lt;br/&gt;isFinalized#58; false&lt;br/&gt;... other fields
+Note right of A: Return execution
+Note over A,B: Wait for background process to run function
+A--&gt;&gt;B: 🖥️ getReadyFunctionExecution&lt;br/&gt;where#58; { status#58; ready#44; startAt &lt; now }&lt;br/&gt;update#58; { status#58; running }
+activate B
+B-&gt;&gt;A: 🗄️ execution&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; running&lt;br/&gt;isFinalized#58; false&lt;br/&gt;... other fields
+deactivate B
+Note right of A: newStatus = runFunction(execution)
+A-&gt;&gt;B: 🖥️ updateFunctionExecution&lt;br/&gt;execution#58; execution&lt;br/&gt;status#58; newStatus
+Note over A,B: Wait for background process to finalize function execution
+A--&gt;&gt;B: 🖥️ getFinishedFunctionExecutions&lt;br/&gt;where#58; { status in finishedStatuses }&lt;br/&gt;update#58; { isFinalized#58; true }
+activate B
+B-&gt;&gt;A: 🗄️ execution&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; oneOf finishedStatuses&lt;br/&gt;isFinalized#58; true&lt;br/&gt;... other fields
+A-&gt;&gt;B: 🖥️ finalizeFunctionExecution&lt;br/&gt;execution#58; execution
+deactivate B</div><pre><code class="language-mermaid">sequenceDiagram
+participant A as Executor
+participant B as Function Execution
+Note right of A: Received enqueueFunction(fnId#44; executionId)
+link A: DurableExecutor docs @ https://gpahal.github.io/durable-execution/classes/DurableExecutor.html
+A-&gt;&gt;B: 🖥️ insertFunctionExecution&lt;br/&gt;fnId#58; fnId&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; ready&lt;br/&gt;isFinalized#58; false&lt;br/&gt;... other fields
+B-&gt;&gt;A: 🗄️ execution&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; ready&lt;br/&gt;isFinalized#58; false&lt;br/&gt;... other fields
+Note right of A: Return execution
+Note over A,B: Wait for background process to run function
+A--&gt;&gt;B: 🖥️ getReadyFunctionExecution&lt;br/&gt;where#58; { status#58; ready#44; startAt &lt; now }&lt;br/&gt;update#58; { status#58; running }
+activate B
+B-&gt;&gt;A: 🗄️ execution&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; running&lt;br/&gt;isFinalized#58; false&lt;br/&gt;... other fields
+deactivate B
+Note right of A: newStatus = runFunction(execution)
+A-&gt;&gt;B: 🖥️ updateFunctionExecution&lt;br/&gt;execution#58; execution&lt;br/&gt;status#58; newStatus
+Note over A,B: Wait for background process to finalize function execution
+A--&gt;&gt;B: 🖥️ getFinishedFunctionExecutions&lt;br/&gt;where#58; { status in finishedStatuses }&lt;br/&gt;update#58; { isFinalized#58; true }
+activate B
+B-&gt;&gt;A: 🗄️ execution&lt;br/&gt;executionId#58; executionId&lt;br/&gt;status#58; oneOf finishedStatuses&lt;br/&gt;isFinalized#58; true&lt;br/&gt;... other fields
+A-&gt;&gt;B: 🖥️ finalizeFunctionExecution&lt;br/&gt;execution#58; execution
+deactivate B</code></pre></div>
+<h3 id="durable-workflow-execution" class="tsd-anchor-link">Durable workflow execution<a href="#durable-workflow-execution" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>The following diagram shows the internal state transition of the durable workflow execution once it
+is enqueued.</p>
+<div class="mermaid-block"><div class="mermaid dark">%%{init:{"theme":"dark"}}%%
+flowchart TD
+A[Enqueue workflow]--&gt;B[status=running&lt;br/&gt;is_finalized=false]
+B--&gt;C[status=completed]
+B--&gt;D[status=failed]
+B--&gt;E[status=timed_out]
+B--&gt;F[status=cancelled]
+C--&gt;G[is_finalized=true]
+D--&gt;G
+E--&gt;G
+F--&gt;G</div><div class="mermaid light">%%{init:{"theme":"default"}}%%
+flowchart TD
+A[Enqueue workflow]--&gt;B[status=running&lt;br/&gt;is_finalized=false]
+B--&gt;C[status=completed]
+B--&gt;D[status=failed]
+B--&gt;E[status=timed_out]
+B--&gt;F[status=cancelled]
+C--&gt;G[is_finalized=true]
+D--&gt;G
+E--&gt;G
+F--&gt;G</div><pre><code class="language-mermaid">flowchart TD
+A[Enqueue workflow]--&gt;B[status=running&lt;br/&gt;is_finalized=false]
+B--&gt;C[status=completed]
+B--&gt;D[status=failed]
+B--&gt;E[status=timed_out]
+B--&gt;F[status=cancelled]
+C--&gt;G[is_finalized=true]
+D--&gt;G
+E--&gt;G
+F--&gt;G</code></pre></div>
+<p>The main difference between function execution and workflow execution is what happens once a
+workflow execution is in the running state. Unlike a function execution, there is no function to
+run.</p>
+<p>Instead, the workflow execution transitions take place during the finalization of a child
+execution. Here is a diagram showing what happens when a child of a workflow (can be a function or
+a workflow) is finalized.</p>
+<div class="mermaid-block"><div class="mermaid dark">%%{init:{"theme":"dark"}}%%
+flowchart TD
+A[Child execution finalized] --&gt; B{Is child status = completed?}
+B --&gt;|Yex| C{Is workflow execution already finished?}
+C --&gt;|Yes| D[Do nothing]
+C --&gt;|No| E{Are all children are completed?}
+E --&gt;|Yes| F[Mark workflow execution completed]
+E --&gt;|No| G{Is the workflow parallel?}
+G --&gt;|Yes| H{Do nothing - all children are already queued}
+G --&gt;|No| I{Enqueue next child}
+B --&gt;|No| J{Is workflow execution already finished?}
+J --&gt;|Yes| K[Do nothing]
+J --&gt;|No| L[Mark workflow status = child status]</div><div class="mermaid light">%%{init:{"theme":"default"}}%%
+flowchart TD
+A[Child execution finalized] --&gt; B{Is child status = completed?}
+B --&gt;|Yex| C{Is workflow execution already finished?}
+C --&gt;|Yes| D[Do nothing]
+C --&gt;|No| E{Are all children are completed?}
+E --&gt;|Yes| F[Mark workflow execution completed]
+E --&gt;|No| G{Is the workflow parallel?}
+G --&gt;|Yes| H{Do nothing - all children are already queued}
+G --&gt;|No| I{Enqueue next child}
+B --&gt;|No| J{Is workflow execution already finished?}
+J --&gt;|Yes| K[Do nothing]
+J --&gt;|No| L[Mark workflow status = child status]</div><pre><code class="language-mermaid">flowchart TD
+A[Child execution finalized] --&gt; B{Is child status = completed?}
+B --&gt;|Yex| C{Is workflow execution already finished?}
+C --&gt;|Yes| D[Do nothing]
+C --&gt;|No| E{Are all children are completed?}
+E --&gt;|Yes| F[Mark workflow execution completed]
+E --&gt;|No| G{Is the workflow parallel?}
+G --&gt;|Yes| H{Do nothing - all children are already queued}
+G --&gt;|No| I{Enqueue next child}
+B --&gt;|No| J{Is workflow execution already finished?}
+J --&gt;|Yes| K[Do nothing]
+J --&gt;|No| L[Mark workflow status = child status]</code></pre></div>
+<h3 id="cancellation" class="tsd-anchor-link">Cancellation<a href="#cancellation" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>When a function execution is cancelled, the function execution status is marked as cancelled and
+the <code>needsPromiseCancellation</code> field is set to <code>true</code>. A background process will cancel the
+function execution promise instance if the <code>needsPromiseCancellation</code> field is set to <code>true</code> and
+the executor was the one that created the promise instance. This ensures that if there are multiple
+durable executors with the same storage, the cancellation will be propagated to all the durable
+executors and whichever durable executor created the promise instance will cancel it.</p>
+<p>When a workflow execution is cancelled, the workflow execution status is marked as cancelled. There
+is no promise cancellation as there are no promises involved in workflow executions.</p>
+<p>After cancellation, finalization happens as described below.</p>
+<h3 id="finalization" class="tsd-anchor-link">Finalization<a href="#finalization" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>When a function or workflow execution is finished, its status is marked as completed, failed,
+timed out, or cancelled. The <code>isFinalized</code> field is still set to <code>false</code> as it was when it was
+enqueued.</p>
+<p>A background process finalizes executions that are in a finished state but not marked as finalized.
+For both function and workflow executions, if they are part of a workflow, the parent workflow
+execution is updated with the status of the function execution as described in the diagram above.</p>
+<p>For workflow executions that have failed, timed out, or cancelled, their children are also
+cancelled if they are in ready or running state.</p>
+<h3 id="resilience-from-process-failures" class="tsd-anchor-link">Resilience from process failures<a href="#resilience-from-process-failures" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>When a function execution status is marked as running, the <code>expiresAt</code> field is set based on the
+timeout of the function plus some leeway. When the expiration background process runs, it will
+check if the function execution is still in the running state after the expiration time, it will
+be marked as ready to run again.</p>
+<p>This ensures that the function execution is resilient to process failures. If a process never fails
+during the execution, the function execution will end up in a finsihed state. Only in the case of
+a process failure, the function execution will be in running state beyong it's timeout.</p>
+<h3 id="shutdown" class="tsd-anchor-link">Shutdown<a href="#shutdown" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h3><p>On shutdown, the durable executor cancels all active executions and stops the background processes.</p>
+<p>These happen in order:</p>
+<ul>
+<li>All new enqueue operations are stopped</li>
+<li>All background processes stop after the current iteration</li>
+<li>Executor waits for active executions to finish. Function execution context contains a shutdown
+signal that can be used to gracefully shutdown the function when executor is shutting down</li>
+</ul>
+<h2 id="license" class="tsd-anchor-link">License<a href="#license" aria-label="Permalink" class="tsd-anchor-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><use href="assets/icons.svg#icon-anchor"></use></svg></a></h2><p>This project is licensed under the MIT License. See the
+<a href="https://github.com/gpahal/durable-execution/blob/main/LICENSE" target="_blank" class="external">LICENSE</a> file for details.</p>
+</div></div><div class="col-sidebar"><div class="page-menu"><div class="tsd-navigation settings"><details class="tsd-accordion"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>Settings</h3></summary><div class="tsd-accordion-details"><div class="tsd-filter-visibility"><span class="settings-label">Member Visibility</span><ul id="tsd-filter-options"><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-protected" name="protected"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Protected</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-inherited" name="inherited" checked/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>Inherited</span></label></li><li class="tsd-filter-item"><label class="tsd-filter-input"><input type="checkbox" id="tsd-filter-external" name="external"/><svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><rect class="tsd-checkbox-background" width="30" height="30" x="1" y="1" rx="6" fill="none"></rect><path class="tsd-checkbox-checkmark" d="M8.35422 16.8214L13.2143 21.75L24.6458 10.25" stroke="none" stroke-width="3.5" stroke-linejoin="round" fill="none"></path></svg><span>External</span></label></li></ul></div><div class="tsd-theme-toggle"><label class="settings-label" for="tsd-theme">Theme</label><select id="tsd-theme"><option value="os">OS</option><option value="light">Light</option><option value="dark">Dark</option></select></div></div></details></div><details open class="tsd-accordion tsd-page-navigation"><summary class="tsd-accordion-summary"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="assets/icons.svg#icon-chevronDown"></use></svg><h3>On This Page</h3></summary><div class="tsd-accordion-details"><a href="#properties-of-durable-functions"><span>Properties of durable functions</span></a><a href="#installation"><span>Installation</span></a><a href="#usage"><span>Usage</span></a><a href="#design"><span>Design</span></a><ul><li><a href="#durable-function-execution"><span>Durable function execution</span></a></li><li><a href="#durable-workflow-execution"><span>Durable workflow execution</span></a></li><li><a href="#cancellation"><span>Cancellation</span></a></li><li><a href="#finalization"><span>Finalization</span></a></li><li><a href="#resilience-from-process-failures"><span>Resilience from process failures</span></a></li><li><a href="#shutdown"><span>Shutdown</span></a></li></ul><a href="#license"><span>License</span></a></div></details></div><div class="site-menu"><nav id="tsd-sidebar-links" class="tsd-navigation"><a href="https://github.com/gpahal/durable-execution" class="tsd-nav-link">GitHub</a></nav><nav class="tsd-navigation"><a href="modules.html">durable-execution - v0.1.0</a><ul class="tsd-small-nested-navigation" id="tsd-nav-container"><li>Loading...</li></ul></nav></div></div></div><footer><p class="tsd-generator">Generated using <a href="https://typedoc.org/" target="_blank">TypeDoc</a></p></footer><div class="overlay"></div>
+<script type="module">
+import mermaid from "https://unpkg.com/mermaid@latest/dist/mermaid.esm.min.mjs";
+
+document.documentElement.classList.add("mermaid-enabled");
+
+mermaid.initialize({startOnLoad:true});
+
+requestAnimationFrame(function check() {
+  let some = false;
+  document.querySelectorAll("div.mermaid:not([data-inserted])").forEach(div => {
+    some = true;
+    if (div.querySelector("svg")) {
+      div.dataset.inserted = true;
+    }
+  });
+
+  if (some) {
+    requestAnimationFrame(check);
+  }
+});
+</script>
+</body></html>
