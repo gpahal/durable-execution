@@ -1,0 +1,430 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import { sleep } from '@gpahal/std/promises'
+
+import { DurableExecutor } from '../src'
+import { InMemoryStorage } from './in-memory-storage'
+
+describe('examples', () => {
+  let storage: InMemoryStorage
+  let executor: DurableExecutor
+
+  beforeEach(() => {
+    storage = new InMemoryStorage({ enableDebug: false })
+    executor = new DurableExecutor(storage, {
+      enableDebug: false,
+    })
+    void executor.start()
+  })
+
+  afterEach(() => {
+    void executor.shutdown()
+  })
+
+  it('should complete simple sync task', async () => {
+    const taskA = executor.task({
+      id: 'a',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        // ... do some synchronous work
+        return `Hello, ${input.name}!`
+      },
+    })
+
+    const handle = await executor.enqueueTask(taskA, { name: 'world' })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('a')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe('Hello, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete simple async task', async () => {
+    const taskA = executor.task({
+      id: 'a',
+      timeoutMs: 1000,
+      run: async (ctx, input: { name: string }) => {
+        // ... do some asynchronous work
+        await sleep(1)
+        return `Hello, ${input.name}!`
+      },
+    })
+
+    const handle = await executor.enqueueTask(taskA, { name: 'world' })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('a')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe('Hello, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete parent task with parallel children', async () => {
+    const taskA = executor.task({
+      id: 'a',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        return `Hello from task A, ${input.name}!`
+      },
+    })
+    const taskB = executor.task({
+      id: 'b',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        return `Hello from task B, ${input.name}!`
+      },
+    })
+
+    const parentTask = executor.parentTask({
+      id: 'parent',
+      timeoutMs: 1000,
+      runParent: (ctx, input: { name: string }) => {
+        return {
+          output: `Hello from parent task, ${input.name}!`,
+          children: [
+            {
+              task: taskA,
+              input: { name: input.name },
+            },
+            {
+              task: taskB,
+              input: { name: input.name },
+            },
+          ],
+        }
+      },
+    })
+
+    const handle = await executor.enqueueTask(parentTask, { name: 'world' })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('parent')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBeDefined()
+    expect(finishedExecution.output.output).toBe('Hello from parent task, world!')
+    expect(finishedExecution.output.childrenOutputs[0]!.output).toBe('Hello from task A, world!')
+    expect(finishedExecution.output.childrenOutputs[1]!.output).toBe('Hello from task B, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete parent task with parallel children and combined output', async () => {
+    const taskA = executor.task({
+      id: 'a',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        return `Hello from task A, ${input.name}!`
+      },
+    })
+    const taskB = executor.task({
+      id: 'b',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        return `Hello from task B, ${input.name}!`
+      },
+    })
+
+    const parentTask = executor.parentTask({
+      id: 'parent',
+      timeoutMs: 1000,
+      runParent: (ctx, input: { name: string }) => {
+        return {
+          output: `Hello from parent task, ${input.name}!`,
+          children: [
+            {
+              task: taskA,
+              input: { name: input.name },
+            },
+            {
+              task: taskB,
+              input: { name: input.name },
+            },
+          ],
+        }
+      },
+      onRunAndChildrenComplete: {
+        id: 'onParentRunAndChildrenComplete',
+        timeoutMs: 1000,
+        run: (ctx, { output, childrenOutputs }) => {
+          return {
+            parentOutput: output,
+            taskAOutput: childrenOutputs[0]!.output as string,
+            taskBOutput: childrenOutputs[1]!.output as string,
+          }
+        },
+      },
+    })
+
+    const handle = await executor.enqueueTask(parentTask, { name: 'world' })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('parent')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBeDefined()
+    expect(finishedExecution.output.parentOutput).toBe('Hello from parent task, world!')
+    expect(finishedExecution.output.taskAOutput).toBe('Hello from task A, world!')
+    expect(finishedExecution.output.taskBOutput).toBe('Hello from task B, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete tasks sequentially', async () => {
+    const taskC = executor.task({
+      id: 'c',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        return `Hello from task C, ${input.name}!`
+      },
+    })
+    const taskB = executor.parentTask({
+      id: 'b',
+      timeoutMs: 1000,
+      runParent: (ctx, input: { name: string }) => {
+        return {
+          output: `Hello from task B, ${input.name}!`,
+          children: [{ task: taskC, input: { name: input.name } }],
+        }
+      },
+      onRunAndChildrenComplete: {
+        id: 'onTaskBRunAndChildrenComplete',
+        timeoutMs: 1000,
+        run: (ctx, { output, childrenOutputs }) => {
+          return {
+            taskBOutput: output,
+            taskCOutput: childrenOutputs[0]!.output as string,
+          }
+        },
+      },
+    })
+    const taskA = executor.parentTask({
+      id: 'a',
+      timeoutMs: 1000,
+      runParent: (ctx, input: { name: string }) => {
+        return {
+          output: `Hello from task A, ${input.name}!`,
+          children: [{ task: taskB, input: { name: input.name } }],
+        }
+      },
+      onRunAndChildrenComplete: {
+        id: 'onTaskARunAndChildrenComplete',
+        timeoutMs: 1000,
+        run: (ctx, { output, childrenOutputs }) => {
+          const taskBOutput = childrenOutputs[0]!.output as {
+            taskBOutput: string
+            taskCOutput: string
+          }
+          return {
+            taskAOutput: output,
+            taskBOutput: taskBOutput.taskBOutput,
+            taskCOutput: taskBOutput.taskCOutput,
+          }
+        },
+      },
+    })
+
+    const handle = await executor.enqueueTask(taskA, { name: 'world' })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('a')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBeDefined()
+    expect(finishedExecution.output.taskAOutput).toBe('Hello from task A, world!')
+    expect(finishedExecution.output.taskBOutput).toBe('Hello from task B, world!')
+    expect(finishedExecution.output.taskCOutput).toBe('Hello from task C, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete kitchen sink tasks', async () => {
+    const taskB3 = executor.task({
+      id: 'b3',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        return `Hello from task B3, ${input.name}!`
+      },
+    })
+    const taskB2 = executor.parentTask({
+      id: 'b2',
+      timeoutMs: 1000,
+      runParent: (ctx, input: { name: string }) => {
+        return {
+          output: `Hello from task B2, ${input.name}!`,
+          children: [{ task: taskB3, input: { name: input.name } }],
+        }
+      },
+      onRunAndChildrenComplete: {
+        id: 'onTaskB2RunAndChildrenComplete',
+        timeoutMs: 1000,
+        run: (ctx, { output, childrenOutputs }) => {
+          return {
+            taskB2Output: output,
+            taskB3Output: childrenOutputs[0]!.output as string,
+          }
+        },
+      },
+    })
+    const taskB1 = executor.parentTask({
+      id: 'b1',
+      timeoutMs: 1000,
+      runParent: (ctx, input: { name: string }) => {
+        return {
+          output: `Hello from task B1, ${input.name}!`,
+          children: [{ task: taskB2, input: { name: input.name } }],
+        }
+      },
+      onRunAndChildrenComplete: {
+        id: 'onTaskB1RunAndChildrenComplete',
+        timeoutMs: 1000,
+        run: (ctx, { output, childrenOutputs }) => {
+          const taskB2Output = childrenOutputs[0]!.output as {
+            taskB2Output: string
+            taskB3Output: string
+          }
+          return {
+            taskB1Output: output,
+            taskB2Output: taskB2Output.taskB2Output,
+            taskB3Output: taskB2Output.taskB3Output,
+          }
+        },
+      },
+    })
+
+    const taskA1 = executor.task({
+      id: 'a1',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        return `Hello from task A1, ${input.name}!`
+      },
+    })
+    const taskA2 = executor.task({
+      id: 'a2',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        return `Hello from task A2, ${input.name}!`
+      },
+    })
+    const taskA3 = executor.task({
+      id: 'a3',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        return `Hello from task A3, ${input.name}!`
+      },
+    })
+    const taskA = executor.parentTask({
+      id: 'a',
+      timeoutMs: 1000,
+      runParent: (ctx, input: { name: string }) => {
+        return {
+          output: `Hello from task A, ${input.name}!`,
+          children: [
+            { task: taskA1, input: { name: input.name } },
+            { task: taskA2, input: { name: input.name } },
+            { task: taskA3, input: { name: input.name } },
+          ],
+        }
+      },
+      onRunAndChildrenComplete: {
+        id: 'onTaskARunAndChildrenComplete',
+        timeoutMs: 1000,
+        run: (ctx, { output, childrenOutputs }) => {
+          return {
+            taskAOutput: output,
+            taskA1Output: childrenOutputs[0]!.output as string,
+            taskA2Output: childrenOutputs[1]!.output as string,
+            taskA3Output: childrenOutputs[2]!.output as string,
+          }
+        },
+      },
+    })
+
+    const rootTask = executor.parentTask({
+      id: 'root',
+      timeoutMs: 1000,
+      runParent: (ctx, input: { name: string }) => {
+        return {
+          output: `Hello from root task, ${input.name}!`,
+          children: [
+            { task: taskA, input: { name: input.name } },
+            { task: taskB1, input: { name: input.name } },
+          ],
+        }
+      },
+      onRunAndChildrenComplete: {
+        id: 'onRootRunAndChildrenComplete',
+        timeoutMs: 1000,
+        run: (ctx, { output, childrenOutputs }) => {
+          const taskAOutput = childrenOutputs[0]!.output as {
+            taskAOutput: string
+            taskA1Output: string
+            taskA2Output: string
+            taskA3Output: string
+          }
+          const taskB1Output = childrenOutputs[1]!.output as {
+            taskB1Output: string
+            taskB2Output: string
+            taskB3Output: string
+          }
+          return {
+            rootOutput: output,
+            taskAOutput: taskAOutput.taskAOutput,
+            taskA1Output: taskAOutput.taskA1Output,
+            taskA2Output: taskAOutput.taskA2Output,
+            taskA3Output: taskAOutput.taskA3Output,
+            taskB1Output: taskB1Output.taskB1Output,
+            taskB2Output: taskB1Output.taskB2Output,
+            taskB3Output: taskB1Output.taskB3Output,
+          }
+        },
+      },
+    })
+
+    const handle = await executor.enqueueTask(rootTask, { name: 'world' })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('root')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBeDefined()
+    expect(finishedExecution.output.taskAOutput).toBe('Hello from task A, world!')
+    expect(finishedExecution.output.taskA1Output).toBe('Hello from task A1, world!')
+    expect(finishedExecution.output.taskA2Output).toBe('Hello from task A2, world!')
+    expect(finishedExecution.output.taskA3Output).toBe('Hello from task A3, world!')
+    expect(finishedExecution.output.taskB1Output).toBe('Hello from task B1, world!')
+    expect(finishedExecution.output.taskB2Output).toBe('Hello from task B2, world!')
+    expect(finishedExecution.output.taskB3Output).toBe('Hello from task B3, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+})
