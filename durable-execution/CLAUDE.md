@@ -12,7 +12,6 @@ pnpm build
 
 # Run tests
 pnpm test
-pnpm test-watch     # Watch mode
 pnpm test-coverage  # With coverage
 
 # Type checking and linting
@@ -49,7 +48,7 @@ This is a **durable task execution engine** for TypeScript that provides resilie
 
 The system follows a **state machine pattern** for task execution:
 
-1. Tasks transition through well-defined states: `ready → running → [completed|failed|timed_out]`
+1. Tasks transition through well-defined states: `ready → running → [completed|failed|timed_out|waiting_for_children|cancelled]`
 2. Parent tasks can spawn children and wait for completion
 3. All state transitions are transactional via the storage layer
 4. Background processes handle recovery, retries, and cleanup

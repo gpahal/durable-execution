@@ -39,12 +39,16 @@ pnpm add durable-execution
 
 - Create a storage implementation that implements the
   [DurableStorage](https://gpahal.github.io/durable-execution/types/DurableStorage.html)
-  type. The implementation should support transactions. A very simple in-memory implementation is
-  provided in the
-  [tests/in-memory-storage.ts](https://github.com/gpahal/durable-execution/blob/main/tests/in-memory-storage.ts)
-  file.
+  type. The implementation should support async transactions that allow running multiple
+  transactions in parallel
+  - A storage implementation using Drizzle ORM is provided in the
+    [durable-execution-storage-drizzle](https://github.com/gpahal/durable-execution/tree/main/storage-drizzle)
+    package
+  - A very simple in-memory implementation is provided in the
+    [src/storage.ts](https://github.com/gpahal/durable-execution/blob/main/durable-execution/src/storage.ts)
+    file for testing and simple use cases
 
-- Create a durable executor and manage its lifecycle.
+- Create a durable executor and manage its lifecycle
 
 ```ts
 import { DurableExecutor } from 'durable-execution'
@@ -65,7 +69,7 @@ await Promise.all([
 await executor.shutdown()
 ```
 
-- Use the durable executor to enqueue tasks.
+- Use the durable executor to enqueue tasks
 
 ```ts
 const extractFileTitle = executor.task({
