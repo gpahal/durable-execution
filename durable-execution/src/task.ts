@@ -391,7 +391,7 @@ function isDurableParentSchemaTaskOptions<TOutput, TRunInput, TInput>(
  *
  * @example
  * ```ts
- * const extractFileTitle = durableExecutor.task({
+ * const extractFileTitle = executor.task({
  *   id: 'extractFileTitle',
  *   timeoutMs: 30_000, // 30 seconds
  *   run: async (ctx, input: { filePath: string }) => {
@@ -479,7 +479,7 @@ export type DurableTaskOptions<TOutput, TRunInput, TInput = TRunInput> = {
  *
  * @example
  * ```ts
- * const extractFileTitle = durableExecutor.task({
+ * const extractFileTitle = executor.task({
  *   id: 'extractFileTitle',
  *   timeoutMs: 30_000, // 30 seconds
  *   run: async (ctx, input: { filePath: string }) => {
@@ -490,7 +490,7 @@ export type DurableTaskOptions<TOutput, TRunInput, TInput = TRunInput> = {
  *   },
  * })
  *
- * const summarizeFile = durableExecutor.task({
+ * const summarizeFile = executor.task({
  *   id: 'summarizeFile',
  *   timeoutMs: 30_000, // 30 seconds
  *   run: async (ctx, input: { filePath: string }) => {
@@ -501,7 +501,7 @@ export type DurableTaskOptions<TOutput, TRunInput, TInput = TRunInput> = {
  *   },
  * })
  *
- * const uploadFile = durableExecutor.parentTask({
+ * const uploadFile = executor.parentTask({
  *   id: 'uploadFile',
  *   timeoutMs: 60_000, // 1 minute
  *   runParent: async (ctx, input: { filePath: string; uploadUrl: string }) => {
@@ -599,7 +599,7 @@ export type DurableParentTaskOptions<
  *
  * @example
  * ```ts
- * const extractFileTitle = durableExecutor.schemaTask({
+ * const extractFileTitle = executor.schemaTask({
  *   id: 'extractFileTitle',
  *   timeoutMs: 30_000, // 30 seconds
  *   inputSchema: z.object({
@@ -642,7 +642,7 @@ export type DurableSchemaTaskOptions<TOutput, TInputSchema extends StandardSchem
  *
  * @example
  * ```ts
- * const extractFileTitle = durableExecutor.task({
+ * const extractFileTitle = executor.task({
  *   id: 'extractFileTitle',
  *   timeoutMs: 30_000, // 30 seconds
  *   run: async (ctx, input: { filePath: string }) => {
@@ -653,7 +653,7 @@ export type DurableSchemaTaskOptions<TOutput, TInputSchema extends StandardSchem
  *   },
  * })
  *
- * const summarizeFile = durableExecutor.task({
+ * const summarizeFile = executor.task({
  *   id: 'summarizeFile',
  *   timeoutMs: 30_000, // 30 seconds
  *   run: async (ctx, input: { filePath: string }) => {
@@ -664,7 +664,7 @@ export type DurableSchemaTaskOptions<TOutput, TInputSchema extends StandardSchem
  *   },
  * })
  *
- * const uploadFile = durableExecutor.parentSchemaTask({
+ * const uploadFile = executor.parentSchemaTask({
  *   id: 'uploadFile',
  *   timeoutMs: 60_000, // 1 minute
  *   inputSchema: z.object({
@@ -1064,7 +1064,7 @@ export const FINISHED_TASK_EXECUTION_STATUSES = [
  *
  * @example
  * ```ts
- * const handle = await durableExecutor.enqueueTask(uploadFile, {filePath: 'file.txt'})
+ * const handle = await executor.enqueueTask(uploadFile, {filePath: 'file.txt'})
  * // Get the task execution
  * const execution = await handle.getExecution()
  *

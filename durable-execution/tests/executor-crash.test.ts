@@ -10,14 +10,14 @@ import { sleep } from '@gpahal/std/promises'
 import { DurableExecutor } from '../src'
 import { InMemoryStorage } from './in-memory-storage'
 
-const testDir = path.dirname(fileURLToPath(import.meta.url))
+const testsDir = path.dirname(fileURLToPath(import.meta.url))
 
 describe('executorCrash', () => {
   it('should handle executor crash', { timeout: 30_000 }, async () => {
-    const storageFilePath = path.join(testDir, 'test.json')
+    const storageFilePath = path.join(testsDir, 'test.json')
     await rm(storageFilePath, { force: true })
 
-    const child = spawn('node', [path.join(testDir, 'executor-crash-script.js'), storageFilePath])
+    const child = spawn('node', [path.join(testsDir, 'executor-crash-script.js'), storageFilePath])
     console.log(`Child ${child.pid} spawned`)
 
     // Wait for crash

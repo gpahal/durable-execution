@@ -13,6 +13,7 @@ import {
   convertTaskExecutionStorageObjectToTaskExecution,
   createDurableTaskExecutionStorageObject,
   EXPIRES_AT_INFINITY,
+  updateTaskExecutionsWithLimit,
   type DurableStorage,
   type DurableStorageTx,
   type DurableTaskChildExecutionStorageObject,
@@ -74,14 +75,18 @@ export type {
   DurableTaskHandle,
 } from './task'
 export { type Serializer, createSuperjsonSerializer, wrapSerializer } from './serializer'
-export type {
-  DurableStorage,
-  DurableStorageTx,
-  DurableTaskExecutionStorageObject,
-  DurableTaskChildExecutionStorageObject,
-  DurableTaskExecutionStorageWhere,
-  DurableTaskExecutionStorageObjectUpdate,
-  DurableTaskErrorStorageObject,
+export {
+  createInMemoryStorage,
+  createTransactionMutex,
+  type TransactionMutex,
+  type DurableStorage,
+  type DurableStorageTx,
+  type DurableTaskExecutionStorageObject,
+  type DurableTaskChildExecutionStorageObject,
+  type DurableTaskChildErrorStorageObject,
+  type DurableTaskExecutionStorageWhere,
+  type DurableTaskExecutionStorageObjectUpdate,
+  type DurableTaskErrorStorageObject,
 } from './storage'
 
 /**
@@ -95,10 +100,10 @@ export type {
  *
  * @example
  * ```ts
- * const durableExecutor = new DurableExecutor(storage)
+ * const executor = new DurableExecutor(storage)
  *
  * // Create durable tasks
- * const extractFileTitle = durableExecutor.task({
+ * const extractFileTitle = executor.task({
  *   id: 'extractFileTitle',
  *   timeoutMs: 30_000, // 30 seconds
  *   run: async (ctx, input: { filePath: string }) => {
@@ -109,7 +114,7 @@ export type {
  *   },
  * })
  *
- * const summarizeFile = durableExecutor.task({
+ * const summarizeFile = executor.task({
  *   id: 'summarizeFile',
  *   timeoutMs: 30_000, // 30 seconds
  *   run: async (ctx, input: { filePath: string }) => {
@@ -120,7 +125,7 @@ export type {
  *   },
  * })
  *
- * const uploadFile = durableExecutor.parentTask({
+ * const uploadFile = executor.parentTask({
  *   id: 'uploadFile',
  *   timeoutMs: 60_000, // 1 minute
  *   runParent: async (ctx, input: { filePath: string; uploadUrl: string }) => {
@@ -162,7 +167,7 @@ export type {
  *
  * async function app() {
  *   // Enqueue task and manage its execution lifecycle
- *   const uploadFileHandle = await durableExecutor.enqueueTask(uploadFile, {filePath: 'file.txt'})
+ *   const uploadFileHandle = await executor.enqueueTask(uploadFile, {filePath: 'file.txt'})
  *   const uploadFileExecution = await uploadFileHandle.getExecution()
  *   const uploadFileFinishedExecution = await uploadFileHandle.waitAndGetExecution()
  *   await uploadFileHandle.cancel()
@@ -172,12 +177,12 @@ export type {
  *
  * // Start the durable executor and run the app
  * await Promise.all([
- *   durableExecutor.start(), // Start the durable executor in the background
+ *   executor.start(), // Start the durable executor in the background
  *   app(), // Run the app
  * ])
  *
  * // Shutdown the durable executor when the app is done
- * await durableExecutor.shutdown()
+ * await executor.shutdown()
  * ```
  *
  * @category Executor
@@ -506,7 +511,10 @@ export class DurableExecutor {
       getTaskExecutionId: () => executionId,
       getTaskExecution: async () => {
         const execution = await this.withTransaction(async (tx) => {
-          const executions = await tx.getTaskExecutions({ type: 'by_ids', ids: [executionId] })
+          const executions = await tx.getTaskExecutions({
+            type: 'by_execution_ids',
+            executionIds: [executionId],
+          })
           return executions.length === 0 ? undefined : executions[0]
         })
         if (!execution) {
@@ -545,8 +553,8 @@ export class DurableExecutor {
 
           const execution = await this.withTransaction(async (tx) => {
             const executions = await tx.getTaskExecutions({
-              type: 'by_ids',
-              ids: [executionId],
+              type: 'by_execution_ids',
+              executionIds: [executionId],
             })
             return executions.length === 0 ? undefined : executions[0]
           })
@@ -566,7 +574,11 @@ export class DurableExecutor {
         const now = new Date()
         await this.withTransaction(async (tx) => {
           await tx.updateTaskExecutions(
-            { type: 'by_ids', ids: [executionId], statuses: ACTIVE_TASK_EXECUTION_STATUSES },
+            {
+              type: 'by_execution_ids',
+              executionIds: [executionId],
+              statuses: ACTIVE_TASK_EXECUTION_STATUSES,
+            },
             {
               error: convertDurableTaskErrorToStorageObject(new DurableTaskCancelledError()),
               status: 'cancelled',
@@ -610,7 +622,8 @@ export class DurableExecutor {
     let shouldSleep = false
     await this.withTransaction(async (tx) => {
       const now = new Date()
-      const updatedExecutionIds = await tx.updateTaskExecutions(
+      const updatedExecutionIds = await updateTaskExecutionsWithLimit(
+        tx,
         {
           type: 'by_statuses',
           statuses: FINISHED_TASK_EXECUTION_STATUSES,
@@ -627,8 +640,8 @@ export class DurableExecutor {
       }
 
       const executions = await tx.getTaskExecutions({
-        type: 'by_ids',
-        ids: updatedExecutionIds,
+        type: 'by_execution_ids',
+        executionIds: updatedExecutionIds,
       })
       if (executions.length !== updatedExecutionIds.length) {
         throw new DurableTaskError('Some task executions not found', true)
@@ -666,8 +679,8 @@ export class DurableExecutor {
       return
     }
     const parentExecutions = await tx.getTaskExecutions({
-      type: 'by_ids',
-      ids: [execution.parentTask.executionId],
+      type: 'by_execution_ids',
+      executionIds: [execution.parentTask.executionId],
     })
     if (parentExecutions.length === 0) {
       this.logger.error(`Parent task execution ${execution.parentTask.executionId} not found`)
@@ -689,7 +702,7 @@ export class DurableExecutor {
         // complete, and it got completed, update the output and status to completed. We're done
         // with the parent task execution.
         await tx.updateTaskExecutions(
-          { type: 'by_ids', ids: [parentExecution.executionId] },
+          { type: 'by_execution_ids', executionIds: [parentExecution.executionId] },
           {
             output: execution.output!,
             onRunAndChildrenComplete: parentExecutionOnRunAndChildrenComplete,
@@ -703,7 +716,7 @@ export class DurableExecutor {
         // If the child execution is failed, mark the parent execution as failed if it was not
         // finished.
         await tx.updateTaskExecutions(
-          { type: 'by_ids', ids: [parentExecution.executionId] },
+          { type: 'by_execution_ids', executionIds: [parentExecution.executionId] },
           {
             onRunAndChildrenCompleteError:
               execution.error ??
@@ -734,21 +747,26 @@ export class DurableExecutor {
       const areAllChildrenCompleted =
         parentExecution.childrenCompletedCount >= parentChildren.length - 1
       if (parentExecution.status === 'waiting_for_children' && areAllChildrenCompleted) {
+        const childExecutionIdToIndexMap = new Map<string, number>(
+          parentChildren.map((parentChild, index) => [parentChild.executionId, index]),
+        )
+
         // If the parent execution is waiting for all the children to complete, and all the children
         // are completed, we can run the on run and children complete task if present, otherwise
         // we can just mark the parent execution as completed.
         const childrenExecutions = await tx.getTaskExecutions({
-          type: 'by_ids',
-          ids: parentChildren.map((child) => child.executionId),
+          type: 'by_execution_ids',
+          executionIds: parentChildren.map((child) => child.executionId),
         })
-        const childrenOutputs = childrenExecutions.map((childExecution, index) => {
+        const childrenOutputs = childrenExecutions.map((childExecution) => {
           return {
-            index,
+            index: childExecutionIdToIndexMap.get(childExecution.executionId)!,
             taskId: childExecution.taskId,
             executionId: childExecution.executionId,
             output: this.serializer.deserialize(childExecution.output!),
           }
         })
+        childrenOutputs.sort((a, b) => a.index - b.index)
 
         if (parentTaskInternal.onRunAndChildrenComplete) {
           const onRunAndChildrenCompleteTaskInternal = this.taskInternalsMap.get(
@@ -787,7 +805,7 @@ export class DurableExecutor {
           ])
 
           await tx.updateTaskExecutions(
-            { type: 'by_ids', ids: [parentExecution.executionId] },
+            { type: 'by_execution_ids', executionIds: [parentExecution.executionId] },
             {
               childrenCompletedCount: parentExecution.childrenCompletedCount + 1,
               onRunAndChildrenComplete: {
@@ -801,7 +819,7 @@ export class DurableExecutor {
           )
         } else {
           await tx.updateTaskExecutions(
-            { type: 'by_ids', ids: [parentExecution.executionId] },
+            { type: 'by_execution_ids', executionIds: [parentExecution.executionId] },
             {
               output: parentTaskInternal.disableChildrenOutputsInOutput
                 ? parentExecution.runOutput!
@@ -822,8 +840,8 @@ export class DurableExecutor {
         // update the children count and children.
         await tx.updateTaskExecutions(
           {
-            type: 'by_ids',
-            ids: [parentExecution.executionId],
+            type: 'by_execution_ids',
+            executionIds: [parentExecution.executionId],
           },
           {
             childrenCompletedCount: parentExecution.childrenCompletedCount + 1,
@@ -845,7 +863,7 @@ export class DurableExecutor {
           convertDurableTaskErrorToStorageObject(new DurableTaskError('Unknown error', false)),
       })
       await tx.updateTaskExecutions(
-        { type: 'by_ids', ids: [parentExecution.executionId] },
+        { type: 'by_execution_ids', executionIds: [parentExecution.executionId] },
         {
           childrenErrors,
           status:
@@ -878,8 +896,8 @@ export class DurableExecutor {
     const childrenExecutionIds = execution.children.map((child) => child.executionId)
     await tx.updateTaskExecutions(
       {
-        type: 'by_ids',
-        ids: childrenExecutionIds,
+        type: 'by_execution_ids',
+        executionIds: childrenExecutionIds,
         statuses: ACTIVE_TASK_EXECUTION_STATUSES,
       },
       {
@@ -926,7 +944,8 @@ export class DurableExecutor {
     let shouldSleep = false
     await this.withTransaction(async (tx) => {
       const now = new Date()
-      const executionIds = await tx.updateTaskExecutions(
+      const executionIds = await updateTaskExecutionsWithLimit(
+        tx,
         {
           type: 'by_statuses',
           statuses: ['running'],
@@ -995,10 +1014,11 @@ export class DurableExecutor {
     let shouldSleep = false
     await this.withTransaction(async (tx) => {
       const now = new Date()
-      const executionIds = await tx.updateTaskExecutions(
+      const executionIds = await updateTaskExecutionsWithLimit(
+        tx,
         {
-          type: 'by_ids',
-          ids: [...this.runningTaskExecutionsMap.keys()],
+          type: 'by_execution_ids',
+          executionIds: [...this.runningTaskExecutionsMap.keys()],
           needsPromiseCancellation: true,
         },
         {
@@ -1064,11 +1084,12 @@ export class DurableExecutor {
     let shouldSleep = false
     await this.withTransaction(async (tx) => {
       const now = new Date()
-      const executionIds = await tx.updateTaskExecutions(
+      const executionIds = await updateTaskExecutionsWithLimit(
+        tx,
         {
           type: 'by_start_at_less_than',
-          startAtLessThan: now,
           statuses: ['ready'],
+          startAtLessThan: now,
         },
         { status: 'running', startedAt: now, updatedAt: now },
         1,
@@ -1081,8 +1102,8 @@ export class DurableExecutor {
       }
 
       const executions = await tx.getTaskExecutions({
-        type: 'by_ids',
-        ids: executionIds,
+        type: 'by_execution_ids',
+        executionIds,
       })
       if (executions.length !== executionIds.length) {
         throw new DurableTaskError('Some task executions not found', true)
@@ -1098,8 +1119,8 @@ export class DurableExecutor {
           // Mark the execution as failed.
           await tx.updateTaskExecutions(
             {
-              type: 'by_ids',
-              ids: [execution.executionId],
+              type: 'by_execution_ids',
+              executionIds: [execution.executionId],
               statuses: ACTIVE_TASK_EXECUTION_STATUSES,
             },
             {
@@ -1124,8 +1145,8 @@ export class DurableExecutor {
               : new DurableTaskError(getErrorMessage(error), false)
           await tx.updateTaskExecutions(
             {
-              type: 'by_ids',
-              ids: [execution.executionId],
+              type: 'by_execution_ids',
+              executionIds: [execution.executionId],
               statuses: ACTIVE_TASK_EXECUTION_STATUSES,
             },
             {
@@ -1141,8 +1162,8 @@ export class DurableExecutor {
         const expireMs = timeoutMs + this.expireMs
         const expiresAt = new Date(now.getTime() + expireMs)
         await tx.updateTaskExecutions(
-          { type: 'by_ids', ids: [execution.executionId] },
-          { expiresAt },
+          { type: 'by_execution_ids', executionIds: [execution.executionId] },
+          { expiresAt, updatedAt: now },
         )
         execution.expiresAt = expiresAt
         toRunExecutions.push([taskInternal, execution])
@@ -1239,8 +1260,8 @@ export class DurableExecutor {
     // the function being added to the running executions map.
     await this.withTransaction(async (tx) => {
       const existingExecutions = await tx.getTaskExecutions({
-        type: 'by_ids',
-        ids: [execution.executionId],
+        type: 'by_execution_ids',
+        executionIds: [execution.executionId],
       })
       if (existingExecutions.length === 0 || existingExecutions[0]?.status !== 'running') {
         this.logger.error(
@@ -1305,7 +1326,11 @@ export class DurableExecutor {
             ])
 
             await tx.updateTaskExecutions(
-              { type: 'by_ids', ids: [execution.executionId], statuses: ['running'] },
+              {
+                type: 'by_execution_ids',
+                executionIds: [execution.executionId],
+                statuses: ['running'],
+              },
               {
                 runOutput: runOutputSerialized,
                 children: [],
@@ -1322,7 +1347,11 @@ export class DurableExecutor {
         } else {
           await this.withTransaction(async (tx) => {
             await tx.updateTaskExecutions(
-              { type: 'by_ids', ids: [execution.executionId], statuses: ['running'] },
+              {
+                type: 'by_execution_ids',
+                executionIds: [execution.executionId],
+                statuses: ['running'],
+              },
               {
                 runOutput: runOutputSerialized,
                 output: taskInternal.disableChildrenOutputsInOutput
@@ -1381,7 +1410,11 @@ export class DurableExecutor {
           await tx.insertTaskExecutions(childrenTaskExecutions)
 
           await tx.updateTaskExecutions(
-            { type: 'by_ids', ids: [execution.executionId], statuses: ['running'] },
+            {
+              type: 'by_execution_ids',
+              executionIds: [execution.executionId],
+              statuses: ['running'],
+            },
             {
               runOutput: runOutputSerialized,
               children: childrenExecutionStorageObjects,
@@ -1439,7 +1472,11 @@ export class DurableExecutor {
 
       await this.withTransaction(async (tx) => {
         await tx.updateTaskExecutions(
-          { type: 'by_ids', ids: [execution.executionId], statuses: ['running'] },
+          {
+            type: 'by_execution_ids',
+            executionIds: [execution.executionId],
+            statuses: ['running'],
+          },
           update,
         )
 

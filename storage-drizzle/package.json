@@ -1,0 +1,66 @@
+{
+  "name": "durable-execution-storage-drizzle",
+  "version": "0.1.0",
+  "description": "Drizzle ORM storage implementation for durable-execution",
+  "author": "Garvit Pahal <g10pahal@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpahal/durable-execution.git",
+    "directory": "packages/storage-drizzle"
+  },
+  "homepage": "https://gpahal.github.io/durable-execution",
+  "bugs": {
+    "url": "https://github.com/gpahal/durable-execution/issues"
+  },
+  "keywords": [
+    "drizzle",
+    "drizzle-orm",
+    "storage",
+    "durable-execution",
+    "durable-tasks",
+    "durable-functions",
+    "durable-workflows",
+    "workflow-engine",
+    "workflow-execution",
+    "durable",
+    "resilient"
+  ],
+  "sideEffects": false,
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": "./build/index.js",
+      "types": "./build/index.d.ts"
+    }
+  },
+  "module": "./build/index.js",
+  "types": "./build/index.d.ts",
+  "files": [
+    "package.json",
+    "src",
+    "build"
+  ],
+  "scripts": {
+    "build": "premove build && tsup",
+    "clean": "premove build",
+    "test": "vitest run",
+    "test-coverage": "vitest run --coverage",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint-fix": "eslint . --fix"
+  },
+  "peerDependencies": {
+    "drizzle-orm": "^0.44",
+    "durable-execution": "^0.3"
+  },
+  "devDependencies": {
+    "@gpahal/std": "catalog:prod",
+    "@electric-sql/pglite": "catalog:dev",
+    "@libsql/client": "catalog:dev",
+    "drizzle-kit": "catalog:dev",
+    "drizzle-orm": "catalog:dev",
+    "durable-execution": "workspace:*"
+  }
+}

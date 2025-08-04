@@ -1,14 +1,19 @@
 import { defineConfig, type Options } from 'tsup'
 
 export default defineConfig((options: Options): Options => {
-  const isDevEnv = process.env.NODE_ENV === 'development' || !!options.watch
+  const env =
+    process.env.ENV === 'production' || process.env.NODE_ENV === 'production' || !!options.watch
+      ? 'production'
+      : 'development'
+  const isDevEnv = env === 'development'
   return {
     entry: ['src/*'],
     tsconfig: 'tsconfig.build.json',
     outDir: 'build',
     format: ['esm'],
     env: {
-      NODE_ENV: isDevEnv ? 'development' : 'production',
+      ENV: env,
+      NODE_ENV: env,
     },
     splitting: false,
     clean: true,

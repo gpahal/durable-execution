@@ -1,55 +1,18 @@
 {
-  "name": "durable-execution",
-  "version": "0.2.0",
-  "description": "A durable task engine for running tasks durably and resiliently",
-  "author": "Garvit Pahal <g10pah@gmail.com>",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/gpahal/durable-execution.git"
-  },
-  "homepage": "https://gpahal.github.io/durable-execution",
-  "bugs": {
-    "url": "https://github.com/gpahal/durable-execution/issues"
-  },
-  "keywords": [
-    "durable-execution",
-    "durable-tasks",
-    "durable-functions",
-    "durable-workflows",
-    "workflow-engine",
-    "workflow-execution",
-    "durable",
-    "resilient"
-  ],
-  "sideEffects": false,
-  "type": "module",
-  "exports": {
-    "./package.json": "./package.json",
-    ".": {
-      "import": "./build/index.js",
-      "types": "./build/index.d.ts"
-    }
-  },
-  "module": "./build/index.js",
-  "types": "./build/index.d.ts",
-  "files": [
-    "package.json",
-    "src",
-    "build"
-  ],
+  "private": true,
+  "name": "durable-execution-monorepo",
   "scripts": {
     "pre-commit": "pnpm type-check && pnpm lint && pnpm fmt-check && pnpm build",
-    "build": "premove build && tsup",
-    "build-docs": "tsx scripts/build-docs.ts",
-    "clean": "premove build",
-    "npm-publish": "pnpm pre-commit && pnpm publish",
-    "test": "vitest run",
-    "test-watch": "vitest watch",
-    "test-coverage": "vitest run --coverage",
-    "type-check": "tsc --noEmit",
-    "lint": "eslint .",
-    "lint-fix": "eslint . --fix",
+    "cs": "changeset && changeset version",
+    "cs-publish": "run-p lint fmt-check && turbo run test && changeset publish && git tag | xargs -n 1 -I% git tag -d %",
+    "build": "turbo build",
+    "build-docs": "pnpm -F durable-execution build-docs",
+    "clean": "turbo clean",
+    "test": "turbo test",
+    "test-coverage": "turbo test-coverage",
+    "type-check": "turbo type-check",
+    "lint": "turbo lint",
+    "lint-fix": "turbo lint-fix",
     "fmt": "prettier \"**/*.{js,mjs,cjs,jsx,ts,tsx,json}\" --write",
     "fmt-check": "prettier \"**/*.{js,mjs,cjs,jsx,ts,tsx,json}\" --check"
   },
@@ -57,31 +20,27 @@
     "pre-commit": "pnpm pre-commit",
     "pre-push": "pnpm pre-commit"
   },
-  "dependencies": {
-    "@gpahal/std": "^0.0.30",
-    "@standard-schema/spec": "^1.0.0",
-    "@standard-schema/utils": "^0.3.0",
-    "nanoid": "^5.1.5",
-    "superjson": "^2.2.2",
-    "ts-custom-error": "^3.3.1",
-    "valibot": "^1.1.0"
-  },
   "devDependencies": {
-    "@gpahal/eslint-config": "^0.0.99",
-    "@gpahal/prettier-config": "^0.0.27",
-    "@gpahal/tsconfig": "^0.0.20",
-    "@ianvs/prettier-plugin-sort-imports": "^4.5.1",
-    "@types/node": "^24.1.0",
-    "@vitest/coverage-v8": "^3.2.4",
-    "eslint": "^9.32.0",
-    "premove": "^4.0.0",
-    "prettier": "^3.6.2",
-    "simple-git-hooks": "^2.13.1",
-    "tsup": "^8.5.0",
-    "tsx": "^4.20.3",
-    "typedoc": "^0.28.9",
-    "typedoc-plugin-mermaid": "^1.12.0",
-    "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "@changesets/cli": "catalog:dev",
+    "@gpahal/eslint-config": "catalog:dev",
+    "@gpahal/prettier-config": "catalog:dev",
+    "@gpahal/tsconfig": "catalog:dev",
+    "@ianvs/prettier-plugin-sort-imports": "catalog:dev",
+    "@types/node": "catalog:dev",
+    "@vitest/coverage-v8": "catalog:dev",
+    "eslint": "catalog:dev",
+    "npm-run-all2": "catalog:dev",
+    "premove": "catalog:dev",
+    "prettier": "catalog:dev",
+    "simple-git-hooks": "catalog:dev",
+    "tsup": "catalog:dev",
+    "tsx": "catalog:dev",
+    "turbo": "catalog:dev",
+    "typescript": "catalog:dev",
+    "vitest": "catalog:dev"
+  },
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=20.0.0"
   }
 }

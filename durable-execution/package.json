@@ -1,0 +1,69 @@
+{
+  "name": "durable-execution",
+  "version": "0.3.0",
+  "description": "A durable task engine for running tasks durably and resiliently",
+  "author": "Garvit Pahal <g10pahal@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpahal/durable-execution.git",
+    "directory": "packages/durable-execution"
+  },
+  "homepage": "https://gpahal.github.io/durable-execution",
+  "bugs": {
+    "url": "https://github.com/gpahal/durable-execution/issues"
+  },
+  "keywords": [
+    "durable-execution",
+    "durable-tasks",
+    "durable-functions",
+    "durable-workflows",
+    "workflow-engine",
+    "workflow-execution",
+    "durable",
+    "resilient"
+  ],
+  "sideEffects": false,
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": "./build/index.js",
+      "types": "./build/index.d.ts"
+    }
+  },
+  "module": "./build/index.js",
+  "types": "./build/index.d.ts",
+  "files": [
+    "package.json",
+    "src",
+    "build"
+  ],
+  "scripts": {
+    "build": "premove build && tsup",
+    "build-docs": "tsx scripts/build-docs.ts",
+    "clean": "premove build",
+    "test": "vitest run",
+    "test-coverage": "vitest run --coverage",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint-fix": "eslint . --fix"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm pre-commit",
+    "pre-push": "pnpm pre-commit"
+  },
+  "dependencies": {
+    "@gpahal/std": "catalog:prod",
+    "@standard-schema/spec": "catalog:prod",
+    "@standard-schema/utils": "catalog:prod",
+    "nanoid": "catalog:prod",
+    "superjson": "catalog:prod",
+    "ts-custom-error": "catalog:prod",
+    "valibot": "catalog:prod"
+  },
+  "devDependencies": {
+    "typedoc": "catalog:dev",
+    "typedoc-plugin-mermaid": "catalog:dev"
+  }
+}

@@ -5,11 +5,14 @@ import {
   DurableTaskError,
   DurableTaskTimedOutError,
 } from './errors'
+import { createConsoleLogger, createLoggerDebugDisabled, type Logger } from './logger'
 import { type Serializer } from './serializer'
 import { type DurableTaskExecution, type DurableTaskExecutionStatus } from './task'
 
 /**
- * A durable storage with support for transactions.
+ * A durable storage with support for transactions. Running multiple transactions in parallel
+ * must be supported. If that is not possible, use {@link createTransactionMutex} to run
+ * transactions sequentially.
  *
  * @category Storage
  */
@@ -29,31 +32,125 @@ export type DurableStorageTx = {
    *
    * @param executions - The durable task executions to insert.
    */
-  insertTaskExecutions: (executions: Array<DurableTaskExecutionStorageObject>) => Promise<void>
+  insertTaskExecutions: (
+    executions: Array<DurableTaskExecutionStorageObject>,
+  ) => void | Promise<void>
+  /**
+   * Get durable task execution ids.
+   *
+   * @param where - The where clause to filter the durable task executions.
+   * @param limit - The maximum number of durable task execution ids to return.
+   * @returns The ids of the durable task executions.
+   */
+  getTaskExecutionIds: (
+    where: DurableTaskExecutionStorageWhere,
+    limit?: number,
+  ) => Array<string> | Promise<Array<string>>
   /**
    * Get durable task executions.
    *
    * @param where - The where clause to filter the durable task executions.
    * @param limit - The maximum number of durable task executions to return.
-   * @returns The durable executions.
+   * @returns The durable task executions.
    */
   getTaskExecutions: (
     where: DurableTaskExecutionStorageWhere,
     limit?: number,
-  ) => Promise<Array<DurableTaskExecutionStorageObject>>
+  ) => Array<DurableTaskExecutionStorageObject> | Promise<Array<DurableTaskExecutionStorageObject>>
   /**
    * Update durable task executions.
    *
    * @param where - The where clause to filter the durable task executions.
    * @param update - The update object.
-   * @param limit - The maximum number of durable task executions to update.
    * @returns The ids of the durable task executions that were updated.
    */
   updateTaskExecutions: (
     where: DurableTaskExecutionStorageWhere,
     update: DurableTaskExecutionStorageObjectUpdate,
-    limit?: number,
-  ) => Promise<Array<string>>
+  ) => Array<string> | Promise<Array<string>>
+}
+
+/**
+ * Create a transaction mutex. Use this to run {@link DurableStorage.withTransaction} in a durable
+ * storage sequentially. Only use this if the storage does not support running transactions in
+ * parallel.
+ *
+ * @example
+ * ```ts
+ * const mutex = createTransactionMutex()
+ *
+ * function createStorage() {
+ *   return {
+ *     withTransaction: async (fn) => {
+ *       await mutex.acquire()
+ *       try {
+ *         // ... run transaction logic that won't run in parallel with other transactions
+ *       } finally {
+ *         mutex.release()
+ *       }
+ *     },
+ *   }
+ * }
+ * ```
+ *
+ * @category Storage
+ */
+export function createTransactionMutex(): TransactionMutex {
+  let locked = false
+  const waiting: Array<() => void> = []
+
+  const acquire = (): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      if (!locked) {
+        locked = true
+        resolve()
+      } else {
+        waiting.push(resolve)
+      }
+    })
+  }
+
+  const release = (): void => {
+    if (waiting.length > 0) {
+      const next = waiting.shift()!
+      next()
+    } else {
+      locked = false
+    }
+  }
+
+  return { acquire, release }
+}
+
+/**
+ * A transaction mutex returned by {@link createTransactionMutex}.
+ *
+ * @category Storage
+ */
+export type TransactionMutex = {
+  acquire: () => Promise<void>
+  release: () => void
+}
+
+export async function updateTaskExecutionsWithLimit(
+  tx: DurableStorageTx,
+  where: DurableTaskExecutionStorageWhere,
+  update: DurableTaskExecutionStorageObjectUpdate,
+  limit?: number,
+): Promise<Array<string>> {
+  const ids = await tx.getTaskExecutionIds(where, limit)
+  if (ids.length === 0) {
+    return []
+  }
+
+  await tx.updateTaskExecutions(
+    {
+      type: 'by_execution_ids',
+      executionIds: ids,
+    },
+    update,
+  )
+  return ids
 }
 
 /**
@@ -189,6 +286,13 @@ export type DurableTaskChildErrorStorageObject = {
   error: DurableTaskErrorStorageObject
 }
 
+/**
+ * An expires at date that never expires.
+ *
+ * @category Storage
+ */
+export const EXPIRES_AT_INFINITY = new Date('9999-12-31T23:59:59.999Z')
+
 export function createDurableTaskExecutionStorageObject({
   now,
   rootTask,
@@ -237,14 +341,17 @@ export function createDurableTaskExecutionStorageObject({
  * clause before being returned.
  *
  * Storage implementations should index based on these clauses to optimize the performance of
- * the storage operations.
+ * the storage operations. Suggested indexes:
+ * - uniqueIndex(execution_id)
+ * - index(status, isClosed, expiresAt)
+ * - index(status, startAt)
  *
  * @category Storage
  */
 export type DurableTaskExecutionStorageWhere =
   | {
-      type: 'by_ids'
-      ids: Array<string>
+      type: 'by_execution_ids'
+      executionIds: Array<string>
       statuses?: Array<DurableTaskExecutionStatus>
       needsPromiseCancellation?: boolean
     }
@@ -256,16 +363,9 @@ export type DurableTaskExecutionStorageWhere =
     }
   | {
       type: 'by_start_at_less_than'
+      statuses: Array<DurableTaskExecutionStatus>
       startAtLessThan: Date
-      statuses?: Array<DurableTaskExecutionStatus>
     }
-
-/**
- * An expires at date that never expires.
- *
- * @category Storage
- */
-export const EXPIRES_AT_INFINITY = new Date(Number.MAX_SAFE_INTEGER)
 
 /**
  * The update object for a durable task execution. See {@link DurableTaskExecutionStorageObject}
@@ -294,7 +394,7 @@ export type DurableTaskExecutionStorageObjectUpdate = {
   startedAt?: Date
   finishedAt?: Date
   expiresAt?: Date
-  updatedAt?: Date
+  updatedAt: Date
 }
 
 /**
@@ -550,4 +650,165 @@ export function convertDurableTaskErrorToStorageObject(
   error: DurableTaskError,
 ): DurableTaskErrorStorageObject {
   return { tag: error.tag, message: error.message, isRetryable: error.isRetryable }
+}
+
+/**
+ * Create a durable storage that stores the task executions in memory. This is useful for testing
+ * and for simple use cases. Do not use this for production. It is not durable or resilient.
+ *
+ * @category Storage
+ */
+export function createInMemoryStorage({
+  enableDebug = false,
+}: { enableDebug?: boolean } = {}): DurableStorage & {
+  save: (saveFn: (s: string) => Promise<void>) => Promise<void>
+  load: (loadFn: () => Promise<string>) => Promise<void>
+  logAllTaskExecutions: () => void
+} {
+  return new InMemoryStorage({ enableDebug })
+}
+
+class InMemoryStorage implements DurableStorage {
+  private logger: Logger
+  private taskExecutions: Map<string, DurableTaskExecutionStorageObject>
+  private transactionMutex: TransactionMutex
+
+  constructor({ enableDebug = false }: { enableDebug?: boolean } = {}) {
+    this.logger = createConsoleLogger('InMemoryStorage')
+    if (!enableDebug) {
+      this.logger = createLoggerDebugDisabled(this.logger)
+    }
+    this.taskExecutions = new Map()
+    this.transactionMutex = createTransactionMutex()
+  }
+
+  async withTransaction<T>(fn: (tx: DurableStorageTx) => Promise<T>): Promise<T> {
+    await this.transactionMutex.acquire()
+    try {
+      const tx = new InMemoryStorageTx(this.logger, this.taskExecutions)
+      const output = await fn(tx)
+      this.taskExecutions = tx.taskExecutions
+      return output
+    } finally {
+      this.transactionMutex.release()
+    }
+  }
+
+  async save(saveFn: (s: string) => Promise<void>): Promise<void> {
+    await saveFn(JSON.stringify(this.taskExecutions, null, 2))
+  }
+
+  async load(loadFn: () => Promise<string>): Promise<void> {
+    try {
+      const data = await loadFn()
+      if (!data.trim()) {
+        this.taskExecutions = new Map()
+        return
+      }
+
+      this.taskExecutions = new Map(
+        JSON.parse(data) as Array<[string, DurableTaskExecutionStorageObject]>,
+      )
+    } catch {
+      this.taskExecutions = new Map()
+    }
+  }
+
+  logAllTaskExecutions(): void {
+    this.logger.info('------\n\nAll task executions:')
+    for (const execution of this.taskExecutions.values()) {
+      this.logger.info(
+        `Task execution: ${execution.executionId}\nJSON: ${JSON.stringify(execution, null, 2)}\n\n`,
+      )
+    }
+    this.logger.info('------')
+  }
+}
+
+class InMemoryStorageTx implements DurableStorageTx {
+  private logger: Logger
+  readonly taskExecutions: Map<string, DurableTaskExecutionStorageObject>
+
+  constructor(logger: Logger, executions: Map<string, DurableTaskExecutionStorageObject>) {
+    this.logger = logger
+    this.taskExecutions = new Map<string, DurableTaskExecutionStorageObject>()
+    for (const [key, value] of executions) {
+      this.taskExecutions.set(key, { ...value })
+    }
+  }
+
+  insertTaskExecutions(executions: Array<DurableTaskExecutionStorageObject>): void {
+    this.logger.debug(
+      `Inserting ${executions.length} task executions: executions=${executions.map((e) => e.executionId).join(', ')}`,
+    )
+    for (const execution of executions) {
+      if (this.taskExecutions.has(execution.executionId)) {
+        throw new Error(`Task execution ${execution.executionId} already exists`)
+      }
+      this.taskExecutions.set(execution.executionId, execution)
+    }
+  }
+
+  getTaskExecutionIds(where: DurableTaskExecutionStorageWhere): Array<string> {
+    const executions = this.getTaskExecutions(where)
+    return executions.map((e) => e.executionId)
+  }
+
+  getTaskExecutions(
+    where: DurableTaskExecutionStorageWhere,
+    limit?: number,
+  ): Array<DurableTaskExecutionStorageObject> {
+    let executions = [...this.taskExecutions.values()].filter((execution) => {
+      if (
+        where.type === 'by_execution_ids' &&
+        where.executionIds.includes(execution.executionId) &&
+        (!where.statuses || where.statuses.includes(execution.status)) &&
+        (!where.needsPromiseCancellation ||
+          execution.needsPromiseCancellation === where.needsPromiseCancellation)
+      ) {
+        return true
+      }
+      if (
+        where.type === 'by_statuses' &&
+        where.statuses.includes(execution.status) &&
+        (where.isClosed == null || execution.isClosed === where.isClosed) &&
+        (where.expiresAtLessThan == null ||
+          (execution.expiresAt && execution.expiresAt < where.expiresAtLessThan))
+      ) {
+        return true
+      }
+      if (
+        where.type === 'by_start_at_less_than' &&
+        execution.startAt < where.startAtLessThan &&
+        (!where.statuses || where.statuses.includes(execution.status))
+      ) {
+        return true
+      }
+      return false
+    })
+    if (limit != null && limit >= 0) {
+      executions = executions.slice(0, limit)
+    }
+    this.logger.debug(
+      `Got ${executions.length} task executions: where=${JSON.stringify(where)} limit=${limit} executions=${executions.map((e) => e.executionId).join(', ')}`,
+    )
+    return executions
+  }
+
+  updateTaskExecutions(
+    where: DurableTaskExecutionStorageWhere,
+    update: DurableTaskExecutionStorageObjectUpdate,
+  ): Array<string> {
+    const executions = this.getTaskExecutions(where)
+    for (const execution of executions) {
+      for (const key in update) {
+        if (key != null) {
+          // @ts-expect-error - This is safe because we know the key is valid
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          execution[key] = update[key]
+        }
+      }
+    }
+    return executions.map((execution) => execution.executionId)
+  }
 }
