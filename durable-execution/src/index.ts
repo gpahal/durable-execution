@@ -1652,13 +1652,19 @@ type ExtractDurableTaskInput<T> = T extends DurableTask<infer I, unknown> ? I : 
 type ExtractDurableTaskOutput<T> = T extends DurableTask<unknown, infer O> ? O : never
 
 /**
- * The type of a sequence of tasks.
+ * The type of a sequence of tasks. Disallows empty sequences and sequences with tasks that have
+ * different input and output types.
  *
  * @category Task
  */
 export type SequentialDurableTasks<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
   T extends readonly [] ? never : SequentialDurableTasksHelper<T>
 
+/**
+ * A helper type to create a sequence of tasks. See {@link SequentialDurableTasks} for more details.
+ *
+ * @category Task
+ */
 export type SequentialDurableTasksHelper<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
   T extends readonly []
     ? T
