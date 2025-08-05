@@ -223,9 +223,13 @@ const taskA = executor
 
 ### Validate input with schema
 
-To validate input with a schema, use the `inputSchema` method before the `task` method.
+To validate input with a schema, use the `inputSchema` method before the `task` method. Any
+[Standard Schema](https://standardschema.dev/) can be used as an input schema. In this example,
+valibot is used as the input schema.
 
 ```ts
+import * as v from 'valibot'
+
 const taskA = executor.inputSchema(v.object({ name: v.string() })).task({
   id: 'a',
   timeoutMs: 1000,
