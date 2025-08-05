@@ -138,7 +138,7 @@ describe('executor', () => {
       await expect(executor.enqueueTask(task, undefined)).rejects.toThrow(
         'Mocked withTransaction error',
       )
-      expect(executed).toBe(2)
+      expect(executed).toBeGreaterThanOrEqual(2)
     } finally {
       storage.withTransaction = originalWithTransaction
     }

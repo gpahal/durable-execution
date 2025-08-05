@@ -178,12 +178,24 @@ export class DurableTaskInternal {
       return await taskOptions.runParent(ctx, input)
     }
 
-    const onRunAndChildrenComplete = taskOptions.onRunAndChildrenComplete
-      ? DurableTaskInternal.fromDurableTaskOptions(
-          taskInternalsMap,
-          taskOptions.onRunAndChildrenComplete,
-        )
-      : undefined
+    let onRunAndChildrenComplete: DurableTaskInternal | undefined
+    if (taskOptions.onRunAndChildrenComplete) {
+      onRunAndChildrenComplete = isDurableOnRunAndChildrenCompleteTaskOptionsParentTaskOptions(
+        taskOptions.onRunAndChildrenComplete,
+      )
+        ? DurableTaskInternal.fromDurableParentTaskOptions(
+            taskInternalsMap,
+            taskOptions.onRunAndChildrenComplete,
+          )
+        : isDurableOnRunAndChildrenCompleteTaskOptionsTaskOptions(
+              taskOptions.onRunAndChildrenComplete,
+            )
+          ? DurableTaskInternal.fromDurableTaskOptions(
+              taskInternalsMap,
+              taskOptions.onRunAndChildrenComplete,
+            )
+          : undefined
+    }
 
     const taskInternal = new DurableTaskInternal(
       taskInternalsMap,
@@ -486,6 +498,7 @@ export type DurableParentTaskOptions<
     childrenOutputs: Array<DurableTaskChildExecutionOutput>
   },
   TInput = unknown,
+  TOnRunAndChildrenCompleteRunOutput = unknown,
 > = DurableTaskCommonOptions & {
   /**
    * The task run logic. It is similar to the `run` function in {@link DurableTaskOptions} but it
@@ -512,12 +525,18 @@ export type DurableParentTaskOptions<
    * Task to run after the runParent function and children tasks complete. This is useful for
    * combining the output of the run function and children tasks.
    */
-  onRunAndChildrenComplete?: DurableOnRunAndChildrenCompleteTaskOptions<TRunOutput, TOutput, TInput>
+  onRunAndChildrenComplete?: DurableOnRunAndChildrenCompleteTaskOptions<
+    TRunOutput,
+    TOutput,
+    TInput,
+    TOnRunAndChildrenCompleteRunOutput
+  >
 }
 
 /**
  * Options for the `onRunAndChildrenComplete` property in {@link DurableParentTaskOptions}. It is
- * similar to {@link DurableTaskOptions} but the input is of the form:
+ * similar to {@link DurableTaskOptions} or {@link DurableParentTaskOptions} but the input is of
+ * the form:
  *
  * ```ts
  * {
@@ -536,11 +555,41 @@ export type DurableOnRunAndChildrenCompleteTaskOptions<
   TRunOutput = unknown,
   TOutput = unknown,
   TInput = unknown,
-> = DurableTaskCommonOptions & {
-  run: (
-    ctx: DurableTaskRunContext,
-    input: DurableTaskOnChildrenCompleteInput<TRunOutput, TInput>,
-  ) => TOutput | Promise<TOutput>
+  TOnRunAndChildrenCompleteRunOutput = unknown,
+> =
+  | DurableTaskOptions<TOutput, DurableTaskOnChildrenCompleteInput<TRunOutput, TInput>>
+  | DurableParentTaskOptions<
+      TOnRunAndChildrenCompleteRunOutput,
+      TOutput,
+      DurableTaskOnChildrenCompleteInput<TRunOutput, TInput>
+    >
+
+function isDurableOnRunAndChildrenCompleteTaskOptionsTaskOptions<
+  TRunOutput = unknown,
+  TOutput = unknown,
+  TInput = unknown,
+>(
+  options: DurableOnRunAndChildrenCompleteTaskOptions<TRunOutput, TOutput, TInput>,
+): options is DurableParentTaskOptions<
+  unknown,
+  TOutput,
+  DurableTaskOnChildrenCompleteInput<TRunOutput, TInput>
+> {
+  return 'run' in options && !('runParent' in options)
+}
+
+function isDurableOnRunAndChildrenCompleteTaskOptionsParentTaskOptions<
+  TRunOutput = unknown,
+  TOutput = unknown,
+  TInput = unknown,
+>(
+  options: DurableOnRunAndChildrenCompleteTaskOptions<TRunOutput, TOutput, TInput>,
+): options is DurableParentTaskOptions<
+  unknown,
+  TOutput,
+  DurableTaskOnChildrenCompleteInput<TRunOutput, TInput>
+> {
+  return 'runParent' in options && !('run' in options)
 }
 
 /**

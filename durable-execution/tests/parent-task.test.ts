@@ -592,4 +592,108 @@ describe('parentTask', () => {
       finishedExecution.startedAt.getTime(),
     )
   })
+
+  it('should complete with onRunAndChildrenComplete parent task', async () => {
+    let executed = 0
+    const child1 = executor.task({
+      id: 'child1',
+      timeoutMs: 1000,
+      run: async () => {
+        executed++
+        await sleep(1)
+        return 'child1_output'
+      },
+    })
+    const child2 = executor.task({
+      id: 'child2',
+      timeoutMs: 1000,
+      run: async () => {
+        executed++
+        await sleep(1)
+        return 'child2_output'
+      },
+    })
+
+    const onRunAndChildrenCompleteChild1 = executor.task({
+      id: 'onRunAndChildrenCompleteChild1',
+      timeoutMs: 1000,
+      run: async () => {
+        executed++
+        await sleep(1)
+        return 'onRunAndChildrenCompleteChild1_output'
+      },
+    })
+    const onRunAndChildrenCompleteChild2 = executor.task({
+      id: 'onRunAndChildrenCompleteChild2',
+      timeoutMs: 1000,
+      run: async () => {
+        executed++
+        await sleep(1)
+        return 'onRunAndChildrenCompleteChild2_output'
+      },
+    })
+
+    const task = executor.parentTask({
+      id: 'test',
+      timeoutMs: 1000,
+      runParent: async () => {
+        executed++
+        await sleep(1)
+        return {
+          output: 'test_output',
+          children: [
+            {
+              task: child1,
+              input: undefined,
+            },
+            {
+              task: child2,
+              input: undefined,
+            },
+          ],
+        }
+      },
+      onRunAndChildrenComplete: {
+        id: 'onRunAndChildrenComplete',
+        timeoutMs: 1000,
+        runParent: async (_, { output, childrenOutputs }) => {
+          executed++
+          await sleep(1)
+          return {
+            output: `${output}_${childrenOutputs.map((c) => c.output).join('_')}`,
+            children: [
+              { task: onRunAndChildrenCompleteChild1, input: undefined },
+              { task: onRunAndChildrenCompleteChild2, input: undefined },
+            ],
+          }
+        },
+        onRunAndChildrenComplete: {
+          id: 'onRunAndChildrenCompleteNested',
+          timeoutMs: 1000,
+          run: async (ctx, { output, childrenOutputs }) => {
+            executed++
+            await sleep(1)
+            return `${output}_${childrenOutputs.map((c) => c.output).join('_')}`
+          },
+        },
+      },
+    })
+
+    const handle = await executor.enqueueTask(task, undefined)
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(executed).toBe(7)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('test')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe(
+      'test_output_child1_output_child2_output_onRunAndChildrenCompleteChild1_output_onRunAndChildrenCompleteChild2_output',
+    )
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
 })
