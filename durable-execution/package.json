@@ -1,13 +1,13 @@
 {
   "name": "durable-execution",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "A durable task engine for running tasks durably and resiliently",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gpahal/durable-execution.git",
-    "directory": "packages/durable-execution"
+    "directory": "durable-execution"
   },
   "homepage": "https://gpahal.github.io/durable-execution",
   "bugs": {
