@@ -20,7 +20,7 @@ import { generateId } from './utils'
  * @category Task
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export type DurableTask<TOutput, TInput> = {
+export type DurableTask<TInput, TOutput> = {
   id: string
 }
 
@@ -125,9 +125,9 @@ export class DurableTaskInternal {
     }
   }
 
-  static fromDurableTaskOptions<TOutput, TRunInput, TInput = TRunInput>(
+  static fromDurableTaskOptions<TRunInput, TInput, TOutput>(
     taskInternalsMap: Map<string, DurableTaskInternal>,
-    taskOptions: DurableTaskOptions<TOutput, TRunInput>,
+    taskOptions: DurableTaskOptions<TRunInput, TOutput>,
     validateInputFn?: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
   ): DurableTaskInternal {
     const commonOptions = DurableTaskInternal.validateCommonTaskOptions(
@@ -164,9 +164,14 @@ export class DurableTaskInternal {
     return taskInternal
   }
 
-  static fromDurableParentTaskOptions<TRunOutput, TOutput, TRunInput, TInput = TRunInput>(
+  static fromDurableParentTaskOptions<
+    TRunInput,
+    TInput = TRunInput,
+    TRunOutput = unknown,
+    TOutput = unknown,
+  >(
     taskInternalsMap: Map<string, DurableTaskInternal>,
-    taskOptions: DurableParentTaskOptions<TRunOutput, TOutput, TRunInput>,
+    taskOptions: DurableParentTaskOptions<TRunInput, TRunOutput, TOutput>,
     validateInputFn?: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
   ): DurableTaskInternal {
     const commonOptions = DurableTaskInternal.validateCommonTaskOptions(
@@ -366,7 +371,7 @@ export type DurableTaskCommonOptions = {
  *
  * @category Task
  */
-export type DurableTaskOptions<TOutput = unknown, TInput = unknown> = DurableTaskCommonOptions & {
+export type DurableTaskOptions<TInput = unknown, TOutput = unknown> = DurableTaskCommonOptions & {
   /**
    * The task run logic. It returns the output.
    *
@@ -492,12 +497,12 @@ export type DurableTaskOptions<TOutput = unknown, TInput = unknown> = DurableTas
  * @category Task
  */
 export type DurableParentTaskOptions<
-  TRunOutput,
+  TInput = unknown,
+  TRunOutput = unknown,
   TOutput = {
     output: TRunOutput
     childrenOutputs: Array<DurableTaskChildExecutionOutput>
   },
-  TInput = unknown,
   TOnRunAndChildrenCompleteRunOutput = unknown,
 > = DurableTaskCommonOptions & {
   /**
@@ -526,9 +531,9 @@ export type DurableParentTaskOptions<
    * combining the output of the run function and children tasks.
    */
   onRunAndChildrenComplete?: DurableOnRunAndChildrenCompleteTaskOptions<
+    TInput,
     TRunOutput,
     TOutput,
-    TInput,
     TOnRunAndChildrenCompleteRunOutput
   >
 }
@@ -552,42 +557,50 @@ export type DurableParentTaskOptions<
  * @category Task
  */
 export type DurableOnRunAndChildrenCompleteTaskOptions<
+  TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
-  TInput = unknown,
   TOnRunAndChildrenCompleteRunOutput = unknown,
 > =
-  | DurableTaskOptions<TOutput, DurableTaskOnChildrenCompleteInput<TRunOutput, TInput>>
+  | DurableTaskOptions<DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>, TOutput>
   | DurableParentTaskOptions<
+      DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>,
       TOnRunAndChildrenCompleteRunOutput,
-      TOutput,
-      DurableTaskOnChildrenCompleteInput<TRunOutput, TInput>
+      TOutput
     >
 
 function isDurableOnRunAndChildrenCompleteTaskOptionsTaskOptions<
+  TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
-  TInput = unknown,
+  TOnRunAndChildrenCompleteRunOutput = unknown,
 >(
-  options: DurableOnRunAndChildrenCompleteTaskOptions<TRunOutput, TOutput, TInput>,
-): options is DurableParentTaskOptions<
-  unknown,
-  TOutput,
-  DurableTaskOnChildrenCompleteInput<TRunOutput, TInput>
-> {
+  options: DurableOnRunAndChildrenCompleteTaskOptions<
+    TInput,
+    TRunOutput,
+    TOutput,
+    TOnRunAndChildrenCompleteRunOutput
+  >,
+): options is DurableTaskOptions<DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>, TOutput> {
   return 'run' in options && !('runParent' in options)
 }
 
 function isDurableOnRunAndChildrenCompleteTaskOptionsParentTaskOptions<
+  TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
-  TInput = unknown,
+  TOnRunAndChildrenCompleteRunOutput = unknown,
 >(
-  options: DurableOnRunAndChildrenCompleteTaskOptions<TRunOutput, TOutput, TInput>,
+  options: DurableOnRunAndChildrenCompleteTaskOptions<
+    TInput,
+    TRunOutput,
+    TOutput,
+    TOnRunAndChildrenCompleteRunOutput
+  >,
 ): options is DurableParentTaskOptions<
-  unknown,
-  TOutput,
-  DurableTaskOnChildrenCompleteInput<TRunOutput, TInput>
+  DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>,
+  TOnRunAndChildrenCompleteRunOutput,
+  TOutput
 > {
   return 'runParent' in options && !('run' in options)
 }
@@ -597,7 +610,7 @@ function isDurableOnRunAndChildrenCompleteTaskOptionsParentTaskOptions<
  *
  * @category Task
  */
-export type DurableTaskOnChildrenCompleteInput<TRunOutput = unknown, TInput = unknown> = {
+export type DurableTaskOnChildrenCompleteInput<TInput = unknown, TRunOutput = unknown> = {
   input: TInput
   output: TRunOutput
   childrenOutputs: Array<DurableTaskChildExecutionOutput>
@@ -644,17 +657,17 @@ export type DurableTaskRunContext = {
  *
  * @category Task
  */
-export type DurableTaskExecution<TOutput = unknown, TRunInput = unknown> =
-  | DurableTaskReadyExecution<TRunInput>
-  | DurableTaskRunningExecution<TRunInput>
-  | DurableTaskFailedExecution<TRunInput>
-  | DurableTaskTimedOutExecution<TRunInput>
-  | DurableTaskWaitingForChildrenExecution<TRunInput>
-  | DurableTaskChildrenFailedExecution<TRunInput>
-  | DurableTaskWaitingForOnRunAndChildrenCompleteExecution<TRunInput>
-  | DurableTaskOnRunAndChildrenCompleteFailedExecution<TRunInput>
-  | DurableTaskCompletedExecution<TOutput, TRunInput>
-  | DurableTaskCancelledExecution<TRunInput>
+export type DurableTaskExecution<TOutput = unknown> =
+  | DurableTaskReadyExecution
+  | DurableTaskRunningExecution
+  | DurableTaskFailedExecution
+  | DurableTaskTimedOutExecution
+  | DurableTaskWaitingForChildrenExecution
+  | DurableTaskChildrenFailedExecution
+  | DurableTaskWaitingForOnRunAndChildrenCompleteExecution
+  | DurableTaskOnRunAndChildrenCompleteFailedExecution
+  | DurableTaskCompletedExecution<TOutput>
+  | DurableTaskCancelledExecution
 
 /**
  * A finished execution of a durable task. See
@@ -663,20 +676,20 @@ export type DurableTaskExecution<TOutput = unknown, TRunInput = unknown> =
  *
  * @category Task
  */
-export type DurableTaskFinishedExecution<TOutput = unknown, TRunInput = unknown> =
-  | DurableTaskFailedExecution<TRunInput>
-  | DurableTaskTimedOutExecution<TRunInput>
-  | DurableTaskChildrenFailedExecution<TRunInput>
-  | DurableTaskOnRunAndChildrenCompleteFailedExecution<TRunInput>
-  | DurableTaskCompletedExecution<TOutput, TRunInput>
-  | DurableTaskCancelledExecution<TRunInput>
+export type DurableTaskFinishedExecution<TOutput = unknown> =
+  | DurableTaskFailedExecution
+  | DurableTaskTimedOutExecution
+  | DurableTaskChildrenFailedExecution
+  | DurableTaskOnRunAndChildrenCompleteFailedExecution
+  | DurableTaskCompletedExecution<TOutput>
+  | DurableTaskCancelledExecution
 
 /**
  * A durable task execution that is ready to be run.
  *
  * @category Task
  */
-export type DurableTaskReadyExecution<TRunInput = unknown> = {
+export type DurableTaskReadyExecution = {
   rootTask?: {
     taskId: string
     executionId: string
@@ -689,7 +702,7 @@ export type DurableTaskReadyExecution<TRunInput = unknown> = {
 
   taskId: string
   executionId: string
-  runInput: TRunInput
+  runInput: unknown
   error?: DurableTaskError
   status: 'ready'
   retryAttempts: number
@@ -702,10 +715,7 @@ export type DurableTaskReadyExecution<TRunInput = unknown> = {
  *
  * @category Task
  */
-export type DurableTaskRunningExecution<TRunInput = unknown> = Omit<
-  DurableTaskReadyExecution<TRunInput>,
-  'status'
-> & {
+export type DurableTaskRunningExecution = Omit<DurableTaskReadyExecution, 'status'> & {
   status: 'running'
   startedAt: Date
   expiresAt: Date
@@ -716,10 +726,7 @@ export type DurableTaskRunningExecution<TRunInput = unknown> = Omit<
  *
  * @category Task
  */
-export type DurableTaskFailedExecution<TRunInput = unknown> = Omit<
-  DurableTaskRunningExecution<TRunInput>,
-  'status' | 'error'
-> & {
+export type DurableTaskFailedExecution = Omit<DurableTaskRunningExecution, 'status' | 'error'> & {
   status: 'failed'
   error: DurableTaskError
   finishedAt: Date
@@ -730,10 +737,7 @@ export type DurableTaskFailedExecution<TRunInput = unknown> = Omit<
  *
  * @category Task
  */
-export type DurableTaskTimedOutExecution<TRunInput = unknown> = Omit<
-  DurableTaskRunningExecution<TRunInput>,
-  'status' | 'error'
-> & {
+export type DurableTaskTimedOutExecution = Omit<DurableTaskRunningExecution, 'status' | 'error'> & {
   status: 'timed_out'
   error: DurableTaskTimedOutError
   finishedAt: Date
@@ -744,8 +748,8 @@ export type DurableTaskTimedOutExecution<TRunInput = unknown> = Omit<
  *
  * @category Task
  */
-export type DurableTaskWaitingForChildrenExecution<TRunInput = unknown> = Omit<
-  DurableTaskRunningExecution<TRunInput>,
+export type DurableTaskWaitingForChildrenExecution = Omit<
+  DurableTaskRunningExecution,
   'status' | 'error'
 > & {
   status: 'waiting_for_children'
@@ -759,8 +763,8 @@ export type DurableTaskWaitingForChildrenExecution<TRunInput = unknown> = Omit<
  *
  * @category Task
  */
-export type DurableTaskChildrenFailedExecution<TRunInput = unknown> = Omit<
-  DurableTaskWaitingForChildrenExecution<TRunInput>,
+export type DurableTaskChildrenFailedExecution = Omit<
+  DurableTaskWaitingForChildrenExecution,
   'status'
 > & {
   status: 'children_failed'
@@ -773,8 +777,8 @@ export type DurableTaskChildrenFailedExecution<TRunInput = unknown> = Omit<
  *
  * @category Task
  */
-export type DurableTaskWaitingForOnRunAndChildrenCompleteExecution<TRunInput = unknown> = Omit<
-  DurableTaskWaitingForChildrenExecution<TRunInput>,
+export type DurableTaskWaitingForOnRunAndChildrenCompleteExecution = Omit<
+  DurableTaskWaitingForChildrenExecution,
   'status' | 'error'
 > & {
   status: 'waiting_for_on_run_and_children_complete'
@@ -787,8 +791,8 @@ export type DurableTaskWaitingForOnRunAndChildrenCompleteExecution<TRunInput = u
  *
  * @category Task
  */
-export type DurableTaskOnRunAndChildrenCompleteFailedExecution<TRunInput = unknown> = Omit<
-  DurableTaskWaitingForOnRunAndChildrenCompleteExecution<TRunInput>,
+export type DurableTaskOnRunAndChildrenCompleteFailedExecution = Omit<
+  DurableTaskWaitingForOnRunAndChildrenCompleteExecution,
   'status'
 > & {
   status: 'on_run_and_children_complete_failed'
@@ -801,8 +805,8 @@ export type DurableTaskOnRunAndChildrenCompleteFailedExecution<TRunInput = unkno
  *
  * @category Task
  */
-export type DurableTaskCompletedExecution<TOutput = unknown, TRunInput = unknown> = Omit<
-  DurableTaskWaitingForChildrenExecution<TRunInput>,
+export type DurableTaskCompletedExecution<TOutput = unknown> = Omit<
+  DurableTaskWaitingForChildrenExecution,
   'status' | 'output'
 > & {
   status: 'completed'
@@ -817,8 +821,8 @@ export type DurableTaskCompletedExecution<TOutput = unknown, TRunInput = unknown
  *
  * @category Task
  */
-export type DurableTaskCancelledExecution<TRunInput = unknown> = Omit<
-  DurableTaskRunningExecution<TRunInput>,
+export type DurableTaskCancelledExecution = Omit<
+  DurableTaskRunningExecution,
   'status' | 'error'
 > & {
   status: 'cancelled'
@@ -841,8 +845,8 @@ export type DurableTaskCancelledExecution<TRunInput = unknown> = Omit<
  *
  * @category Task
  */
-export type DurableTaskChild<TOutput = unknown, TInput = unknown> = {
-  task: DurableTask<TOutput, TInput>
+export type DurableTaskChild<TInput = unknown, TOutput = unknown> = {
+  task: DurableTask<TInput, TOutput>
   input: TInput
 }
 
@@ -957,7 +961,7 @@ export const FINISHED_TASK_EXECUTION_STATUSES = [
  *
  * @category Task
  */
-export type DurableTaskHandle<TOutput = unknown, TRunInput = unknown> = {
+export type DurableTaskHandle<TOutput = unknown> = {
   /**
    * Get the task id of the durable task.
    *
@@ -975,7 +979,7 @@ export type DurableTaskHandle<TOutput = unknown, TRunInput = unknown> = {
    *
    * @returns The durable task execution.
    */
-  getTaskExecution: () => Promise<DurableTaskExecution<TOutput, TRunInput>>
+  getTaskExecution: () => Promise<DurableTaskExecution<TOutput>>
   /**
    * Wait for the durable task execution to be finished and get it.
    *
@@ -985,7 +989,7 @@ export type DurableTaskHandle<TOutput = unknown, TRunInput = unknown> = {
   waitAndGetTaskFinishedExecution: (options?: {
     signal?: CancelSignal | AbortSignal
     pollingIntervalMs?: number
-  }) => Promise<DurableTaskFinishedExecution<TOutput, TRunInput>>
+  }) => Promise<DurableTaskFinishedExecution<TOutput>>
   /**
    * Cancel the durable task execution.
    */

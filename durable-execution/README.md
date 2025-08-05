@@ -826,7 +826,7 @@ we are using the same variable inside the `runParent` function. Use the `onRunAn
 task to coordinate the output of the recursive task and children tasks.
 
 ```ts
-const recursiveTask: DurableTask<{ count: number }, { index: number }> = executor
+const recursiveTask: DurableTask<{ index: number }, { count: number }> = executor
   .inputSchema(v.object({ index: v.pipe(v.number(), v.integer(), v.minValue(0)) }))
   .parentTask({
     id: 'recursive',
@@ -874,7 +874,7 @@ setTimeout(() => {
   value = 10
 }, 2000)
 
-const pollingTask: DurableTask<{ count: number; value: number }, { prevCount: number }> =
+const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: number }> =
   executor
     .inputSchema(v.object({ prevCount: v.pipe(v.number(), v.integer(), v.minValue(0)) }))
     .parentTask({

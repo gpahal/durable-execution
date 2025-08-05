@@ -677,7 +677,7 @@ describe('examples', () => {
   })
 
   it('should complete recursive task', async () => {
-    const recursiveTask: DurableTask<{ count: number }, { index: number }> = executor
+    const recursiveTask: DurableTask<{ index: number }, { count: number }> = executor
       .inputSchema(v.object({ index: v.pipe(v.number(), v.integer(), v.minValue(0)) }))
       .parentTask({
         id: 'recursive',
@@ -728,7 +728,7 @@ describe('examples', () => {
       value = 10
     }, 2000)
 
-    const pollingTask: DurableTask<{ count: number; value: number }, { prevCount: number }> =
+    const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: number }> =
       executor
         .inputSchema(v.object({ prevCount: v.pipe(v.number(), v.integer(), v.minValue(0)) }))
         .parentTask({

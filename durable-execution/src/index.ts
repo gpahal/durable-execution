@@ -352,9 +352,9 @@ export class DurableExecutor {
    *   task options.
    * @returns The durable task.
    */
-  task<TOutput = unknown, TInput = unknown>(
-    taskOptions: DurableTaskOptions<TOutput, TInput>,
-  ): DurableTask<TOutput, TInput> {
+  task<TInput = unknown, TOutput = unknown>(
+    taskOptions: DurableTaskOptions<TInput, TOutput>,
+  ): DurableTask<TInput, TOutput> {
     this.throwIfShutdown()
     const taskInternal = DurableTaskInternal.fromDurableTaskOptions(
       this.taskInternalsMap,
@@ -363,7 +363,7 @@ export class DurableExecutor {
     this.logger.debug(`Added task ${taskOptions.id}`)
     return {
       id: taskInternal.id,
-    } as DurableTask<TOutput, TInput>
+    } as DurableTask<TInput, TOutput>
   }
 
   /**
@@ -376,21 +376,21 @@ export class DurableExecutor {
    * @returns The durable parent task.
    */
   parentTask<
+    TInput = unknown,
     TRunOutput = unknown,
     TOutput = {
       output: TRunOutput
       childrenOutputs: Array<DurableTaskChildExecutionOutput>
     },
-    TInput = unknown,
     TOnRunAndChildrenCompleteRunOutput = unknown,
   >(
     parentTaskOptions: DurableParentTaskOptions<
+      TInput,
       TRunOutput,
       TOutput,
-      TInput,
       TOnRunAndChildrenCompleteRunOutput
     >,
-  ): DurableTask<TOutput, TInput> {
+  ): DurableTask<TInput, TOutput> {
     this.throwIfShutdown()
     const taskInternal = DurableTaskInternal.fromDurableParentTaskOptions(
       this.taskInternalsMap,
@@ -399,15 +399,15 @@ export class DurableExecutor {
     this.logger.debug(`Added parent task ${parentTaskOptions.id}`)
     return {
       id: taskInternal.id,
-    } as DurableTask<TOutput, TInput>
+    } as DurableTask<TInput, TOutput>
   }
 
   validateInput<TRunInput, TInput>(
     validateInputFn: (input: TInput) => TRunInput | Promise<TRunInput>,
   ): {
     task: <TOutput = unknown>(
-      taskOptions: DurableTaskOptions<TOutput, TRunInput>,
-    ) => DurableTask<TOutput, TInput>
+      taskOptions: DurableTaskOptions<TRunInput, TOutput>,
+    ) => DurableTask<TInput, TOutput>
     parentTask: <
       TRunOutput = unknown,
       TOutput = {
@@ -417,12 +417,12 @@ export class DurableExecutor {
       TOnRunAndChildrenCompleteRunOutput = unknown,
     >(
       parentTaskOptions: DurableParentTaskOptions<
+        TRunInput,
         TRunOutput,
         TOutput,
-        TRunInput,
         TOnRunAndChildrenCompleteRunOutput
       >,
-    ) => DurableTask<TOutput, TInput>
+    ) => DurableTask<TInput, TOutput>
   } {
     this.throwIfShutdown()
 
@@ -442,8 +442,8 @@ export class DurableExecutor {
     inputSchema: TInputSchema,
   ): {
     task: <TOutput = unknown>(
-      taskOptions: DurableTaskOptions<TOutput, StandardSchemaV1.InferOutput<TInputSchema>>,
-    ) => DurableTask<TOutput, StandardSchemaV1.InferInput<TInputSchema>>
+      taskOptions: DurableTaskOptions<StandardSchemaV1.InferOutput<TInputSchema>, TOutput>,
+    ) => DurableTask<StandardSchemaV1.InferInput<TInputSchema>, TOutput>
     parentTask: <
       TRunOutput = unknown,
       TOutput = {
@@ -453,12 +453,12 @@ export class DurableExecutor {
       TOnRunAndChildrenCompleteRunOutput = unknown,
     >(
       parentTaskOptions: DurableParentTaskOptions<
+        StandardSchemaV1.InferOutput<TInputSchema>,
         TRunOutput,
         TOutput,
-        StandardSchemaV1.InferOutput<TInputSchema>,
         TOnRunAndChildrenCompleteRunOutput
       >,
-    ) => DurableTask<TOutput, StandardSchemaV1.InferInput<TInputSchema>>
+    ) => DurableTask<StandardSchemaV1.InferInput<TInputSchema>, TOutput>
   } {
     this.throwIfShutdown()
 
@@ -490,22 +490,22 @@ export class DurableExecutor {
     validateInputFn: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
   ): {
     task: <TOutput>(
-      taskOptions: DurableTaskOptions<TOutput, TRunInput>,
-    ) => DurableTask<TOutput, TInput>
+      taskOptions: DurableTaskOptions<TRunInput, TOutput>,
+    ) => DurableTask<TInput, TOutput>
     parentTask: <TRunOutput, TOutput, TOnRunAndChildrenCompleteRunOutput = unknown>(
       parentTaskOptions: DurableParentTaskOptions<
+        TRunInput,
         TRunOutput,
         TOutput,
-        TRunInput,
         TOnRunAndChildrenCompleteRunOutput
       >,
-    ) => DurableTask<TOutput, TInput>
+    ) => DurableTask<TInput, TOutput>
   } {
     this.throwIfShutdown()
     return {
       task: <TOutput>(
-        taskOptions: DurableTaskOptions<TOutput, TRunInput>,
-      ): DurableTask<TOutput, TInput> => {
+        taskOptions: DurableTaskOptions<TRunInput, TOutput>,
+      ): DurableTask<TInput, TOutput> => {
         this.throwIfShutdown()
         const taskInternal = DurableTaskInternal.fromDurableTaskOptions(
           this.taskInternalsMap,
@@ -515,16 +515,16 @@ export class DurableExecutor {
         this.logger.debug(`Added task ${taskOptions.id}`)
         return {
           id: taskInternal.id,
-        } as DurableTask<TOutput, TInput>
+        } as DurableTask<TInput, TOutput>
       },
       parentTask: <TRunOutput, TOutput, TOnRunAndChildrenCompleteRunOutput>(
         parentTaskOptions: DurableParentTaskOptions<
+          TRunInput,
           TRunOutput,
           TOutput,
-          TRunInput,
           TOnRunAndChildrenCompleteRunOutput
         >,
-      ): DurableTask<TOutput, TInput> => {
+      ): DurableTask<TInput, TOutput> => {
         this.throwIfShutdown()
         const taskInternal = DurableTaskInternal.fromDurableParentTaskOptions(
           this.taskInternalsMap,
@@ -534,7 +534,7 @@ export class DurableExecutor {
         this.logger.debug(`Added parent task ${parentTaskOptions.id}`)
         return {
           id: taskInternal.id,
-        } as DurableTask<TOutput, TInput>
+        } as DurableTask<TInput, TOutput>
       },
     }
   }
@@ -546,8 +546,8 @@ export class DurableExecutor {
    * @param input - The input to the task.
    * @returns A handle to the task execution.
    */
-  async enqueueTask<TOutput = unknown, TInput = unknown>(
-    task: DurableTask<TOutput, TInput>,
+  async enqueueTask<TInput = unknown, TOutput = unknown>(
+    task: DurableTask<TInput, TOutput>,
     input: TInput,
   ): Promise<DurableTaskHandle<TOutput>> {
     this.throwIfShutdown()
@@ -587,8 +587,8 @@ export class DurableExecutor {
    * @param executionId - The id of the execution to get the handle for.
    * @returns The handle to the task execution.
    */
-  getTaskHandle<TOutput = unknown, TInput = unknown>(
-    task: DurableTask<TOutput, TInput>,
+  getTaskHandle<TInput = unknown, TOutput = unknown>(
+    task: DurableTask<TInput, TOutput>,
     executionId: string,
   ): DurableTaskHandle<TOutput> {
     return this.getTaskHandleInternal(task.id, executionId)

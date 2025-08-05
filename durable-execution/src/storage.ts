@@ -402,11 +402,11 @@ export type DurableTaskExecutionStorageObjectUpdate = {
  *
  * @category Storage
  */
-export function convertTaskExecutionStorageObjectToTaskExecution<TOutput, TRunInput>(
+export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
   execution: DurableTaskExecutionStorageObject,
   serializer: Serializer,
-): DurableTaskExecution<TOutput, TRunInput> {
-  const runInput = serializer.deserialize<TRunInput>(execution.runInput)
+): DurableTaskExecution<TOutput> {
+  const runInput = serializer.deserialize(execution.runInput)
   const runOutput = execution.runOutput
     ? serializer.deserialize<unknown>(execution.runOutput)
     : undefined
