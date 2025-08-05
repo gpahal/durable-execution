@@ -1,5 +1,8 @@
 # durable-execution-storage-drizzle
 
+![NPM Version](https://img.shields.io/npm/v/durable-execution-storage-drizzle)
+![NPM License](https://img.shields.io/npm/l/durable-execution-storage-drizzle)
+
 A storage implementation for [durable-execution](https://github.com/gpahal/durable-execution)
 using [Drizzle ORM](https://orm.drizzle.team/).
 

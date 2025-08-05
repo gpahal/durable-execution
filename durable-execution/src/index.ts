@@ -22,21 +22,18 @@ import {
 } from './storage'
 import {
   ACTIVE_TASK_EXECUTION_STATUSES,
-  DurableTask,
   DurableTaskInternal,
   FINISHED_TASK_EXECUTION_STATUSES,
   generateTaskExecutionId,
-  type DurableAnyTaskOptions,
-  type DurableParentSchemaTaskOptions,
   type DurableParentTaskOptions,
-  type DurableSchemaTaskOptions,
+  type DurableTask,
   type DurableTaskChildExecutionOutput,
   type DurableTaskFinishedExecution,
   type DurableTaskHandle,
   type DurableTaskOptions,
   type DurableTaskRunContext,
 } from './task'
-import { sleepWithJitter } from './utils'
+import { sleepWithJitter, summarizeStandardSchemaIssues } from './utils'
 
 export {
   type CancelSignal,
@@ -48,11 +45,9 @@ export { DurableTaskError, DurableTaskTimedOutError, DurableTaskCancelledError }
 export { type Logger, createConsoleLogger } from './logger'
 export type {
   DurableTask,
-  DurableAnyTaskOptions,
-  DurableTaskOptions as DurableTaskOptions,
+  DurableTaskOptions,
   DurableParentTaskOptions,
-  DurableSchemaTaskOptions,
-  DurableParentSchemaTaskOptions,
+  DurableOnRunAndChildrenCompleteTaskOptions,
   DurableTaskOnChildrenCompleteInput,
   DurableTaskRunContext,
   DurableTaskExecution,
@@ -69,8 +64,8 @@ export type {
   DurableTaskCompletedExecution,
   DurableTaskChild,
   DurableTaskChildExecution,
-  DurableTaskChildExecutionOutput as DurableTaskChildOutput,
-  DurableTaskChildExecutionError as DurableTaskChildError,
+  DurableTaskChildExecutionOutput,
+  DurableTaskChildExecutionError,
   DurableTaskExecutionStatus,
   DurableTaskHandle,
 } from './task'
@@ -102,68 +97,81 @@ export {
  * ```ts
  * const executor = new DurableExecutor(storage)
  *
- * // Create durable tasks
- * const extractFileTitle = executor.task({
- *   id: 'extractFileTitle',
- *   timeoutMs: 30_000, // 30 seconds
- *   run: async (ctx, input: { filePath: string }) => {
- *     // ... extract the file title
- *     return {
- *       title: 'File Title',
- *     }
- *   },
- * })
- *
- * const summarizeFile = executor.task({
- *   id: 'summarizeFile',
- *   timeoutMs: 30_000, // 30 seconds
- *   run: async (ctx, input: { filePath: string }) => {
- *     // ... summarize the file
- *     return {
- *       summary: 'File summary',
- *     }
- *   },
- * })
- *
- * const uploadFile = executor.parentTask({
- *   id: 'uploadFile',
- *   timeoutMs: 60_000, // 1 minute
- *   runParent: async (ctx, input: { filePath: string; uploadUrl: string }) => {
- *     // ... upload file to the given uploadUrl
- *     // Extract the file title and summarize the file in parallel
- *     return {
- *       output: {
- *         filePath: input.filePath,
- *         uploadUrl: input.uploadUrl,
- *         fileSize: 100,
- *       },
- *       children: [
- *         {
- *           task: extractFileTitle,
- *           input: { filePath: input.filePath },
- *         },
- *         {
- *           task: summarizeFile,
- *           input: { filePath: input.filePath },
- *         },
- *       ],
- *     }
- *   },
- *   onRunAndChildrenComplete: {
- *     id: 'onUploadFileChildrenComplete',
- *     timeoutMs: 60_000, // 1 minute
- *     run: async (ctx, { input, output, childrenOutputs }) => {
- *       // ... combine the output of the run function and children tasks
+ * // Create tasks
+ * const extractFileTitle = executor
+ *   .inputSchema(v.object({ filePath: v.string() }))
+ *   .task({
+ *     id: 'extractFileTitle',
+ *     timeoutMs: 30_000, // 30 seconds
+ *     run: async (ctx, input) => {
+ *       // ... extract the file title
  *       return {
- *         filePath: input.filePath,
- *         uploadUrl: input.uploadUrl,
- *         fileSize: 100,
  *         title: 'File Title',
+ *       }
+ *     },
+ *   })
+ *
+ * const summarizeFile = executor
+ *   .validateInput(async (input: { filePath: string }) => {
+ *     if (!isValidFilePath(input.filePath)) {
+ *       throw new Error('Invalid file path')
+ *     }
+ *     return {
+ *       filePath: input.filePath,
+ *     }
+ *   })
+ *   .task({
+ *     id: 'summarizeFile',
+ *     timeoutMs: 30_000, // 30 seconds
+ *     run: async (ctx, input) => {
+ *       // ... summarize the file
+ *       return {
  *         summary: 'File summary',
  *       }
  *     },
- *   },
- * })
+ *   })
+ *
+ * const uploadFile = executor
+ *   .inputSchema(v.object({ filePath: v.string(), uploadUrl: v.string() }))
+ *   .parentTask({
+ *     id: 'uploadFile',
+ *     timeoutMs: 60_000, // 1 minute
+ *     runParent: async (ctx, input) => {
+ *       // ... upload file to the given uploadUrl
+ *       // Extract the file title and summarize the file in parallel
+ *       return {
+ *         output: {
+ *           filePath: input.filePath,
+ *           uploadUrl: input.uploadUrl,
+ *           fileSize: 100,
+ *         },
+ *         children: [
+ *           {
+ *             task: extractFileTitle,
+ *             input: { filePath: input.filePath },
+ *           },
+ *           {
+ *             task: summarizeFile,
+ *             input: { filePath: input.filePath },
+ *           },
+ *         ],
+ *       }
+ *     },
+ *     onRunAndChildrenComplete: {
+ *       id: 'onUploadFileAndChildrenComplete',
+ *       timeoutMs: 60_000, // 1 minute
+ *       run: async (ctx, { input, output, childrenOutputs }) => {
+ *         // ... combine the output of the run function and children tasks
+ *         return {
+ *           filePath: input.filePath,
+ *           uploadUrl: input.uploadUrl,
+ *           fileSize: 100,
+ *           title: 'File Title',
+ *           summary: 'File summary',
+ *         }
+ *       }
+ *     },
+ *   })
  *
  * async function app() {
  *   // Enqueue task and manage its execution lifecycle
@@ -192,7 +200,7 @@ export class DurableExecutor {
   private readonly serializer: Serializer
   private readonly logger: Logger
   private readonly expireMs: number
-  private readonly taskInternalsMap: Map<string, DurableTaskInternal<unknown, unknown, unknown>>
+  private readonly taskInternalsMap: Map<string, DurableTaskInternal>
   private readonly runningTaskExecutionsMap: Map<
     string,
     {
@@ -340,20 +348,22 @@ export class DurableExecutor {
    * [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples) section
    * for more details on creating tasks.
    *
-   * @param options - The task options. See {@link DurableAnyTaskOptions} for more details on the
+   * @param taskOptions - The task options. See {@link DurableTaskOptions} for more details on the
    *   task options.
    * @returns The durable task.
    */
-  task<TOutput, TRunInput, TInput>(
-    options: DurableTaskOptions<TOutput, TRunInput, TInput>,
-  ): DurableTask<TOutput, TRunInput, TInput> {
+  task<TOutput = unknown, TInput = unknown>(
+    taskOptions: DurableTaskOptions<TOutput, TInput>,
+  ): DurableTask<TOutput, TInput> {
     this.throwIfShutdown()
-    const taskInternal = DurableTaskInternal.fromDurableAnyTaskOptions(
-      options,
+    const taskInternal = DurableTaskInternal.fromDurableTaskOptions(
       this.taskInternalsMap,
+      taskOptions,
     )
-    this.logger.debug(`Added task ${options.id}`)
-    return new DurableTask(taskInternal.id)
+    this.logger.debug(`Added task ${taskOptions.id}`)
+    return {
+      id: taskInternal.id,
+    } as DurableTask<TOutput, TInput>
   }
 
   /**
@@ -361,90 +371,148 @@ export class DurableExecutor {
    * [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples) section
    * for more details on creating parent tasks.
    *
-   * @param options - The parent task options. See {@link DurableParentTaskOptions} for more details
-   *   on the parent task options.
+   * @param parentTaskOptions - The parent task options. See {@link DurableParentTaskOptions} for
+   *   more details on the parent task options.
    * @returns The durable parent task.
    */
   parentTask<
-    TRunOutput,
-    TOutput = { output: TRunOutput; childrenOutputs: Array<DurableTaskChildExecutionOutput> },
-    TRunInput = unknown,
-    TInput = TRunInput,
-  >(
-    options: DurableParentTaskOptions<TRunOutput, TOutput, TRunInput, TInput>,
-  ): DurableTask<TOutput, TRunInput, TInput> {
-    this.throwIfShutdown()
-    const taskInternal = DurableTaskInternal.fromDurableAnyTaskOptions(
-      options as DurableAnyTaskOptions<TOutput, TRunInput, TInput>,
-      this.taskInternalsMap,
-    )
-    this.logger.debug(`Added parent task ${options.id}`)
-    return new DurableTask(taskInternal.id)
-  }
-
-  /**
-   * Add a schema task to the durable executor. See the
-   * [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples) section
-   * for more details on creating schema tasks.
-   *
-   * @param options - The schema task options. See {@link DurableSchemaTaskOptions} for more details
-   *   on the schema task options.
-   * @returns The durable schema task.
-   */
-  schemaTask<TOutput, TInputSchema extends StandardSchemaV1>(
-    options: DurableSchemaTaskOptions<TOutput, TInputSchema>,
-  ): DurableTask<
-    TOutput,
-    StandardSchemaV1.InferOutput<TInputSchema>,
-    StandardSchemaV1.InferInput<TInputSchema>
-  > {
-    this.throwIfShutdown()
-    const taskInternal = DurableTaskInternal.fromDurableAnyTaskOptions(
-      options as DurableAnyTaskOptions<
-        TOutput,
-        StandardSchemaV1.InferOutput<TInputSchema>,
-        StandardSchemaV1.InferInput<TInputSchema>
-      >,
-      this.taskInternalsMap,
-    )
-    this.logger.debug(`Added schema task ${options.id}`)
-    return new DurableTask(taskInternal.id)
-  }
-
-  /**
-   * Add a parent schema task to the durable executor. See the
-   * [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples) section
-   * for more details on creating parent schema tasks.
-   *
-   * @param options - The parent schema task options. See {@link DurableParentSchemaTaskOptions} for
-   *   more details on the parent schema task options.
-   * @returns The durable parent schema task.
-   */
-  parentSchemaTask<
-    TRunOutput,
+    TRunOutput = unknown,
     TOutput = {
       output: TRunOutput
       childrenOutputs: Array<DurableTaskChildExecutionOutput>
     },
-    TInputSchema extends StandardSchemaV1 = StandardSchemaV1<unknown, unknown>,
+    TInput = unknown,
   >(
-    options: DurableParentSchemaTaskOptions<TRunOutput, TOutput, TInputSchema>,
-  ): DurableTask<
-    TOutput,
-    StandardSchemaV1.InferOutput<TInputSchema>,
-    StandardSchemaV1.InferInput<TInputSchema>
-  > {
+    parentTaskOptions: DurableParentTaskOptions<TRunOutput, TOutput, TInput>,
+  ): DurableTask<TOutput, TInput> {
     this.throwIfShutdown()
-    const taskInternal = DurableTaskInternal.fromDurableAnyTaskOptions(
-      options as DurableAnyTaskOptions<
-        TOutput,
-        StandardSchemaV1.InferOutput<TInputSchema>,
-        StandardSchemaV1.InferInput<TInputSchema>
-      >,
+    const taskInternal = DurableTaskInternal.fromDurableParentTaskOptions(
       this.taskInternalsMap,
+      parentTaskOptions,
     )
-    this.logger.debug(`Added parent schema task ${options.id}`)
-    return new DurableTask(taskInternal.id)
+    this.logger.debug(`Added parent task ${parentTaskOptions.id}`)
+    return {
+      id: taskInternal.id,
+    } as DurableTask<TOutput, TInput>
+  }
+
+  validateInput<TRunInput, TInput>(
+    validateInputFn: (input: TInput) => TRunInput | Promise<TRunInput>,
+  ): {
+    task: <TOutput = unknown>(
+      taskOptions: DurableTaskOptions<TOutput, TRunInput>,
+    ) => DurableTask<TOutput, TInput>
+    parentTask: <
+      TRunOutput = unknown,
+      TOutput = {
+        output: TRunOutput
+        childrenOutputs: Array<DurableTaskChildExecutionOutput>
+      },
+    >(
+      parentTaskOptions: DurableParentTaskOptions<TRunOutput, TOutput, TRunInput>,
+    ) => DurableTask<TOutput, TInput>
+  } {
+    this.throwIfShutdown()
+
+    const wrappedValidateInputFn = async (id: string, input: TInput) => {
+      try {
+        const runInput = await validateInputFn(input)
+        return runInput
+      } catch (error) {
+        throw new DurableTaskError(`Invalid input to task ${id}: ${getErrorMessage(error)}`, false)
+      }
+    }
+
+    return this.withValidateInputInternal(wrappedValidateInputFn)
+  }
+
+  inputSchema<TInputSchema extends StandardSchemaV1>(
+    inputSchema: TInputSchema,
+  ): {
+    task: <TOutput = unknown>(
+      taskOptions: DurableTaskOptions<TOutput, StandardSchemaV1.InferOutput<TInputSchema>>,
+    ) => DurableTask<TOutput, StandardSchemaV1.InferInput<TInputSchema>>
+    parentTask: <
+      TRunOutput = unknown,
+      TOutput = {
+        output: TRunOutput
+        childrenOutputs: Array<DurableTaskChildExecutionOutput>
+      },
+    >(
+      parentTaskOptions: DurableParentTaskOptions<
+        TRunOutput,
+        TOutput,
+        StandardSchemaV1.InferOutput<TInputSchema>
+      >,
+    ) => DurableTask<TOutput, StandardSchemaV1.InferInput<TInputSchema>>
+  } {
+    this.throwIfShutdown()
+
+    const validateInputFn = async (
+      id: string,
+      input: StandardSchemaV1.InferInput<TInputSchema>,
+    ): Promise<StandardSchemaV1.InferOutput<TInputSchema>> => {
+      try {
+        const validateResult = await inputSchema['~standard'].validate(input)
+        if (validateResult.issues != null) {
+          throw new DurableTaskError(
+            `Invalid input to task ${id}: ${summarizeStandardSchemaIssues(validateResult.issues)}`,
+            false,
+          )
+        }
+        return validateResult.value
+      } catch (error) {
+        if (error instanceof DurableTaskError) {
+          throw error
+        }
+        throw new DurableTaskError(`Invalid input to task ${id}: ${getErrorMessage(error)}`, false)
+      }
+    }
+
+    return this.withValidateInputInternal(validateInputFn)
+  }
+
+  private withValidateInputInternal<TRunInput, TInput>(
+    validateInputFn: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
+  ): {
+    task: <TOutput>(
+      taskOptions: DurableTaskOptions<TOutput, TRunInput>,
+    ) => DurableTask<TOutput, TInput>
+    parentTask: <TRunOutput, TOutput>(
+      parentTaskOptions: DurableParentTaskOptions<TRunOutput, TOutput, TRunInput>,
+    ) => DurableTask<TOutput, TInput>
+  } {
+    this.throwIfShutdown()
+    return {
+      task: <TOutput>(
+        taskOptions: DurableTaskOptions<TOutput, TRunInput>,
+      ): DurableTask<TOutput, TInput> => {
+        this.throwIfShutdown()
+        const taskInternal = DurableTaskInternal.fromDurableTaskOptions(
+          this.taskInternalsMap,
+          taskOptions,
+          validateInputFn,
+        )
+        this.logger.debug(`Added task ${taskOptions.id}`)
+        return {
+          id: taskInternal.id,
+        } as DurableTask<TOutput, TInput>
+      },
+      parentTask: <TRunOutput, TOutput>(
+        parentTaskOptions: DurableParentTaskOptions<TOutput, TRunOutput, TRunInput>,
+      ) => {
+        this.throwIfShutdown()
+        const taskInternal = DurableTaskInternal.fromDurableParentTaskOptions(
+          this.taskInternalsMap,
+          parentTaskOptions,
+          validateInputFn,
+        )
+        this.logger.debug(`Added parent task ${parentTaskOptions.id}`)
+        return {
+          id: taskInternal.id,
+        } as DurableTask<TOutput, TInput>
+      },
+    }
   }
 
   /**
@@ -454,10 +522,10 @@ export class DurableExecutor {
    * @param input - The input to the task.
    * @returns A handle to the task execution.
    */
-  async enqueueTask<TOutput, TRunInput, TInput>(
-    task: DurableTask<TOutput, TRunInput, TInput>,
+  async enqueueTask<TOutput = unknown, TInput = unknown>(
+    task: DurableTask<TOutput, TInput>,
     input: TInput,
-  ): Promise<DurableTaskHandle<TOutput, TRunInput>> {
+  ): Promise<DurableTaskHandle<TOutput>> {
     this.throwIfShutdown()
 
     const taskInternal = this.taskInternalsMap.get(task.id)
@@ -495,17 +563,17 @@ export class DurableExecutor {
    * @param executionId - The id of the execution to get the handle for.
    * @returns The handle to the task execution.
    */
-  getTaskHandle<TOutput, TRunInput, TInput>(
-    task: DurableTask<TOutput, TRunInput, TInput>,
+  getTaskHandle<TOutput = unknown, TInput = unknown>(
+    task: DurableTask<TOutput, TInput>,
     executionId: string,
-  ): DurableTaskHandle<TOutput, TRunInput> {
+  ): DurableTaskHandle<TOutput> {
     return this.getTaskHandleInternal(task.id, executionId)
   }
 
-  private getTaskHandleInternal<TOutput, TRunInput>(
+  private getTaskHandleInternal<TOutput>(
     taskId: string,
     executionId: string,
-  ): DurableTaskHandle<TOutput, TRunInput> {
+  ): DurableTaskHandle<TOutput> {
     return {
       getTaskId: () => taskId,
       getTaskExecutionId: () => executionId,
@@ -562,7 +630,7 @@ export class DurableExecutor {
             return convertTaskExecutionStorageObjectToTaskExecution(
               execution,
               this.serializer,
-            ) as DurableTaskFinishedExecution<TOutput, TRunInput>
+            ) as DurableTaskFinishedExecution<TOutput>
           } else {
             this.logger.debug(
               `Waiting for task ${executionId} to be finished. Status: ${execution?.status}`,
@@ -1109,9 +1177,7 @@ export class DurableExecutor {
         throw new DurableTaskError('Some task executions not found', true)
       }
 
-      const toRunExecutions = [] as Array<
-        [DurableTaskInternal<unknown, unknown, unknown>, DurableTaskExecutionStorageObject]
-      >
+      const toRunExecutions = [] as Array<[DurableTaskInternal, DurableTaskExecutionStorageObject]>
       for (const execution of executions) {
         const taskInternal = this.taskInternalsMap.get(execution.taskId)
         if (!taskInternal) {
@@ -1190,7 +1256,7 @@ export class DurableExecutor {
    * @param execution - The task execution to run.
    */
   private runTaskExecutionWithCancelSignal(
-    taskInternal: DurableTaskInternal<unknown, unknown, unknown>,
+    taskInternal: DurableTaskInternal,
     execution: DurableTaskExecutionStorageObject,
   ): void {
     if (this.runningTaskExecutionsMap.has(execution.executionId)) {
@@ -1242,11 +1308,13 @@ export class DurableExecutor {
    * @param cancelSignal - The cancel signal.
    */
   private async runTaskExecutionWithContext(
-    taskInternal: DurableTaskInternal<unknown, unknown, unknown>,
+    taskInternal: DurableTaskInternal,
     execution: DurableTaskExecutionStorageObject,
     cancelSignal: CancelSignal,
   ): Promise<void> {
     const ctx: DurableTaskRunContext = {
+      taskId: taskInternal.id,
+      executionId: execution.executionId,
       cancelSignal,
       shutdownSignal: this.shutdownSignal,
       attempt: execution.retryAttempts,

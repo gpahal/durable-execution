@@ -72,67 +72,80 @@ await executor.shutdown()
 - Use the durable executor to enqueue tasks
 
 ```ts
-const extractFileTitle = executor.task({
-  id: 'extractFileTitle',
-  timeoutMs: 30_000, // 30 seconds
-  run: async (ctx, input: { filePath: string }) => {
-    // ... extract the file title
-    return {
-      title: 'File Title',
-    }
-  },
-})
-
-const summarizeFile = executor.task({
-  id: 'summarizeFile',
-  timeoutMs: 30_000, // 30 seconds
-  run: async (ctx, input: { filePath: string }) => {
-    // ... summarize the file
-    return {
-      summary: 'File summary',
-    }
-  },
-})
-
-const uploadFile = executor.parentTask({
-  id: 'uploadFile',
-  timeoutMs: 60_000, // 1 minute
-  runParent: async (ctx, input: { filePath: string; uploadUrl: string }) => {
-    // ... upload file to the given uploadUrl
-    // Extract the file title and summarize the file in parallel
-    return {
-      output: {
-        filePath: input.filePath,
-        uploadUrl: input.uploadUrl,
-        fileSize: 100,
-      },
-      children: [
-        {
-          task: extractFileTitle,
-          input: { filePath: input.filePath },
-        },
-        {
-          task: summarizeFile,
-          input: { filePath: input.filePath },
-        },
-      ],
-    }
-  },
-  onRunAndChildrenComplete: {
-    id: 'onUploadFileChildrenComplete',
-    timeoutMs: 60_000, // 1 minute
-    run: async (ctx, { input, output, childrenOutputs }) => {
-      // ... combine the output of the run function and children tasks
+const extractFileTitle = executor
+  .inputSchema(v.object({ filePath: v.string() }))
+  .task({
+    id: 'extractFileTitle',
+    timeoutMs: 30_000, // 30 seconds
+    run: async (ctx, input) => {
+      // ... extract the file title
       return {
-        filePath: input.filePath,
-        uploadUrl: input.uploadUrl,
-        fileSize: 100,
         title: 'File Title',
+      }
+    },
+  })
+
+const summarizeFile = executor
+  .validateInput(async (input: { filePath: string }) => {
+    if (!isValidFilePath(input.filePath)) {
+      throw new Error('Invalid file path')
+    }
+    return {
+      filePath: input.filePath,
+    }
+  })
+  .task({
+    id: 'summarizeFile',
+    timeoutMs: 30_000, // 30 seconds
+    run: async (ctx, input) => {
+      // ... summarize the file
+      return {
         summary: 'File summary',
       }
     },
-  },
-})
+  })
+
+const uploadFile = executor
+  .inputSchema(v.object({ filePath: v.string(), uploadUrl: v.string() }))
+  .parentTask({
+    id: 'uploadFile',
+    timeoutMs: 60_000, // 1 minute
+    runParent: async (ctx, input) => {
+      // ... upload file to the given uploadUrl
+      // Extract the file title and summarize the file in parallel
+      return {
+        output: {
+          filePath: input.filePath,
+          uploadUrl: input.uploadUrl,
+          fileSize: 100,
+        },
+        children: [
+          {
+            task: extractFileTitle,
+            input: { filePath: input.filePath },
+          },
+          {
+            task: summarizeFile,
+            input: { filePath: input.filePath },
+          },
+        ],
+      }
+    },
+    onRunAndChildrenComplete: {
+      id: 'onUploadFileAndChildrenComplete',
+      timeoutMs: 60_000, // 1 minute
+      run: async (ctx, { input, output, childrenOutputs }) => {
+        // ... combine the output of the run function and children tasks
+        return {
+          filePath: input.filePath,
+          uploadUrl: input.uploadUrl,
+          fileSize: 100,
+          title: 'File Title',
+          summary: 'File summary',
+        }
+      },
+    },
+  })
 
 async function app() {
   // Enqueue task and manage its execution lifecycle
@@ -148,9 +161,9 @@ async function app() {
 }
 ```
 
-### Task examples
+## Task examples
 
-- Simple sync task
+### Simple sync task
 
 ```ts
 const taskA = executor.task({
@@ -162,23 +175,11 @@ const taskA = executor.task({
   },
 })
 
-// To use an input schema, use the schemaTask method instead of the task method
-const taskA = executor.schemaTask({
-  // ... other options
-  inputSchema: v.object({
-    name: v.string(),
-  }),
-  run: (ctx, input) => {
-    // ... do some synchronous work
-    return `Hello, ${input.name}!`
-  },
-})
-
 // Input: { name: 'world' }
 // Output: 'Hello, world!'
 ```
 
-- Simple async task
+### Simple async task
 
 ```ts
 const taskA = executor.task({
@@ -195,17 +196,41 @@ const taskA = executor.task({
 // Output: 'Hello, world!'
 ```
 
-- Simple task with input schema
+### Validate input
+
+To validate input, use the `validateInput` method before the `task` method.
 
 ```ts
-const taskA = executor.schemaTask({
+const taskA = executor
+  .validateInput((input: { name: string }) => {
+    if (input.name !== 'world') {
+      throw new Error('Invalid input')
+    }
+    return input
+  })
+  .task({
+    id: 'a',
+    timeoutMs: 1000,
+    run: (ctx, input) => {
+      // ... do some work
+      return `Hello, ${input.name}!`
+    },
+  })
+
+// Input: { name: 'world' }
+// Output: 'Hello, world!'
+```
+
+### Validate input with schema
+
+To validate input with a schema, use the `inputSchema` method before the `task` method.
+
+```ts
+const taskA = executor.inputSchema(v.object({ name: v.string() })).task({
   id: 'a',
   timeoutMs: 1000,
-  inputSchema: v.object({
-    name: v.string(),
-  }),
   run: (ctx, input) => {
-    // ... do some synchronous work
+    // ... do some work
     return `Hello, ${input.name}!`
   },
 })
@@ -214,7 +239,64 @@ const taskA = executor.schemaTask({
 // Output: 'Hello, world!'
 ```
 
-- Parent task with parallel children
+### Retries
+
+```ts
+let totalAttempts = 0
+const taskA = executor.task({
+  id: 'a',
+  timeoutMs: 1000,
+  maxRetryAttempts: 5,
+  run: (ctx, input: { name: string }) => {
+    totalAttempts++
+    if (ctx.attempt < 2) {
+      throw new Error('Failed')
+    }
+    return {
+      totalAttempts,
+      output: `Hello, ${input.name}!`,
+    }
+  },
+})
+
+// Input: { name: 'world' }
+// Output: {
+//   totalAttempts: 3,
+//   output: 'Hello, world!',
+// }
+```
+
+### Task run context
+
+The [run](https://gpahal.github.io/durable-execution/types/DurableTaskOptions.html#run) function
+is passed a context object that contains information about the task execution. See the
+[DurableTaskRunContext](https://gpahal.github.io/durable-execution/types/DurableTaskRunContext.html)
+type for more details.
+
+```ts
+const taskA = executor.task({
+  id: 'a',
+  timeoutMs: 1000,
+  run: (ctx) => {
+    return {
+      taskId: ctx.taskId,
+      executionId: ctx.executionId,
+      attempt: ctx.attempt,
+      prevError: ctx.prevError,
+    }
+  },
+})
+
+// Input: undefined
+// Output: {
+//   taskId: 'a',
+//   executionId: 'te_...',
+//   attempt: 0,
+//   prevError: undefined,
+// }
+```
+
+### Parent task with parallel children
 
 ```mermaid
 flowchart TD
@@ -292,13 +374,17 @@ const parentTask = executor.parentSchemaTask({
 // }
 ```
 
-- Parent task with parallel children and combined output
+### Parent task with parallel children and combined output
 
 ```mermaid
 flowchart TD
   parentTask --> taskA
   parentTask --> taskB
 ```
+
+The `onRunAndChildrenComplete` task is run after the `runParent` function and all the children
+tasks complete. It is useful for combining the output of the `runParent` function and children
+tasks. The output of the `onRunAndChildrenComplete` task is the output of the parent task.
 
 ```ts
 const taskA = executor.task({
@@ -357,13 +443,16 @@ const parentTask = executor.parentTask({
 // }
 ```
 
-- Sequential tasks. Define tasks in the reverse order of execution and return from the last task.
+### Sequential tasks
 
 ```mermaid
 flowchart LR
   taskA --> taskB
   taskB --> taskC
 ```
+
+Define tasks in the reverse order of execution and return from the last task. Use the
+`onRunAndChildrenComplete` task to combine the output of the tasks.
 
 ```ts
 const taskC = executor.task({
@@ -427,7 +516,7 @@ const taskA = executor.parentTask({
 // }
 ```
 
-- Kitchen sink example
+### Task tree
 
 ```mermaid
 flowchart TD
@@ -439,6 +528,8 @@ flowchart TD
   taskB1 --> taskB2
   taskB2 --> taskB3
 ```
+
+Parallel and sequential tasks can be combined to create a tree of tasks.
 
 ```ts
 const taskB3 = executor.task({
@@ -593,6 +684,113 @@ const rootTask = executor.parentTask({
 //   taskB1Output: 'Hello from task B1, world!',
 //   taskB2Output: 'Hello from task B2, world!',
 //   taskB3Output: 'Hello from task B3, world!',
+// }
+```
+
+### Recursive task
+
+Recursive tasks require some type annotations to be able to infer the input and output types, since
+we are using the same variable inside the `runParent` function. Use the `onRunAndChildrenComplete`
+task to coordinate the output of the recursive task and children tasks.
+
+```ts
+const recursiveTask: DurableTask<{ count: number }, { index: number }> = executor
+  .inputSchema(v.object({ index: v.pipe(v.number(), v.integer(), v.minValue(0)) }))
+  .parentTask({
+    id: 'recursive',
+    timeoutMs: 1000,
+    runParent: async (ctx, input) => {
+      await sleep(1)
+      return {
+        output: undefined,
+        children:
+          input.index >= 9 ? [] : [{ task: recursiveTask, input: { index: input.index + 1 } }],
+      }
+    },
+    onRunAndChildrenComplete: {
+      id: 'onRecursiveRunAndChildrenComplete',
+      timeoutMs: 1000,
+      run: (ctx, { childrenOutputs }) => {
+        return {
+          count:
+            1 +
+            childrenOutputs.reduce(
+              (acc, childOutput) => acc + (childOutput.output as { count: number }).count,
+              0,
+            ),
+        }
+      },
+    },
+  })
+
+// Input: { index: 0 }
+// Output: {
+//   count: 10,
+// }
+```
+
+### Polling task
+
+Polling tasks are useful when you want to wait for a value to be available. The
+`sleepMsBeforeAttempt` option is used to wait for a certain amount of time before attempting to
+get the value again. The `onRunAndChildrenComplete` task is used to combine the output of the
+polling task and children tasks.
+
+```ts
+let value: number | undefined
+setTimeout(() => {
+  value = 10
+}, 2000)
+
+const pollingTask: DurableTask<{ count: number; value: number }, { prevCount: number }> =
+  executor
+    .inputSchema(v.object({ prevCount: v.pipe(v.number(), v.integer(), v.minValue(0)) }))
+    .parentTask({
+      id: 'polling',
+      timeoutMs: 1000,
+      sleepMsBeforeAttempt: 100,
+      runParent: (ctx, input) => {
+        if (value != null) {
+          return {
+            output: {
+              isDone: true,
+              value,
+            } as { isDone: false; value: undefined } | { isDone: true; value: number },
+            children: [],
+          }
+        }
+
+        return {
+          output: {
+            isDone: false,
+            value,
+          } as { isDone: false; value: undefined } | { isDone: true; value: number },
+          children: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
+        }
+      },
+      onRunAndChildrenComplete: {
+        id: 'onPollingRunAndChildrenComplete',
+        timeoutMs: 1000,
+        run: (ctx, { input, output, childrenOutputs }) => {
+          if (output.isDone) {
+            return {
+              count: input.prevCount + 1,
+              value: output.value,
+            }
+          }
+
+          return childrenOutputs[0]!.output as {
+            count: number
+            value: number
+          }
+        },
+      },
+    })
+
+// Input: { prevCount: 0 }
+// Output: {
+//   count: 15, // Can be anywhere between 10 and 20 depending on when tasks are picked
+//   value: 10,
 // }
 ```
 

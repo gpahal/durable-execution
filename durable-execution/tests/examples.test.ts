@@ -1,8 +1,9 @@
+import * as v from 'valibot'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutor } from '../src'
+import { DurableExecutor, type DurableTask } from '../src'
 import { InMemoryStorage } from './in-memory-storage'
 
 describe('examples', () => {
@@ -65,6 +66,131 @@ describe('examples', () => {
     expect(finishedExecution.taskId).toBe('a')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBe('Hello, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete task with validate input', async () => {
+    const taskA = executor
+      .validateInput((input: { name: string }) => {
+        if (input.name !== 'world') {
+          throw new Error('Invalid input')
+        }
+        return input
+      })
+      .task({
+        id: 'a',
+        timeoutMs: 1000,
+        run: (ctx, input) => {
+          // ... do some work
+          return `Hello, ${input.name}!`
+        },
+      })
+
+    const handle = await executor.enqueueTask(taskA, { name: 'world' })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('a')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe('Hello, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete task with input schema', async () => {
+    const taskA = executor.inputSchema(v.object({ name: v.string() })).task({
+      id: 'a',
+      timeoutMs: 1000,
+      run: (ctx, input) => {
+        // ... do some work
+        return `Hello, ${input.name}!`
+      },
+    })
+
+    const handle = await executor.enqueueTask(taskA, { name: 'world' })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('a')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe('Hello, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete task with retries', async () => {
+    let totalAttempts = 0
+    const taskA = executor.task({
+      id: 'a',
+      timeoutMs: 1000,
+      maxRetryAttempts: 5,
+      run: (ctx, input: { name: string }) => {
+        totalAttempts++
+        if (ctx.attempt < 2) {
+          throw new Error('Failed')
+        }
+        return {
+          totalAttempts,
+          output: `Hello, ${input.name}!`,
+        }
+      },
+    })
+
+    const handle = await executor.enqueueTask(taskA, { name: 'world' })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('a')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBeDefined()
+    expect(finishedExecution.output.totalAttempts).toBe(3)
+    expect(finishedExecution.output.output).toBe('Hello, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete task run context', async () => {
+    const taskA = executor.task({
+      id: 'a',
+      timeoutMs: 1000,
+      run: (ctx) => {
+        return {
+          taskId: ctx.taskId,
+          executionId: ctx.executionId,
+          attempt: ctx.attempt,
+          prevError: ctx.prevError,
+        }
+      },
+    })
+
+    const handle = await executor.enqueueTask(taskA, undefined)
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('a')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBeDefined()
+    expect(finishedExecution.output.taskId).toBe('a')
+    expect(finishedExecution.output.executionId).toBe(finishedExecution.executionId)
+    expect(finishedExecution.output.attempt).toBe(0)
+    expect(finishedExecution.output.prevError).toBeUndefined()
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -263,7 +389,7 @@ describe('examples', () => {
     )
   })
 
-  it('should complete kitchen sink tasks', async () => {
+  it('should complete task tree', async () => {
     const taskB3 = executor.task({
       id: 'b3',
       timeoutMs: 1000,
@@ -421,6 +547,121 @@ describe('examples', () => {
     expect(finishedExecution.output.taskB1Output).toBe('Hello from task B1, world!')
     expect(finishedExecution.output.taskB2Output).toBe('Hello from task B2, world!')
     expect(finishedExecution.output.taskB3Output).toBe('Hello from task B3, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete recursive task', async () => {
+    const recursiveTask: DurableTask<{ count: number }, { index: number }> = executor
+      .inputSchema(v.object({ index: v.pipe(v.number(), v.integer(), v.minValue(0)) }))
+      .parentTask({
+        id: 'recursive',
+        timeoutMs: 1000,
+        runParent: async (ctx, input) => {
+          await sleep(1)
+          return {
+            output: undefined,
+            children:
+              input.index >= 9 ? [] : [{ task: recursiveTask, input: { index: input.index + 1 } }],
+          }
+        },
+        onRunAndChildrenComplete: {
+          id: 'onRecursiveRunAndChildrenComplete',
+          timeoutMs: 1000,
+          run: (ctx, { childrenOutputs }) => {
+            return {
+              count:
+                1 +
+                childrenOutputs.reduce(
+                  (acc, childOutput) => acc + (childOutput.output as { count: number }).count,
+                  0,
+                ),
+            }
+          },
+        },
+      })
+
+    const handle = await executor.enqueueTask(recursiveTask, { index: 0 })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('recursive')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBeDefined()
+    expect(finishedExecution.output.count).toBe(10)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete polling task', async () => {
+    let value: number | undefined
+    setTimeout(() => {
+      value = 10
+    }, 2000)
+
+    const pollingTask: DurableTask<{ count: number; value: number }, { prevCount: number }> =
+      executor
+        .inputSchema(v.object({ prevCount: v.pipe(v.number(), v.integer(), v.minValue(0)) }))
+        .parentTask({
+          id: 'polling',
+          timeoutMs: 1000,
+          sleepMsBeforeAttempt: 100,
+          runParent: (ctx, input) => {
+            if (value != null) {
+              return {
+                output: {
+                  isDone: true,
+                  value,
+                } as { isDone: false; value: undefined } | { isDone: true; value: number },
+                children: [],
+              }
+            }
+
+            return {
+              output: {
+                isDone: false,
+                value,
+              } as { isDone: false; value: undefined } | { isDone: true; value: number },
+              children: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
+            }
+          },
+          onRunAndChildrenComplete: {
+            id: 'onPollingRunAndChildrenComplete',
+            timeoutMs: 1000,
+            run: (ctx, { input, output, childrenOutputs }) => {
+              if (output.isDone) {
+                return {
+                  count: input.prevCount + 1,
+                  value: output.value,
+                }
+              }
+
+              return childrenOutputs[0]!.output as {
+                count: number
+                value: number
+              }
+            },
+          },
+        })
+
+    const handle = await executor.enqueueTask(pollingTask, { prevCount: 0 })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBeDefined()
+    expect(finishedExecution.output.count).toBeGreaterThanOrEqual(5)
+    expect(finishedExecution.output.count).toBeLessThan(25)
+    expect(finishedExecution.output.value).toBe(10)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(

@@ -1,3 +1,4 @@
+import * as v from 'valibot'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { sleep } from '@gpahal/std/promises'
@@ -10,7 +11,7 @@ import {
 } from '../src'
 import { InMemoryStorage } from './in-memory-storage'
 
-describe('task', () => {
+describe('simpleTask', () => {
   let storage: InMemoryStorage
   let executor: DurableExecutor
 
@@ -83,20 +84,21 @@ describe('task', () => {
 
   it('should complete with valid input', async () => {
     let executed = 0
-    const task = executor.task({
-      id: 'test',
-      timeoutMs: 1000,
-      validateInput: (input) => {
+    const task = executor
+      .validateInput((input: string) => {
         if (input !== 'test') {
           throw new Error('Invalid input')
         }
         return input
-      },
-      run: (_, input: string) => {
-        executed++
-        return input
-      },
-    })
+      })
+      .task({
+        id: 'test',
+        timeoutMs: 1000,
+        run: (_, input) => {
+          executed++
+          return input
+        },
+      })
 
     const handle = await executor.enqueueTask(task, 'test')
 
@@ -116,22 +118,82 @@ describe('task', () => {
 
   it('should fail with invalid input', async () => {
     let executed = 0
-    const task = executor.task({
-      id: 'test',
-      timeoutMs: 1000,
-      validateInput: (input) => {
+    const task = executor
+      .validateInput((input: string) => {
         if (input !== 'test') {
           throw new Error('Invalid input')
         }
         return input
-      },
-      run: (_, input: string) => {
-        executed++
-        return input
-      },
-    })
+      })
+      .task({
+        id: 'test',
+        timeoutMs: 1000,
+        run: (_, input) => {
+          executed++
+          return input
+        },
+      })
 
     await expect(executor.enqueueTask(task, 'invalid')).rejects.toThrow('Invalid input')
+    expect(executed).toBe(0)
+  })
+
+  it('should complete with input schema', async () => {
+    let executed = 0
+    const task = executor
+      .inputSchema(
+        v.object({
+          name: v.string(),
+        }),
+      )
+      .task({
+        id: 'test',
+        timeoutMs: 1000,
+        run: async (_, input) => {
+          executed++
+          await sleep(1)
+          return input.name
+        },
+      })
+
+    const handle = await executor.enqueueTask(task, { name: 'test' })
+
+    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(executed).toBe(1)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('test')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe('test')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should fail with input schema', async () => {
+    let executed = 0
+    const task = executor
+      .inputSchema(
+        v.object({
+          name: v.string(),
+        }),
+      )
+      .task({
+        id: 'test',
+        timeoutMs: 1000,
+        run: async (_, input) => {
+          executed++
+          await sleep(1)
+          return input.name
+        },
+      })
+
+    // @ts-expect-error - Testing invalid input
+    await expect(executor.enqueueTask(task, { name: 0 })).rejects.toThrow(
+      'Invalid input to task test',
+    )
     expect(executed).toBe(0)
   })
 

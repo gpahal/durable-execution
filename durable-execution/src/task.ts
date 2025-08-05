@@ -1,4 +1,3 @@
-import type { StandardSchemaV1 } from '@standard-schema/spec'
 import * as v from 'valibot'
 
 import { getErrorMessage } from '@gpahal/std/errors'
@@ -10,7 +9,7 @@ import {
   DurableTaskTimedOutError,
   type DurableTaskCancelledError,
 } from './errors'
-import { generateId, validateStandardSchema } from './utils'
+import { generateId } from './utils'
 
 /**
  * A durable task that can be run using a durable executor. See the
@@ -20,19 +19,9 @@ import { generateId, validateStandardSchema } from './utils'
  *
  * @category Task
  */
-export class DurableTask<
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  TOutput,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  TRunInput,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  TInput,
-> {
-  readonly id: string
-
-  constructor(id: string) {
-    this.id = id
-  }
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export type DurableTask<TOutput, TInput> = {
+  id: string
 }
 
 const vMaxRetryAttempts = v.pipe(
@@ -57,213 +46,163 @@ const vSleepMsBeforeAttempt = v.pipe(
   }),
 )
 
-export class DurableTaskInternal<TOutput, TRunInput, TInput> {
+export class DurableTaskInternal {
+  private readonly taskInternalsMap: Map<string, DurableTaskInternal>
+
   readonly id: string
-  readonly timeoutMs: number | ((attempt: number) => number)
+  private readonly timeoutMs: number | ((attempt: number) => number)
   readonly maxRetryAttempts: number
-  readonly sleepMsBeforeAttempt: number | ((attempt: number) => number)
-  readonly validateInput: (input: TInput) => Promise<TRunInput>
+  private readonly sleepMsBeforeAttempt: number | ((attempt: number) => number)
+  private readonly validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
   readonly disableChildrenOutputsInOutput: boolean
-  readonly run: (
+  private readonly runParent: (
     ctx: DurableTaskRunContext,
-    input: TRunInput,
+    input: unknown,
   ) => Promise<{
     output: unknown
     children: Array<DurableTaskChild>
   }>
-  readonly onRunAndChildrenComplete?: DurableTaskInternal<
-    TOutput,
-    unknown,
-    DurableTaskOnChildrenCompleteInput<unknown, TRunInput>
-  >
+  readonly onRunAndChildrenComplete: DurableTaskInternal | undefined
 
   constructor(
+    taskInternalsMap: Map<string, DurableTaskInternal>,
     id: string,
     timeoutMs: number | ((attempt: number) => number),
     maxRetryAttempts: number,
     sleepMsBeforeAttempt: number | ((attempt: number) => number),
-    validateInput: (input: TInput) => Promise<TRunInput>,
+    validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
     disableChildrenOutputsInOutput: boolean,
-    run: (
+    runParent: (
       ctx: DurableTaskRunContext,
-      input: TRunInput,
+      input: unknown,
     ) => Promise<{
       output: unknown
       children: Array<DurableTaskChild>
     }>,
-    onRunAndChildrenComplete?: DurableTaskInternal<
-      TOutput,
-      unknown,
-      DurableTaskOnChildrenCompleteInput<unknown, TRunInput>
-    >,
+    onRunAndChildrenComplete?: DurableTaskInternal,
   ) {
+    this.taskInternalsMap = taskInternalsMap
     this.id = id
     this.timeoutMs = timeoutMs
     this.maxRetryAttempts = maxRetryAttempts
     this.sleepMsBeforeAttempt = sleepMsBeforeAttempt
-    this.validateInput = validateInput
+    this.validateInputFn = validateInputFn
     this.disableChildrenOutputsInOutput = disableChildrenOutputsInOutput
-    this.run = run
+    this.runParent = runParent
     this.onRunAndChildrenComplete = onRunAndChildrenComplete
   }
 
-  static fromDurableAnyTaskOptions<TOutput, TRunInput, TInput = TRunInput>(
-    taskOptions: DurableAnyTaskOptions<TOutput, TRunInput, TInput>,
-    taskInternalsMap: Map<string, DurableTaskInternal<unknown, unknown, unknown>>,
-  ): DurableTaskInternal<TOutput, TRunInput, TInput> {
-    let parentTaskOptions: DurableParentTaskOptions<unknown, TOutput, TRunInput, TInput>
-    let disableChildrenOutputsInOutput = false
-    const commonOptions = {
-      id: taskOptions.id,
-      timeoutMs: taskOptions.timeoutMs,
-      maxRetryAttempts: taskOptions.maxRetryAttempts,
-      sleepMsBeforeAttempt: taskOptions.sleepMsBeforeAttempt,
-    } as const
-    if (isDurableTaskOptions(taskOptions)) {
-      parentTaskOptions = {
-        ...commonOptions,
-        validateInput: taskOptions.validateInput,
-        runParent: async (ctx: DurableTaskRunContext, input: TRunInput) => {
-          const output = await taskOptions.run(ctx, input)
-          return {
-            output,
-            children: [],
-          }
-        },
-        onRunAndChildrenComplete: undefined,
-      }
-      disableChildrenOutputsInOutput = true
-    } else if (isDurableParentTaskOptions(taskOptions)) {
-      parentTaskOptions = {
-        ...commonOptions,
-        validateInput: taskOptions.validateInput,
-        runParent: taskOptions.runParent,
-        onRunAndChildrenComplete: taskOptions.onRunAndChildrenComplete,
-      }
-    } else if (isDurableSchemaTaskOptions(taskOptions)) {
-      parentTaskOptions = {
-        ...commonOptions,
-        validateInput: async (input: TInput) => {
-          try {
-            return await validateStandardSchema(taskOptions.inputSchema, input)
-          } catch (error) {
-            throw new DurableTaskError(
-              `Invalid input for schema task ${taskOptions.id}: ${getErrorMessage(error)}`,
-              false,
-            )
-          }
-        },
-        runParent: async (ctx: DurableTaskRunContext, input: TRunInput) => {
-          const output = await taskOptions.run(ctx, input)
-          return {
-            output,
-            children: [],
-          }
-        },
-        onRunAndChildrenComplete: undefined,
-      }
-      disableChildrenOutputsInOutput = true
-    } else if (isDurableParentSchemaTaskOptions(taskOptions)) {
-      parentTaskOptions = {
-        ...commonOptions,
-        validateInput: async (input: TInput) => {
-          try {
-            return await validateStandardSchema(taskOptions.inputSchema, input)
-          } catch (error) {
-            throw new DurableTaskError(
-              `Invalid input for schema task ${taskOptions.id}: ${getErrorMessage(error)}`,
-              false,
-            )
-          }
-        },
-        runParent: taskOptions.runParent,
-        onRunAndChildrenComplete: taskOptions.onRunAndChildrenComplete,
-      }
-    } else {
+  static validateCommonTaskOptions(
+    taskInternalsMap: Map<string, DurableTaskInternal>,
+    taskOptions: Omit<DurableTaskOptions<unknown, unknown>, 'run'>,
+  ): {
+    id: string
+    timeoutMs: number | ((attempt: number) => number)
+    maxRetryAttempts: number
+    sleepMsBeforeAttempt: number | ((attempt: number) => number)
+  } {
+    validateTaskId(taskOptions.id)
+    if (taskInternalsMap.has(taskOptions.id)) {
       throw new DurableTaskError(
-        `Invalid task options for task ${commonOptions.id}: ${JSON.stringify(taskOptions)}`,
+        `Task ${taskOptions.id} already exists. Use unique ids for tasks`,
         false,
       )
     }
 
-    validateTaskId(parentTaskOptions.id)
-    if (taskInternalsMap.has(parentTaskOptions.id)) {
-      throw new DurableTaskError(
-        `Task ${parentTaskOptions.id} already exists. Use unique ids for tasks`,
-        false,
-      )
-    }
-    if (
-      parentTaskOptions.onRunAndChildrenComplete &&
-      taskInternalsMap.has(parentTaskOptions.onRunAndChildrenComplete.id)
-    ) {
-      throw new DurableTaskError(
-        `Task ${parentTaskOptions.id} has a children complete task ${parentTaskOptions.onRunAndChildrenComplete.id} which already exists. Use unique ids for tasks`,
-        false,
-      )
-    }
-
-    const parsedMaxRetryAttempts = v.safeParse(
-      vMaxRetryAttempts,
-      parentTaskOptions.maxRetryAttempts,
-    )
+    const parsedMaxRetryAttempts = v.safeParse(vMaxRetryAttempts, taskOptions.maxRetryAttempts)
     if (!parsedMaxRetryAttempts.success) {
       throw new DurableTaskError(
-        `Invalid max retry attempts for task ${parentTaskOptions.id}: ${v.summarize(parsedMaxRetryAttempts.issues)}`,
+        `Invalid max retry attempts for task ${taskOptions.id}: ${v.summarize(parsedMaxRetryAttempts.issues)}`,
         false,
       )
     }
 
-    const maxRetryAttempts = parsedMaxRetryAttempts.output
-    const sleepMsBeforeAttempt = parentTaskOptions.sleepMsBeforeAttempt ?? 0
+    return {
+      id: taskOptions.id,
+      timeoutMs: taskOptions.timeoutMs,
+      maxRetryAttempts: parsedMaxRetryAttempts.output,
+      sleepMsBeforeAttempt: taskOptions.sleepMsBeforeAttempt ?? 0,
+    }
+  }
 
-    const validateInput = async (input: TInput): Promise<TRunInput> => {
-      if (parentTaskOptions.validateInput == null) {
-        return input as unknown as TRunInput
-      }
+  static fromDurableTaskOptions<TOutput, TRunInput, TInput = TRunInput>(
+    taskInternalsMap: Map<string, DurableTaskInternal>,
+    taskOptions: DurableTaskOptions<TOutput, TRunInput>,
+    validateInputFn?: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
+  ): DurableTaskInternal {
+    const commonOptions = DurableTaskInternal.validateCommonTaskOptions(
+      taskInternalsMap,
+      taskOptions,
+    )
 
-      try {
-        const parsedInput = await parentTaskOptions.validateInput(input)
-        return parsedInput as TRunInput
-      } catch (error) {
-        throw new DurableTaskError(
-          `Invalid input to task ${parentTaskOptions.id}: ${getErrorMessage(error)}`,
-          false,
-        )
+    const runParent = async (ctx: DurableTaskRunContext, input: TRunInput) => {
+      const output = await taskOptions.run(ctx, input)
+      return {
+        output,
+        children: [],
       }
     }
 
-    const onRunAndChildrenComplete = parentTaskOptions.onRunAndChildrenComplete
-      ? (DurableTaskInternal.fromDurableAnyTaskOptions(
-          parentTaskOptions.onRunAndChildrenComplete,
+    const taskInternal = new DurableTaskInternal(
+      taskInternalsMap,
+      commonOptions.id,
+      commonOptions.timeoutMs,
+      commonOptions.maxRetryAttempts,
+      commonOptions.sleepMsBeforeAttempt,
+      validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
+      true,
+      runParent as (
+        ctx: DurableTaskRunContext,
+        input: unknown,
+      ) => Promise<{
+        output: unknown
+        children: Array<DurableTaskChild>
+      }>,
+      undefined,
+    )
+    taskInternalsMap.set(taskInternal.id, taskInternal)
+    return taskInternal
+  }
+
+  static fromDurableParentTaskOptions<TRunOutput, TOutput, TRunInput, TInput = TRunInput>(
+    taskInternalsMap: Map<string, DurableTaskInternal>,
+    taskOptions: DurableParentTaskOptions<TRunOutput, TOutput, TRunInput>,
+    validateInputFn?: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
+  ): DurableTaskInternal {
+    const commonOptions = DurableTaskInternal.validateCommonTaskOptions(
+      taskInternalsMap,
+      taskOptions,
+    )
+
+    const runParent = async (ctx: DurableTaskRunContext, input: TRunInput) => {
+      return await taskOptions.runParent(ctx, input)
+    }
+
+    const onRunAndChildrenComplete = taskOptions.onRunAndChildrenComplete
+      ? DurableTaskInternal.fromDurableTaskOptions(
           taskInternalsMap,
-        ) as DurableTaskInternal<
-          TOutput,
-          unknown,
-          DurableTaskOnChildrenCompleteInput<unknown, TRunInput>
-        >)
+          taskOptions.onRunAndChildrenComplete,
+        )
       : undefined
 
-    const taskInternal = new DurableTaskInternal<TOutput, TRunInput, TInput>(
-      parentTaskOptions.id,
-      parentTaskOptions.timeoutMs,
-      maxRetryAttempts,
-      sleepMsBeforeAttempt,
-      validateInput,
-      disableChildrenOutputsInOutput ?? false,
-      async (ctx, input) => {
-        const result = await parentTaskOptions.runParent(ctx, input)
-        return {
-          output: result.output,
-          children: result.children ?? [],
-        }
-      },
+    const taskInternal = new DurableTaskInternal(
+      taskInternalsMap,
+      commonOptions.id,
+      commonOptions.timeoutMs,
+      commonOptions.maxRetryAttempts,
+      commonOptions.sleepMsBeforeAttempt,
+      validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
+      false,
+      runParent as (
+        ctx: DurableTaskRunContext,
+        input: unknown,
+      ) => Promise<{
+        output: unknown
+        children: Array<DurableTaskChild>
+      }>,
       onRunAndChildrenComplete,
     )
-    taskInternalsMap.set(
-      parentTaskOptions.id,
-      taskInternal as DurableTaskInternal<unknown, unknown, unknown>,
-    )
+    taskInternalsMap.set(taskInternal.id, taskInternal)
     return taskInternal
   }
 
@@ -307,9 +246,16 @@ export class DurableTaskInternal<TOutput, TRunInput, TInput> {
     return parsedSleepMsBeforeAttempt.output
   }
 
+  async validateInput(input: unknown): Promise<unknown> {
+    if (!this.validateInputFn) {
+      return input
+    }
+    return this.validateInputFn(this.id, input)
+  }
+
   async runWithTimeoutAndCancellation(
     ctx: DurableTaskRunContext,
-    input: TRunInput,
+    input: unknown,
     cancelSignal: CancelSignal,
   ): Promise<{
     output: unknown
@@ -319,7 +265,7 @@ export class DurableTaskInternal<TOutput, TRunInput, TInput> {
     const timeoutCancelSignal = createTimeoutCancelSignal(timeoutMs)
     return await createCancellablePromise(
       createCancellablePromise(
-        this.run(ctx, input),
+        this.runParent(ctx, input),
         timeoutCancelSignal,
         new DurableTaskTimedOutError(),
       ),
@@ -329,83 +275,12 @@ export class DurableTaskInternal<TOutput, TRunInput, TInput> {
 }
 
 /**
- * A union type of all the possible task options. It can be used to create a task with the
- * {@link DurableExecutor.task} method. See the
- * [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples) section
- * for more details on creating tasks.
+ * Common options for a durable task. These options are used by both {@link DurableTaskOptions} and
+ * {@link DurableParentTaskOptions}.
  *
  * @category Task
  */
-export type DurableAnyTaskOptions<TOutput, TRunInput, TInput> =
-  | DurableTaskOptions<TOutput, TRunInput, TInput>
-  | DurableParentTaskOptions<unknown, TOutput, TRunInput, TInput>
-  | DurableSchemaTaskOptions<TOutput, StandardSchemaV1<TInput, TRunInput>>
-  | DurableParentSchemaTaskOptions<unknown, TOutput, StandardSchemaV1<TInput, TRunInput>>
-
-function isDurableTaskOptions<TOutput, TRunInput, TInput>(
-  options: DurableAnyTaskOptions<TOutput, TRunInput, TInput>,
-): options is DurableTaskOptions<TOutput, TRunInput, TInput> {
-  return 'run' in options && !('inputSchema' in options)
-}
-
-function isDurableParentTaskOptions<TOutput, TRunInput, TInput>(
-  options: DurableAnyTaskOptions<TOutput, TRunInput, TInput>,
-): options is DurableParentTaskOptions<unknown, TOutput, TRunInput, TInput> {
-  return 'runParent' in options && !('inputSchema' in options)
-}
-
-function isDurableSchemaTaskOptions<TOutput, TRunInput, TInput>(
-  options: DurableAnyTaskOptions<TOutput, TRunInput, TInput>,
-): options is DurableSchemaTaskOptions<TOutput, StandardSchemaV1<TInput, TRunInput>> {
-  return 'run' in options && 'inputSchema' in options
-}
-
-function isDurableParentSchemaTaskOptions<TOutput, TRunInput, TInput>(
-  options: DurableAnyTaskOptions<TOutput, TRunInput, TInput>,
-): options is DurableParentSchemaTaskOptions<
-  unknown,
-  TOutput,
-  StandardSchemaV1<TInput, TRunInput>
-> {
-  return 'runParent' in options && 'inputSchema' in options
-}
-
-/**
- * Options for a durable task that can be run using a durable executor. A task is resilient to task
- * failures, process failures, network connectivity issues, and other transient errors. The task
- * should be idempotent as it may be run multiple times if there is a process failure or if the
- * task is retried.
- *
- * When enqueued with an executor, a {@link DurableTaskHandle} is returned. It supports getting
- * the execution status, waiting for the task to complete, and cancelling the task.
- *
- * The input and output are serialized/deserialized using the serializer passed to the durable
- * executor.
- *
- * Make sure the id is unique among all the durable tasks in the same durable executor. If two
- * tasks are registered with the same id, the second one will overwrite the first one, even if the
- * first one is enqueued.
- *
- * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
- * section for more details on creating tasks.
- *
- * @example
- * ```ts
- * const extractFileTitle = executor.task({
- *   id: 'extractFileTitle',
- *   timeoutMs: 30_000, // 30 seconds
- *   run: async (ctx, input: { filePath: string }) => {
- *     // ... extract the file title
- *     return {
- *       title: 'File Title',
- *     }
- *   },
- * })
- * ```
- *
- * @category Task
- */
-export type DurableTaskOptions<TOutput, TRunInput, TInput = TRunInput> = {
+export type DurableTaskCommonOptions = {
   /**
    * A unique identifier for the task. Can only contain alphanumeric characters and underscores.
    * The identifier must be unique among all the durable tasks in the same durable executor.
@@ -434,11 +309,52 @@ export type DurableTaskOptions<TOutput, TRunInput, TInput = TRunInput> = {
    * If the value is < 0 or undefined, it will be treated as 0.
    */
   sleepMsBeforeAttempt?: number | ((attempt: number) => number)
-  /**
-   * The function to validate the input of the task. It should throw an error if the input is
-   * invalid.
-   */
-  validateInput?: (input: TInput) => TRunInput | Promise<TRunInput>
+}
+
+/**
+ * Options for a durable task that can be run using a durable executor. A task is resilient to task
+ * failures, process failures, network connectivity issues, and other transient errors. The task
+ * should be idempotent as it may be run multiple times if there is a process failure or if the
+ * task is retried.
+ *
+ * When enqueued with an executor, a {@link DurableTaskHandle} is returned. It supports getting
+ * the execution status, waiting for the task to complete, and cancelling the task.
+ *
+ * The output of the {@link run} function is the output of the task.
+ *
+ * The input and output are serialized and deserialized using the serializer passed to the durable
+ * executor.
+ *
+ * Make sure the id is unique among all the durable tasks in the same durable executor. If two
+ * tasks are registered with the same id, the second one will overwrite the first one, even if the
+ * first one is enqueued.
+ *
+ * The tasks can be added to an executor using the {@link DurableExecutor.task} method. If the input
+ * to a task needs to be validated, it can be done using the {@link DurableExecutor.validateInput}
+ * or {@link DurableExecutor.inputSchema} methods.
+ *
+ * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
+ * section for more details on creating tasks.
+ *
+ * @example
+ * ```ts
+ * const extractFileTitle = executor
+ *   .inputSchema(v.object({ filePath: v.string() }))
+ *   .task({
+ *     id: 'extractFileTitle',
+ *     timeoutMs: 30_000, // 30 seconds
+ *     run: async (ctx, input) => {
+ *       // ... extract the file title
+ *       return {
+ *         title: 'File Title',
+ *       }
+ *     },
+ *   })
+ * ```
+ *
+ * @category Task
+ */
+export type DurableTaskOptions<TOutput = unknown, TInput = unknown> = DurableTaskCommonOptions & {
   /**
    * The task run logic. It returns the output.
    *
@@ -451,95 +367,114 @@ export type DurableTaskOptions<TOutput, TRunInput, TInput = TRunInput> = {
    * - Cancelled tasks will not be retried
    *
    * @param ctx - The context object to the task.
-   * @param input - The input of the task.
+   * @param input - The input to the task.
    * @returns The output of the task.
    */
-  run: (ctx: DurableTaskRunContext, input: TRunInput) => TOutput | Promise<TOutput>
+  run: (ctx: DurableTaskRunContext, input: TInput) => TOutput | Promise<TOutput>
 }
 
 /**
- * Options for a durable task with children tasks that can be run using a durable executor. It is
- * similar to {@link DurableParentTaskOptions} with the added functionality that the run function
- * can return children tasks. These children tasks will be run in parallel after the run function
- * completes.
+ * Options for a durable parent task that can be run using a durable executor. It is similar to
+ * {@link DurableTaskOptions} but it returns children tasks to be run in parallel after the run
+ * function completes, along with the output of the parent task.
  *
- * The task will be marked completed only after all the children tasks complete successfully. If any
- * of the children tasks fail, the task will be marked as `children_failed`. In between the run
- * function and the children tasks, the task will be marked as `waiting_for_children`.
+ * The {@link runParent} function is similar to the `run` function in {@link DurableTaskOptions},
+ * but the output is of the form `{ output: TRunOutput, children: Array<DurableTaskChild> }` where
+ * the children are the tasks to be run in parallel after the run function completes.
  *
- * If the run function output and children tasks output need to be combined to produce the final
- * output, you can use {@link onRunAndChildrenComplete} to transform the output to a compatible
- * type. If this is not provided, the task will return an output of type
- * `{ output: TOutput, childrenOutputs: Array<DurableTaskChildOutput> }`. Even if no children tasks
- * are returned, the output will be of this type if {@link onRunAndChildrenComplete} is not
- * provided.
+ * The {@link onRunAndChildrenComplete} task is run after the runParent function and all the
+ * children tasks complete. It is useful for combining the output of the runParent function and
+ * children tasks. It's input has the following properties:
+ *
+ * - `input`: The input of the `onRunAndChildrenComplete` task. Same as the input of runParent
+ *   function.
+ * - `output`: The output of the runParent function.
+ * - `childrenOutputs`: The outputs of the children tasks.
+ *
+ * If {@link onRunAndChildrenComplete} is provided, the output of the whole task is the output of
+ * the {@link onRunAndChildrenComplete} task. If it is not provided, the output of the whole task is
+ * the output of the form
+ * `{ output: TRunOutput, childrenOutputs: Array<DurableTaskChildExecutionOutput> }`.
  *
  * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
  * section for more details on creating tasks.
  *
  * @example
  * ```ts
- * const extractFileTitle = executor.task({
- *   id: 'extractFileTitle',
- *   timeoutMs: 30_000, // 30 seconds
- *   run: async (ctx, input: { filePath: string }) => {
- *     // ... extract the file title
- *     return {
- *       title: 'File Title',
- *     }
- *   },
- * })
- *
- * const summarizeFile = executor.task({
- *   id: 'summarizeFile',
- *   timeoutMs: 30_000, // 30 seconds
- *   run: async (ctx, input: { filePath: string }) => {
- *     // ... summarize the file
- *     return {
- *       summary: 'File summary',
- *     }
- *   },
- * })
- *
- * const uploadFile = executor.parentTask({
- *   id: 'uploadFile',
- *   timeoutMs: 60_000, // 1 minute
- *   runParent: async (ctx, input: { filePath: string; uploadUrl: string }) => {
- *     // ... upload file to the given uploadUrl
- *     // Extract the file title and summarize the file in parallel
- *     return {
- *       output: {
- *         filePath: input.filePath,
- *         uploadUrl: input.uploadUrl,
- *         fileSize: 100,
- *       },
- *       children: [
- *         {
- *           task: extractFileTitle,
- *           input: { filePath: input.filePath },
- *         },
- *         {
- *           task: summarizeFile,
- *           input: { filePath: input.filePath },
- *         },
- *       ],
- *     }
- *   },
- *   onRunAndChildrenComplete: {
- *     id: 'onUploadFileChildrenComplete',
- *     timeoutMs: 60_000, // 1 minute
- *     run: async (ctx, { input, output, childrenOutputs }) => {
- *       // ... combine the output of the run function and children tasks
+ * const extractFileTitle = executor
+ *   .inputSchema(v.object({ filePath: v.string() }))
+ *   .task({
+ *     id: 'extractFileTitle',
+ *     timeoutMs: 30_000, // 30 seconds
+ *     run: async (ctx, input) => {
+ *       // ... extract the file title
  *       return {
- *         filePath: input.filePath,
- *         uploadUrl: input.uploadUrl,
- *         fileSize: 100,
  *         title: 'File Title',
+ *       }
+ *     },
+ *   })
+ *
+ * const summarizeFile = executor
+ *   .validateInput(async (input: { filePath: string }) => {
+ *     if (!isValidFilePath(input.filePath)) {
+ *       throw new Error('Invalid file path')
+ *     }
+ *     return {
+ *       filePath: input.filePath,
+ *     }
+ *   })
+ *   .task({
+ *     id: 'summarizeFile',
+ *     timeoutMs: 30_000, // 30 seconds
+ *     run: async (ctx, input) => {
+ *       // ... summarize the file
+ *       return {
  *         summary: 'File summary',
  *       }
  *     },
- *   },
- * })
+ *   })
+ *
+ * const uploadFile = executor
+ *   .inputSchema(v.object({ filePath: v.string(), uploadUrl: v.string() }))
+ *   .parentTask({
+ *     id: 'uploadFile',
+ *     timeoutMs: 60_000, // 1 minute
+ *     runParent: async (ctx, input) => {
+ *       // ... upload file to the given uploadUrl
+ *       // Extract the file title and summarize the file in parallel
+ *       return {
+ *         output: {
+ *           filePath: input.filePath,
+ *           uploadUrl: input.uploadUrl,
+ *           fileSize: 100,
+ *         },
+ *         children: [
+ *           {
+ *             task: extractFileTitle,
+ *             input: { filePath: input.filePath },
+ *           },
+ *           {
+ *             task: summarizeFile,
+ *             input: { filePath: input.filePath },
+ *           },
+ *         ],
+ *       }
+ *     },
+ *     onRunAndChildrenComplete: {
+ *       id: 'onUploadFileAndChildrenComplete',
+ *       timeoutMs: 60_000, // 1 minute
+ *       run: async (ctx, { input, output, childrenOutputs }) => {
+ *         // ... combine the output of the run function and children tasks
+ *         return {
+ *           filePath: input.filePath,
+ *           uploadUrl: input.uploadUrl,
+ *           fileSize: 100,
+ *           title: 'File Title',
+ *           summary: 'File summary',
+ *         }
+ *       }
+ *     },
+ *   })
  * ```
  *
  * @category Task
@@ -550,22 +485,20 @@ export type DurableParentTaskOptions<
     output: TRunOutput
     childrenOutputs: Array<DurableTaskChildExecutionOutput>
   },
-  TRunInput = unknown,
-  TInput = TRunInput,
-  TOnRunAndChildrenCompleteRunInput = DurableTaskOnChildrenCompleteInput<TRunOutput, TRunInput>,
-> = Omit<DurableTaskOptions<TOutput, TRunInput, TInput>, 'run'> & {
+  TInput = unknown,
+> = DurableTaskCommonOptions & {
   /**
-   * The task run logic. It is similar to {@link DurableTaskOptions.run} but it returns the output
-   * and children tasks to be run in parallel after the run function completes.
+   * The task run logic. It is similar to the `run` function in {@link DurableTaskOptions} but it
+   * returns the output and children tasks to be run in parallel after the run function completes.
    *
    * @param ctx - The context object to the task.
    * @param input - The input of the task.
-   * @returns The output of the task and children tasks to be run in parallel after the run function
-   * completes.
+   * @returns The output of the task and children tasks to be run in parallel after the run
+   * function completes.
    */
   runParent: (
     ctx: DurableTaskRunContext,
-    input: TRunInput,
+    input: TInput,
   ) =>
     | {
         output: TRunOutput
@@ -576,161 +509,38 @@ export type DurableParentTaskOptions<
         children: Array<DurableTaskChild>
       }>
   /**
-   * Task to run after the run function and children tasks complete. This is useful for combining
-   * the output of the run function and children tasks.
-   *
-   * If this is not provided, the task will return an output of type
-   * `{ output: TOutput, childrenOutputs: Array<DurableTaskChildOutput> }`.
+   * Task to run after the runParent function and children tasks complete. This is useful for
+   * combining the output of the run function and children tasks.
    */
-  onRunAndChildrenComplete?: DurableAnyTaskOptions<
-    TOutput,
-    TOnRunAndChildrenCompleteRunInput,
-    DurableTaskOnChildrenCompleteInput<TRunOutput, TRunInput>
-  >
+  onRunAndChildrenComplete?: DurableOnRunAndChildrenCompleteTaskOptions<TRunOutput, TOutput, TInput>
 }
 
 /**
- * Options for a durable task with input schema that can be run using a durable executor. It is
- * similar to {@link DurableTaskOptions} but with an input schema that can validate the input
- * instead of the {@link DurableTaskOptions.validateInput} function.
+ * Options for the `onRunAndChildrenComplete` property in {@link DurableParentTaskOptions}. It is
+ * similar to {@link DurableTaskOptions} but the input is of the form:
  *
- * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
- * section for more details on creating tasks.
- *
- * @example
  * ```ts
- * const extractFileTitle = executor.schemaTask({
- *   id: 'extractFileTitle',
- *   timeoutMs: 30_000, // 30 seconds
- *   inputSchema: z.object({
- *     filePath: z.string(),
- *   }),
- *   run: async (ctx, input) => {
- *     // ... extract the file title
- *     return {
- *       output: {
- *         title: 'File Title',
- *       },
- *     }
- *   },
- * })
+ * {
+ *   input: TRunInput,
+ *   output: TRunOutput,
+ *   childrenOutputs: Array<DurableTaskChildExecutionOutput>
+ * }
  * ```
+ *
+ * No validation is done on the input and the output of the parent task is the output of the
+ * `onRunAndChildrenComplete` task.
  *
  * @category Task
  */
-export type DurableSchemaTaskOptions<TOutput, TInputSchema extends StandardSchemaV1> = Omit<
-  DurableTaskOptions<
-    TOutput,
-    StandardSchemaV1.InferOutput<TInputSchema>,
-    StandardSchemaV1.InferInput<TInputSchema>
-  >,
-  'validateInput'
-> & {
-  /**
-   * The input schema of the task.
-   */
-  inputSchema: TInputSchema
-}
-
-/**
- * Options for a durable task with input schema that can be run using a durable executor. It is
- * similar to {@link DurableTaskOptions} but with an input schema that can validate the input
- * instead of the {@link DurableTaskOptions.validateInput} function.
- *
- * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
- * section for more details on creating tasks.
- *
- * @example
- * ```ts
- * const extractFileTitle = executor.task({
- *   id: 'extractFileTitle',
- *   timeoutMs: 30_000, // 30 seconds
- *   run: async (ctx, input: { filePath: string }) => {
- *     // ... extract the file title
- *     return {
- *       title: 'File Title',
- *     }
- *   },
- * })
- *
- * const summarizeFile = executor.task({
- *   id: 'summarizeFile',
- *   timeoutMs: 30_000, // 30 seconds
- *   run: async (ctx, input: { filePath: string }) => {
- *     // ... summarize the file
- *     return {
- *       summary: 'File summary',
- *     }
- *   },
- * })
- *
- * const uploadFile = executor.parentSchemaTask({
- *   id: 'uploadFile',
- *   timeoutMs: 60_000, // 1 minute
- *   inputSchema: z.object({
- *     filePath: z.string(),
- *     uploadUrl: z.string(),
- *   }),
- *   runParent: async (ctx, input) => {
- *     // ... upload file to the given uploadUrl
- *     // Extract the file title and summarize the file in parallel
- *     return {
- *       output: {
- *         filePath: input.filePath,
- *         uploadUrl: input.uploadUrl,
- *         fileSize: 100,
- *       },
- *       children: [
- *         {
- *           task: extractFileTitle,
- *           input: { filePath: input.filePath },
- *         },
- *         {
- *           task: summarizeFile,
- *           input: { filePath: input.filePath },
- *         },
- *       ],
- *     }
- *   },
- *   onRunAndChildrenComplete: {
- *     id: 'onUploadFileChildrenComplete',
- *     timeoutMs: 60_000, // 1 minute
- *     run: async (ctx, { input, output, childrenOutputs }) => {
- *       // ... combine the output of the run function and children tasks
- *       return {
- *         filePath: input.filePath,
- *         uploadUrl: input.uploadUrl,
- *         fileSize: 100,
- *         title: 'File Title',
- *         summary: 'File summary',
- *       }
- *     },
- *   },
- * })
- * ```
- *
- * @category Task
- */
-export type DurableParentSchemaTaskOptions<
-  TRunOutput,
-  TOutput = {
-    output: TRunOutput
-    childrenOutputs: Array<DurableTaskChildExecutionOutput>
-  },
-  TInputSchema extends StandardSchemaV1 = StandardSchemaV1<unknown, unknown>,
-> = Omit<
-  DurableParentTaskOptions<
-    TRunOutput,
-    TOutput,
-    StandardSchemaV1.InferOutput<TInputSchema>,
-    StandardSchemaV1.InferInput<TInputSchema>
-  >,
-  'validateInput'
-> & {
-  /**
-   * The input schema of the task.
-   */
-  inputSchema: TInputSchema
+export type DurableOnRunAndChildrenCompleteTaskOptions<
+  TRunOutput = unknown,
+  TOutput = unknown,
+  TInput = unknown,
+> = DurableTaskCommonOptions & {
+  run: (
+    ctx: DurableTaskRunContext,
+    input: DurableTaskOnChildrenCompleteInput<TRunOutput, TInput>,
+  ) => TOutput | Promise<TOutput>
 }
 
 /**
@@ -738,8 +548,8 @@ export type DurableParentSchemaTaskOptions<
  *
  * @category Task
  */
-export type DurableTaskOnChildrenCompleteInput<TRunOutput = unknown, TRunInput = unknown> = {
-  input: TRunInput
+export type DurableTaskOnChildrenCompleteInput<TRunOutput = unknown, TInput = unknown> = {
+  input: TInput
   output: TRunOutput
   childrenOutputs: Array<DurableTaskChildExecutionOutput>
 }
@@ -750,6 +560,14 @@ export type DurableTaskOnChildrenCompleteInput<TRunOutput = unknown, TRunInput =
  * @category Task
  */
 export type DurableTaskRunContext = {
+  /**
+   * The task id.
+   */
+  taskId: string
+  /**
+   * The task execution id.
+   */
+  executionId: string
   /**
    * The cancel signal of the task. It can be used to gracefully shutdown the task run function
    * when the task has been cancelled.
@@ -974,8 +792,8 @@ export type DurableTaskCancelledExecution<TRunInput = unknown> = Omit<
  *
  * @category Task
  */
-export type DurableTaskChild<TInput = unknown> = {
-  task: DurableTask<unknown, unknown, TInput>
+export type DurableTaskChild<TOutput = unknown, TInput = unknown> = {
+  task: DurableTask<TOutput, TInput>
   input: TInput
 }
 

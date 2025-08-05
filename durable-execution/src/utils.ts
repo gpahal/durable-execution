@@ -4,8 +4,6 @@ import { customAlphabet } from 'nanoid'
 
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableTaskError } from './errors'
-
 /**
  * Sleep with jitter.
  *
@@ -27,31 +25,14 @@ const _ALPHABET = '0123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz'
 export const generateId = customAlphabet(_ALPHABET, 24)
 
 /**
- * Validate input against a standard schema.
- *
- * @param schema - The input schema.
- * @param input - The input to validate.
- * @returns The validated output.
- * @throws A {@link DurableTaskError} if the input is invalid.
- */
-export async function validateStandardSchema<TInputSchema extends StandardSchemaV1>(
-  schema: TInputSchema,
-  input: StandardSchemaV1.InferInput<TInputSchema>,
-): Promise<StandardSchemaV1.InferOutput<TInputSchema>> {
-  const validateResult = await schema['~standard'].validate(input)
-  if (validateResult.issues != null) {
-    throw new DurableTaskError(summarizeStandardSchemaIssues(validateResult.issues), false)
-  }
-  return validateResult.value
-}
-
-/**
  * Summarize standard schema issues.
  *
  * @param issues - The issues to summarize.
  * @returns A summary of the issues.
  */
-function summarizeStandardSchemaIssues(issues: ReadonlyArray<StandardSchemaV1.Issue>): string {
+export function summarizeStandardSchemaIssues(
+  issues: ReadonlyArray<StandardSchemaV1.Issue>,
+): string {
   let summary = ''
   for (const issue of issues) {
     if (summary) {
