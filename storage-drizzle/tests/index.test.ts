@@ -190,7 +190,7 @@ async function runExecutorTest(executor: DurableExecutor) {
     },
   })
 
-  const concurrentTasks: Array<DurableTask<string, string, string>> = []
+  const concurrentTasks: Array<DurableTask<string, string>> = []
   for (let i = 0; i < 100; i++) {
     concurrentTasks.push(
       executor.task({

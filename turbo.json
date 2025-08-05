@@ -11,11 +11,11 @@
       "cache": false
     },
     "test": {
-      "dependsOn": ["^test"],
+      "dependsOn": ["^build", "^test"],
       "inputs": ["$TURBO_DEFAULT$", "vitest.config.ts"]
     },
     "test-coverage": {
-      "dependsOn": ["^test-coverage"],
+      "dependsOn": ["^build", "^test-coverage"],
       "inputs": ["$TURBO_DEFAULT$", "vitest.config.ts"],
       "outputs": ["coverage/**"]
     },
