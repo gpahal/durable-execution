@@ -180,7 +180,11 @@ export class DurableTaskInternal {
     )
 
     const runParent = async (ctx: DurableTaskRunContext, input: TRunInput) => {
-      return await taskOptions.runParent(ctx, input)
+      const runParentOutput = await taskOptions.runParent(ctx, input)
+      return {
+        output: runParentOutput.output,
+        children: runParentOutput.children ?? [],
+      }
     }
 
     let onRunAndChildrenComplete: DurableTaskInternal | undefined
@@ -520,11 +524,11 @@ export type DurableParentTaskOptions<
   ) =>
     | {
         output: TRunOutput
-        children: Array<DurableTaskChild>
+        children?: Array<DurableTaskChild>
       }
     | Promise<{
         output: TRunOutput
-        children: Array<DurableTaskChild>
+        children?: Array<DurableTaskChild>
       }>
   /**
    * Task to run after the runParent function and children tasks complete. This is useful for

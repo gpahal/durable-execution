@@ -455,8 +455,74 @@ flowchart LR
   taskB --> taskC
 ```
 
-Define tasks in the reverse order of execution and return from the last task. Use the
-`onRunAndChildrenComplete` task to combine the output of the tasks.
+Using the `sequentialTasks` method in the
+[DurableExecutor](https://gpahal.github.io/durable-execution/classes/DurableExecutor.html) class,
+you can create a sequential task that runs a list of tasks sequentially.
+
+The tasks list must be a list of tasks that are compatible with each other. The input of any task
+must be the same as the output of the previous task. The output of the last task will be the output
+of the sequential task.
+
+The tasks list cannot be empty.
+
+```ts
+const taskA = executor.task({
+  id: 'a',
+  timeoutMs: 1000,
+  run: (ctx, input: { name: string }) => {
+    return {
+      name: input.name,
+      taskAOutput: `Hello from task A, ${input.name}!`,
+    }
+  },
+})
+const taskB = executor.task({
+  id: 'b',
+  timeoutMs: 1000,
+  run: (ctx, input: { name: string; taskAOutput: string }) => {
+    return {
+      name: input.name,
+      taskAOutput: input.taskAOutput,
+      taskBOutput: `Hello from task B, ${input.name}!`,
+    }
+  },
+})
+const taskC = executor.task({
+  id: 'c',
+  timeoutMs: 1000,
+  run: (ctx, input: { name: string; taskAOutput: string; taskBOutput: string }) => {
+    return {
+      taskAOutput: input.taskAOutput,
+      taskBOutput: input.taskBOutput,
+      taskCOutput: `Hello from task C, ${input.name}!`,
+    }
+  },
+})
+
+const task = executor.sequentialTasks(taskA, taskB, taskC)
+
+// Input: { name: 'world' }
+// Output: {
+//   taskAOutput: 'Hello from task A, world!',
+//   taskBOutput: 'Hello from task B, world!',
+//   taskCOutput: 'Hello from task C, world!',
+// }
+```
+
+### Sequential tasks (manually)
+
+```mermaid
+flowchart LR
+  taskA --> taskB
+  taskB --> taskC
+```
+
+The sequential tasks can also be created manually just by using the `parentTask` method. Although
+the `sequentialTasks` method is more convenient, it is useful to know how to create sequential
+tasks manually.
+
+The `onRunAndChildrenComplete` task can itself be a parent task with parallel children. This
+property can be used spawn parallel children from the task `runParent` function and then using the `onRunAndChildrenComplete` task to run a sequential task.
 
 ```ts
 const taskC = executor.task({
@@ -472,17 +538,26 @@ const taskB = executor.parentTask({
   runParent: (ctx, input: { name: string }) => {
     return {
       output: `Hello from task B, ${input.name}!`,
-      children: [{ task: taskC, input: { name: input.name } }],
     }
   },
   onRunAndChildrenComplete: {
     id: 'onTaskBRunAndChildrenComplete',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenOutputs }) => {
+    runParent: (ctx, { input, output }) => {
       return {
-        taskBOutput: output,
-        taskCOutput: childrenOutputs[0]!.output as string,
+        output,
+        children: [{ task: taskC, input: { name: input.name } }],
       }
+    },
+    onRunAndChildrenComplete: {
+      id: 'onTaskBRunAndChildrenCompleteNested',
+      timeoutMs: 1000,
+      run: (ctx, { output, childrenOutputs }) => {
+        return {
+          taskBOutput: output,
+          taskCOutput: childrenOutputs[0]!.output as string,
+        }
+      },
     },
   },
 })
@@ -492,22 +567,31 @@ const taskA = executor.parentTask({
   runParent: (ctx, input: { name: string }) => {
     return {
       output: `Hello from task A, ${input.name}!`,
-      children: [{ task: taskB, input: { name: input.name } }],
     }
   },
   onRunAndChildrenComplete: {
     id: 'onTaskARunAndChildrenComplete',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenOutputs }) => {
-      const taskBOutput = childrenOutputs[0]!.output as {
-        taskBOutput: string
-        taskCOutput: string
-      }
+    runParent: (ctx, { input, output }) => {
       return {
-        taskAOutput: output,
-        taskBOutput: taskBOutput.taskBOutput,
-        taskCOutput: taskBOutput.taskCOutput,
+        output,
+        children: [{ task: taskB, input: { name: input.name } }],
       }
+    },
+    onRunAndChildrenComplete: {
+      id: 'onTaskARunAndChildrenCompleteNested',
+      timeoutMs: 1000,
+      run: (ctx, { output, childrenOutputs }) => {
+        const taskBOutput = childrenOutputs[0]!.output as {
+          taskBOutput: string
+          taskCOutput: string
+        }
+        return {
+          taskAOutput: output,
+          taskBOutput: taskBOutput.taskBOutput,
+          taskCOutput: taskBOutput.taskCOutput,
+        }
+      },
     },
   },
 })
@@ -533,8 +617,8 @@ flowchart TD
   taskB --> taskB2
 ```
 
-The `onRunAndChildrenComplete` task can itself be a parent task with parallel children. This
-property can be used spawn parallel children from the task `runParent` function and then using the `onRunAndChildrenComplete` task to run a sequential task.
+Similar to the sequential tasks example with `sequentialTasks` but with each task also having
+parallel children.
 
 ```ts
 const taskA1 = executor.task({
@@ -566,30 +650,6 @@ const taskB2 = executor.task({
   },
 })
 
-const taskB = executor.parentTask({
-  id: 'b',
-  timeoutMs: 1000,
-  runParent: (ctx, input: { name: string }) => {
-    return {
-      output: `Hello from task B, ${input.name}!`,
-      children: [
-        { task: taskB1, input: { name: input.name } },
-        { task: taskB2, input: { name: input.name } },
-      ],
-    }
-  },
-  onRunAndChildrenComplete: {
-    id: 'onTaskBRunAndChildrenComplete',
-    timeoutMs: 1000,
-    run: (ctx, { output, childrenOutputs }) => {
-      return {
-        taskBOutput: output,
-        taskB1Output: childrenOutputs[0]!.output as string,
-        taskB2Output: childrenOutputs[1]!.output as string,
-      }
-    },
-  },
-})
 const taskA = executor.parentTask({
   id: 'a',
   timeoutMs: 1000,
@@ -605,34 +665,45 @@ const taskA = executor.parentTask({
   onRunAndChildrenComplete: {
     id: 'onTaskARunAndChildrenComplete',
     timeoutMs: 1000,
-    runParent: (ctx, { input, output, childrenOutputs }) => {
+    run: (ctx, { input, output, childrenOutputs }) => {
       return {
-        output: {
-          taskAOutput: output,
-          taskA1Output: childrenOutputs[0]!.output as string,
-          taskA2Output: childrenOutputs[1]!.output as string,
-        },
-        children: [{ task: taskB, input: { name: input.name } }],
+        name: input.name,
+        taskAOutput: output,
+        taskA1Output: childrenOutputs[0]!.output as string,
+        taskA2Output: childrenOutputs[1]!.output as string,
       }
     },
-    onRunAndChildrenComplete: {
-      id: 'onTaskARunAndChildrenCompleteNested',
-      timeoutMs: 1000,
-      run: (ctx, { output, childrenOutputs }) => {
-        const taskBOutput = childrenOutputs[0]!.output as {
-          taskBOutput: string
-          taskB1Output: string
-          taskB2Output: string
-        }
-        return {
-          taskAOutput: output.taskAOutput,
-          taskA1Output: output.taskA1Output,
-          taskA2Output: output.taskA2Output,
-          taskBOutput: taskBOutput.taskBOutput,
-          taskB1Output: taskBOutput.taskB1Output,
-          taskB2Output: taskBOutput.taskB2Output,
-        }
+  },
+})
+const taskB = executor.parentTask({
+  id: 'b',
+  timeoutMs: 1000,
+  runParent: (
+    ctx,
+    input: { name: string; taskAOutput: string; taskA1Output: string; taskA2Output: string },
+  ) => {
+    return {
+      output: {
+        taskAOutput: input.taskAOutput,
+        taskA1Output: input.taskA1Output,
+        taskA2Output: input.taskA2Output,
+        taskBOutput: `Hello from task B, ${input.name}!`,
       },
+      children: [
+        { task: taskB1, input: { name: input.name } },
+        { task: taskB2, input: { name: input.name } },
+      ],
+    }
+  },
+  onRunAndChildrenComplete: {
+    id: 'onTaskBRunAndChildrenComplete',
+    timeoutMs: 1000,
+    run: (ctx, { output, childrenOutputs }) => {
+      return {
+        ...output,
+        taskB1Output: childrenOutputs[0]!.output as string,
+        taskB2Output: childrenOutputs[1]!.output as string,
+      }
     },
   },
 })
@@ -664,58 +735,39 @@ flowchart TD
 Parallel and sequential tasks can be combined to create a tree of tasks.
 
 ```ts
+const taskB1 = executor.task({
+  id: 'b1',
+  timeoutMs: 1000,
+  run: (ctx, input: { name: string }) => {
+    return {
+      name: input.name,
+      taskB1Output: `Hello from task B1, ${input.name}!`,
+    }
+  },
+})
+const taskB2 = executor.task({
+  id: 'b2',
+  timeoutMs: 1000,
+  run: (ctx, input: { name: string; taskB1Output: string }) => {
+    return {
+      name: input.name,
+      taskB1Output: input.taskB1Output,
+      taskB2Output: `Hello from task B2, ${input.name}!`,
+    }
+  },
+})
 const taskB3 = executor.task({
   id: 'b3',
   timeoutMs: 1000,
-  run: (ctx, input: { name: string }) => {
-    return `Hello from task B3, ${input.name}!`
-  },
-})
-const taskB2 = executor.parentTask({
-  id: 'b2',
-  timeoutMs: 1000,
-  runParent: (ctx, input: { name: string }) => {
+  run: (ctx, input: { name: string; taskB1Output: string; taskB2Output: string }) => {
     return {
-      output: `Hello from task B2, ${input.name}!`,
-      children: [{ task: taskB3, input: { name: input.name } }],
+      taskB1Output: input.taskB1Output,
+      taskB2Output: input.taskB2Output,
+      taskB3Output: `Hello from task B3, ${input.name}!`,
     }
   },
-  onRunAndChildrenComplete: {
-    id: 'onTaskB2RunAndChildrenComplete',
-    timeoutMs: 1000,
-    run: (ctx, { output, childrenOutputs }) => {
-      return {
-        taskB2Output: output,
-        taskB3Output: childrenOutputs[0]!.output as string,
-      }
-    },
-  },
 })
-const taskB1 = executor.parentTask({
-  id: 'b1',
-  timeoutMs: 1000,
-  runParent: (ctx, input: { name: string }) => {
-    return {
-      output: `Hello from task B1, ${input.name}!`,
-      children: [{ task: taskB2, input: { name: input.name } }],
-    }
-  },
-  onRunAndChildrenComplete: {
-    id: 'onTaskB1RunAndChildrenComplete',
-    timeoutMs: 1000,
-    run: (ctx, { output, childrenOutputs }) => {
-      const taskB2Output = childrenOutputs[0]!.output as {
-        taskB2Output: string
-        taskB3Output: string
-      }
-      return {
-        taskB1Output: output,
-        taskB2Output: taskB2Output.taskB2Output,
-        taskB3Output: taskB2Output.taskB3Output,
-      }
-    },
-  },
-})
+const taskB = executor.sequentialTasks(taskB1, taskB2, taskB3)
 
 const taskA1 = executor.task({
   id: 'a1',
@@ -773,7 +825,7 @@ const rootTask = executor.parentTask({
       output: `Hello from root task, ${input.name}!`,
       children: [
         { task: taskA, input: { name: input.name } },
-        { task: taskB1, input: { name: input.name } },
+        { task: taskB, input: { name: input.name } },
       ],
     }
   },
@@ -787,7 +839,7 @@ const rootTask = executor.parentTask({
         taskA2Output: string
         taskA3Output: string
       }
-      const taskB1Output = childrenOutputs[1]!.output as {
+      const taskBOutput = childrenOutputs[1]!.output as {
         taskB1Output: string
         taskB2Output: string
         taskB3Output: string
@@ -798,9 +850,9 @@ const rootTask = executor.parentTask({
         taskA1Output: taskAOutput.taskA1Output,
         taskA2Output: taskAOutput.taskA2Output,
         taskA3Output: taskAOutput.taskA3Output,
-        taskB1Output: taskB1Output.taskB1Output,
-        taskB2Output: taskB1Output.taskB2Output,
-        taskB3Output: taskB1Output.taskB3Output,
+        taskB1Output: taskBOutput.taskB1Output,
+        taskB2Output: taskBOutput.taskB2Output,
+        taskB3Output: taskBOutput.taskB3Output,
       }
     },
   },

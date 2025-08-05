@@ -33,7 +33,7 @@ import {
   type DurableTaskOptions,
   type DurableTaskRunContext,
 } from './task'
-import { sleepWithJitter, summarizeStandardSchemaIssues } from './utils'
+import { generateId, sleepWithJitter, summarizeStandardSchemaIssues } from './utils'
 
 export {
   type CancelSignal,
@@ -540,16 +540,73 @@ export class DurableExecutor {
   }
 
   /**
+   * Create a new task that runs a sequence of tasks sequentially.
+   *
+   * The tasks list must be a list of tasks that are compatible with each other. The input of any
+   * task must be the same as the output of the previous task. The output of the last task will be
+   * the output of the sequential task.
+   *
+   * The tasks list cannot be empty.
+   *
+   * @param tasks - The tasks to run sequentially.
+   * @returns The sequential task.
+   */
+  sequentialTasks<T extends ReadonlyArray<DurableTask<unknown, unknown>>>(
+    ...tasks: SequentialDurableTasks<T>
+  ): DurableTask<ExtractDurableTaskInput<T[0]>, ExtractDurableTaskOutput<LastElement<T>>> {
+    if (tasks.length === 0) {
+      throw new DurableTaskError('No tasks provided', false)
+    }
+    if (tasks.length === 1) {
+      return tasks[0]
+    }
+
+    const firstTask = tasks[0]
+    const secondTask = this.sequentialTasks(
+      ...(tasks.slice(1) as SequentialDurableTasks<ReadonlyArray<DurableTask<unknown, unknown>>>),
+    )
+    const taskId = `st_${generateId(16)}`
+    return this.parentTask({
+      id: taskId,
+      timeoutMs: 1000,
+      runParent: (_, input) => {
+        return {
+          output: undefined,
+          children: [{ task: firstTask, input }],
+        }
+      },
+      onRunAndChildrenComplete: {
+        id: `${taskId}_on_run_and_children_complete_1`,
+        timeoutMs: 1000,
+        runParent: (_, { childrenOutputs }) => {
+          const firstTaskOutput = childrenOutputs[0]!.output
+          return { output: undefined, children: [{ task: secondTask, input: firstTaskOutput }] }
+        },
+        onRunAndChildrenComplete: {
+          id: `${taskId}_on_run_and_children_complete_2`,
+          timeoutMs: 1000,
+          run: (_, { childrenOutputs }) => {
+            const secondTaskOutput = childrenOutputs[0]!.output as ExtractDurableTaskOutput<
+              LastElement<T>
+            >
+            return secondTaskOutput
+          },
+        },
+      },
+    })
+  }
+
+  /**
    * Enqueue a task for execution.
    *
    * @param task - The task to enqueue.
    * @param input - The input to the task.
    * @returns A handle to the task execution.
    */
-  async enqueueTask<TInput = unknown, TOutput = unknown>(
-    task: DurableTask<TInput, TOutput>,
-    input: TInput,
-  ): Promise<DurableTaskHandle<TOutput>> {
+  async enqueueTask<TTask extends DurableTask<unknown, unknown>>(
+    task: TTask,
+    input: ExtractDurableTaskInput<TTask>,
+  ): Promise<DurableTaskHandle<ExtractDurableTaskOutput<TTask>>> {
     this.throwIfShutdown()
 
     const taskInternal = this.taskInternalsMap.get(task.id)
@@ -1586,3 +1643,38 @@ export class DurableExecutor {
     return new Set(this.runningTaskExecutionsMap.keys())
   }
 }
+
+type LastElement<T extends ReadonlyArray<unknown>> = T extends readonly [...Array<unknown>, infer L]
+  ? L
+  : never
+
+type ExtractDurableTaskInput<T> = T extends DurableTask<infer I, unknown> ? I : never
+type ExtractDurableTaskOutput<T> = T extends DurableTask<unknown, infer O> ? O : never
+
+/**
+ * The type of a sequence of tasks.
+ *
+ * @category Task
+ */
+export type SequentialDurableTasks<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
+  T extends readonly [] ? never : SequentialDurableTasksHelper<T>
+
+export type SequentialDurableTasksHelper<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
+  T extends readonly []
+    ? T
+    : T extends readonly [DurableTask<infer _I1, infer _O1>]
+      ? T
+      : T extends readonly [
+            DurableTask<infer I1, infer O1>,
+            DurableTask<infer I2, infer O2>,
+            ...infer Rest,
+          ]
+        ? O1 extends I2
+          ? Rest extends ReadonlyArray<DurableTask<unknown, unknown>>
+            ? readonly [
+                DurableTask<I1, O1>,
+                ...SequentialDurableTasksHelper<readonly [DurableTask<I2, O2>, ...Rest]>,
+              ]
+            : never
+          : never
+        : T

@@ -854,4 +854,64 @@ describe('simpleTask', () => {
       finishedExecution.finishedAt.getTime() - finishedExecution.startedAt.getTime(),
     ).toBeLessThan(2000)
   })
+
+  it('should complete sequential tasks', async () => {
+    let executed = 0
+    const taskString = executor.task({
+      id: 'string',
+      timeoutMs: 1000,
+      run: (ctx, input: string) => {
+        executed++
+        return input
+      },
+    })
+    const taskNumber = executor.validateInput(Number).task({
+      id: 'number',
+      timeoutMs: 1000,
+      run: (ctx, input) => {
+        executed++
+        return input
+      },
+    })
+    const taskBoolean = executor.task({
+      id: 'boolean',
+      timeoutMs: 1000,
+      run: (ctx, input: number) => {
+        executed++
+        return input > 10 ? true : false
+      },
+    })
+
+    const task = executor.sequentialTasks(taskString, taskNumber, taskBoolean)
+
+    let handle = await executor.enqueueTask(task, '10.5')
+
+    let finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(executed).toBe(3)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toContain('st_')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe(true)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+
+    handle = await executor.enqueueTask(task, '9.5')
+
+    finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    expect(executed).toBe(6)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toContain('st_')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe(false)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
 })
