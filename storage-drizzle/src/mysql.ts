@@ -199,20 +199,21 @@ class MySQLDurableStorageTx<
     where: DurableTaskExecutionStorageWhere,
     update: DurableTaskExecutionStorageObjectUpdate,
   ): Promise<Array<string>> {
-    const whereCondition = buildWhereCondition(this.table, where)
-
-    // First, get the IDs that will be updated
-    const idsToUpdate = await this.tx
+    const rowsToUpdate = await this.tx
       .select({ executionId: this.table.executionId })
       .from(this.table)
-      .where(whereCondition)
-
-    // Then perform the update
-    if (idsToUpdate.length > 0) {
-      await this.tx.update(this.table).set(storageUpdateToUpdateValue(update)).where(whereCondition)
+      .where(buildWhereCondition(this.table, where))
+      .for('update')
+    if (rowsToUpdate.length === 0) {
+      return []
     }
 
-    return idsToUpdate.map((row) => row.executionId)
+    const executionIds = rowsToUpdate.map((row) => row.executionId)
+    await this.tx
+      .update(this.table)
+      .set(storageUpdateToUpdateValue(update))
+      .where(inArray(this.table.executionId, executionIds))
+    return executionIds
   }
 }
 

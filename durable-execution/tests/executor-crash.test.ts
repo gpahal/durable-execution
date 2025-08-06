@@ -33,6 +33,7 @@ describe('executorCrash', () => {
     const executor = new DurableExecutor(storage, {
       enableDebug: false,
       expireMs: 1000,
+      backgroundProcessIntraBatchSleepMs: 50,
     })
 
     let executed = 0

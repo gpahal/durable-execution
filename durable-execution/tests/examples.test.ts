@@ -14,6 +14,7 @@ describe('examples', () => {
     storage = new InMemoryStorage({ enableDebug: false })
     executor = new DurableExecutor(storage, {
       enableDebug: false,
+      backgroundProcessIntraBatchSleepMs: 50,
     })
     void executor.start()
   })

@@ -200,6 +200,7 @@ export class DurableExecutor {
   private readonly serializer: Serializer
   private readonly logger: Logger
   private readonly expireMs: number
+  private readonly backgroundProcessIntraBatchSleepMs: number
   private readonly taskInternalsMap: Map<string, DurableTaskInternal>
   private readonly runningTaskExecutionsMap: Map<
     string,
@@ -230,8 +231,15 @@ export class DurableExecutor {
       serializer,
       logger,
       enableDebug = false,
-      expireMs, // 1 minute
-    }: { serializer?: Serializer; logger?: Logger; enableDebug?: boolean; expireMs?: number } = {},
+      expireMs,
+      backgroundProcessIntraBatchSleepMs,
+    }: {
+      serializer?: Serializer
+      logger?: Logger
+      enableDebug?: boolean
+      expireMs?: number
+      backgroundProcessIntraBatchSleepMs?: number
+    } = {},
   ) {
     this.storage = storage
     this.serializer = wrapSerializer(serializer ?? createSuperjsonSerializer())
@@ -240,6 +248,10 @@ export class DurableExecutor {
       this.logger = createLoggerDebugDisabled(this.logger)
     }
     this.expireMs = expireMs && expireMs > 0 ? expireMs : 60_000 // 1 minute
+    this.backgroundProcessIntraBatchSleepMs =
+      backgroundProcessIntraBatchSleepMs && backgroundProcessIntraBatchSleepMs > 0
+        ? backgroundProcessIntraBatchSleepMs
+        : 500 // 500ms
 
     this.taskInternalsMap = new Map()
     this.runningTaskExecutionsMap = new Map()
@@ -682,6 +694,9 @@ export class DurableExecutor {
           signal instanceof AbortSignal
             ? createCancelSignal({ abortSignal: signal, logger: this.logger })[0]
             : signal
+
+        const resolvedPollingIntervalMs =
+          pollingIntervalMs && pollingIntervalMs > 0 ? pollingIntervalMs : 1000
         let isFirstIteration = true
         while (true) {
           if (cancelSignal?.isCancelled()) {
@@ -691,8 +706,6 @@ export class DurableExecutor {
           if (isFirstIteration) {
             isFirstIteration = false
           } else {
-            const resolvedPollingIntervalMs =
-              pollingIntervalMs && pollingIntervalMs > 0 ? pollingIntervalMs : 1000
             await createCancellablePromise(sleep(resolvedPollingIntervalMs), cancelSignal)
 
             if (cancelSignal?.isCancelled()) {
@@ -707,14 +720,18 @@ export class DurableExecutor {
             })
             return executions.length === 0 ? undefined : executions[0]
           })
-          if (execution && FINISHED_TASK_EXECUTION_STATUSES.includes(execution.status)) {
+          if (!execution) {
+            throw new DurableTaskError(`Execution ${executionId} not found`, false)
+          }
+
+          if (FINISHED_TASK_EXECUTION_STATUSES.includes(execution.status)) {
             return convertTaskExecutionStorageObjectToTaskExecution(
               execution,
               this.serializer,
             ) as DurableTaskFinishedExecution<TOutput>
           } else {
             this.logger.debug(
-              `Waiting for task ${executionId} to be finished. Status: ${execution?.status}`,
+              `Waiting for task ${executionId} to be finished. Status: ${execution.status}`,
             )
           }
         }
@@ -742,34 +759,67 @@ export class DurableExecutor {
     }
   }
 
-  private async closeFinishedTaskExecutions(): Promise<void> {
+  private async runBackgroundProcess(
+    processName: string,
+    singleBatchProcessFn: () => Promise<boolean>,
+  ): Promise<void> {
+    let consecutiveErrors = 0
+    const maxConsecutiveErrors = 10
+    let backoffMs = 1000
+
     while (true) {
       if (this.shutdownSignal.isCancelled()) {
-        this.logger.info('Executor cancelled. Stopping closing finished task executions')
+        this.logger.info(`Executor cancelled. Stopping ${processName}`)
         return
       }
 
       try {
-        await createCancellablePromise(
-          this.closeFinishedTaskExecutionsSingleBatch(),
+        const hasNonEmptyResult = await createCancellablePromise(
+          singleBatchProcessFn(),
           this.shutdownSignal,
         )
+        if (!hasNonEmptyResult) {
+          await sleepWithJitter(this.backgroundProcessIntraBatchSleepMs)
+        }
+
+        consecutiveErrors = 0
+        backoffMs = 1000
       } catch (error) {
         if (error instanceof DurableTaskCancelledError) {
-          this.logger.info('Executor cancelled. Stopping closing finished task executions')
+          this.logger.info(`Executor cancelled. Stopping ${processName}`)
           return
         }
-        this.logger.error('Error in closing finished task executions', error)
+
+        consecutiveErrors++
+        this.logger.error(`Error in ${processName}: consecutive_errors=${consecutiveErrors}`, error)
+
+        const isRetryableError = error instanceof DurableTaskError ? error.isRetryable : true
+        const waitTime = isRetryableError ? Math.min(backoffMs, 5000) : backoffMs
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          this.logger.error(
+            `Too many consecutive errors (${consecutiveErrors}) in ${processName}. Backing off for ${backoffMs}ms before retrying.`,
+          )
+          await sleepWithJitter(waitTime)
+          backoffMs = Math.min(backoffMs * 2, 30_000)
+          consecutiveErrors = 0
+        } else {
+          await sleepWithJitter(waitTime)
+        }
       }
     }
+  }
+
+  private async closeFinishedTaskExecutions(): Promise<void> {
+    return this.runBackgroundProcess('closing finished task executions', () =>
+      this.closeFinishedTaskExecutionsSingleBatch(),
+    )
   }
 
   /**
    * Close finished task executions.
    */
-  private async closeFinishedTaskExecutionsSingleBatch(): Promise<void> {
-    let shouldSleep = false
-    await this.withTransaction(async (tx) => {
+  private async closeFinishedTaskExecutionsSingleBatch(): Promise<boolean> {
+    return await this.withTransaction(async (tx) => {
       const now = new Date()
       const updatedExecutionIds = await updateTaskExecutionsWithLimit(
         tx,
@@ -784,8 +834,7 @@ export class DurableExecutor {
 
       this.logger.debug(`Closing ${updatedExecutionIds.length} finished task executions`)
       if (updatedExecutionIds.length === 0) {
-        shouldSleep = true
-        return
+        return false
       }
 
       const executions = await tx.getTaskExecutions({
@@ -800,11 +849,8 @@ export class DurableExecutor {
         await this.closeFinishedTaskExecutionParent(tx, execution, now)
         await this.closeFinishedTaskExecutionChildren(tx, execution, now)
       }
+      return true
     })
-
-    if (shouldSleep) {
-      await sleepWithJitter(100)
-    }
   }
 
   /**
@@ -1064,34 +1110,17 @@ export class DurableExecutor {
   }
 
   private async retryExpiredRunningTaskExecutions(): Promise<void> {
-    while (true) {
-      if (this.shutdownSignal.isCancelled()) {
-        this.logger.info('Executor cancelled. Stopping retrying expired running task executions')
-        return
-      }
-
-      try {
-        await createCancellablePromise(
-          this.retryExpiredRunningTaskExecutionsSingleBatch(),
-          this.shutdownSignal,
-        )
-      } catch (error) {
-        if (error instanceof DurableTaskCancelledError) {
-          this.logger.info('Executor cancelled. Stopping retrying expired running task executions')
-          return
-        }
-        this.logger.error('Error in retrying expired running task executions', error)
-      }
-    }
+    return this.runBackgroundProcess('retrying expired running task executions', () =>
+      this.retryExpiredRunningTaskExecutionsSingleBatch(),
+    )
   }
 
   /**
    * Retry expired running task executions. This will only happen when the process running the
    * execution previously crashed.
    */
-  private async retryExpiredRunningTaskExecutionsSingleBatch(): Promise<void> {
-    let shouldSleep = false
-    await this.withTransaction(async (tx) => {
+  private async retryExpiredRunningTaskExecutionsSingleBatch(): Promise<boolean> {
+    return await this.withTransaction(async (tx) => {
       const now = new Date()
       const executionIds = await updateTaskExecutionsWithLimit(
         tx,
@@ -1114,54 +1143,25 @@ export class DurableExecutor {
       )
 
       this.logger.debug(`Expiring ${executionIds.length} running task executions`)
-      if (executionIds.length === 0) {
-        shouldSleep = true
-        return
-      }
+      return executionIds.length > 0
     })
-
-    if (shouldSleep) {
-      await sleepWithJitter(500)
-    }
   }
 
   private async cancelNeedPromiseCancellationTaskExecutions(): Promise<void> {
-    while (true) {
-      if (this.shutdownSignal.isCancelled()) {
-        this.logger.info(
-          'Executor cancelled. Stopping cancelling promise cancellation task executions',
-        )
-        return
-      }
-
-      try {
-        await createCancellablePromise(
-          this.cancelNeedPromiseCancellationTaskExecutionsSingleBatch(),
-          this.shutdownSignal,
-        )
-      } catch (error) {
-        if (error instanceof DurableTaskCancelledError) {
-          this.logger.info(
-            'Executor cancelled. Stopping cancelling promise cancellation task executions',
-          )
-          return
-        }
-        this.logger.error('Error in cancelling promise cancellation task executions', error)
-      }
-    }
+    return this.runBackgroundProcess('cancelling promise cancellation task executions', () =>
+      this.cancelNeedPromiseCancellationTaskExecutionsSingleBatch(),
+    )
   }
 
   /**
    * Cancel task executions that need promise cancellation.
    */
-  private async cancelNeedPromiseCancellationTaskExecutionsSingleBatch(): Promise<void> {
+  private async cancelNeedPromiseCancellationTaskExecutionsSingleBatch(): Promise<boolean> {
     if (this.runningTaskExecutionsMap.size === 0) {
-      await sleepWithJitter(500)
-      return
+      return false
     }
 
-    let shouldSleep = false
-    await this.withTransaction(async (tx) => {
+    return await this.withTransaction(async (tx) => {
       const now = new Date()
       const executionIds = await updateTaskExecutionsWithLimit(
         tx,
@@ -1181,8 +1181,7 @@ export class DurableExecutor {
         `Cancelling ${executionIds.length} task executions that need promise cancellation`,
       )
       if (executionIds.length === 0) {
-        shouldSleep = true
-        return
+        return false
       }
 
       for (const executionId of executionIds) {
@@ -1196,42 +1195,22 @@ export class DurableExecutor {
           this.runningTaskExecutionsMap.delete(executionId)
         }
       }
+      return true
     })
-
-    if (shouldSleep) {
-      await sleepWithJitter(500)
-    }
   }
 
   private async processReadyTaskExecutions(): Promise<void> {
-    while (true) {
-      if (this.shutdownSignal.isCancelled()) {
-        this.logger.info('Executor cancelled. Stopping processing ready task executions')
-        return
-      }
-
-      try {
-        await createCancellablePromise(
-          this.processReadyTaskExecutionsSingleBatch(),
-          this.shutdownSignal,
-        )
-      } catch (error) {
-        if (error instanceof DurableTaskCancelledError) {
-          this.logger.info('Executor cancelled. Stopping processing ready task executions')
-          return
-        }
-        this.logger.error('Error in processing ready task executions', error)
-      }
-    }
+    return this.runBackgroundProcess('processing ready task executions', () =>
+      this.processReadyTaskExecutionsSingleBatch(),
+    )
   }
 
   /**
    * Process task executions that are ready to run based on status being ready and startAt
    * being in the past.
    */
-  private async processReadyTaskExecutionsSingleBatch(): Promise<void> {
-    let shouldSleep = false
-    await this.withTransaction(async (tx) => {
+  private async processReadyTaskExecutionsSingleBatch(): Promise<boolean> {
+    return await this.withTransaction(async (tx) => {
       const now = new Date()
       const executionIds = await updateTaskExecutionsWithLimit(
         tx,
@@ -1246,8 +1225,7 @@ export class DurableExecutor {
 
       this.logger.debug(`Processing ${executionIds.length} ready task executions`)
       if (executionIds.length === 0) {
-        shouldSleep = true
-        return
+        return false
       }
 
       const executions = await tx.getTaskExecutions({
@@ -1319,11 +1297,8 @@ export class DurableExecutor {
       for (const [taskInternal, execution] of toRunExecutions) {
         this.runTaskExecutionWithCancelSignal(taskInternal, execution)
       }
+      return true
     })
-
-    if (shouldSleep) {
-      await sleepWithJitter(100)
-    }
   }
 
   /**
