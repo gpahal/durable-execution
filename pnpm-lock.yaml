@@ -13,17 +13,17 @@ catalogs:
       specifier: ^0.3.7
       version: 0.3.7
     '@gpahal/eslint-config':
-      specifier: ^0.0.101
-      version: 0.0.101
+      specifier: ^0.0.102
+      version: 0.0.102
     '@gpahal/prettier-config':
-      specifier: ^0.0.27
-      version: 0.0.27
+      specifier: ^0.0.28
+      version: 0.0.28
     '@gpahal/tsconfig':
       specifier: ^0.0.20
       version: 0.0.20
     '@ianvs/prettier-plugin-sort-imports':
-      specifier: ^4.5.1
-      version: 4.5.1
+      specifier: ^4.6.0
+      version: 4.6.0
     '@libsql/client':
       specifier: ^0.15.10
       version: 0.15.10
@@ -107,16 +107,16 @@ importers:
         version: 2.29.5
       '@gpahal/eslint-config':
         specifier: catalog:dev
-        version: 0.0.101(@typescript-eslint/utils@8.39.0(eslint@9.32.0)(typescript@5.9.2))(eslint@9.32.0)(typescript@5.9.2)
+        version: 0.0.102(@typescript-eslint/utils@8.39.0(eslint@9.32.0)(typescript@5.9.2))(eslint@9.32.0)(typescript@5.9.2)
       '@gpahal/prettier-config':
         specifier: catalog:dev
-        version: 0.0.27(@ianvs/prettier-plugin-sort-imports@4.5.1(prettier@3.6.2))
+        version: 0.0.28(@ianvs/prettier-plugin-sort-imports@4.6.0(prettier@3.6.2))
       '@gpahal/tsconfig':
         specifier: catalog:dev
         version: 0.0.20
       '@ianvs/prettier-plugin-sort-imports':
         specifier: catalog:dev
-        version: 4.5.1(prettier@3.6.2)
+        version: 4.6.0(prettier@3.6.2)
       '@types/node':
         specifier: catalog:dev
         version: 24.2.0
@@ -677,8 +677,8 @@ packages:
   '@gerrit0/mini-shiki@3.9.1':
     resolution: {integrity: sha512-quvtbDhNf528BkMHQQd8xGJMpmA5taDZuex/JDF8ETEjS2iypXzr1hnEUVh+lTUyffFJ0JCxysUsiuUoEGIz/Q==}
 
-  '@gpahal/eslint-config@0.0.101':
-    resolution: {integrity: sha512-Dt+be97PewA73QHCQy354S24aI5EzntI1e8HrE+bkVkbVjHdvdTaA28Pf5kW7vA4kVJ0Qe48BnqySBE7ZZeOBA==}
+  '@gpahal/eslint-config@0.0.102':
+    resolution: {integrity: sha512-xVjfiePq4MO2PS1ZJQPjeX8NU9fNBQr0dWnnq9Cq+hdRLKJfmDjVaXigX8TcAAITdZvTZuAgLoh6l3wmPMCg0A==}
     peerDependencies:
       '@eslint-react/eslint-plugin': ^1.52
       '@next/eslint-plugin-next': ^15.4
@@ -700,10 +700,10 @@ packages:
       eslint-plugin-turbo:
         optional: true
 
-  '@gpahal/prettier-config@0.0.27':
-    resolution: {integrity: sha512-AWocRsQo8SOTClhP+mBQFdC/UWnjQ9Grcl7ksCZDNxzruTNgLE5HKoT2dbBlJ2Z3BFZu7PRT17hal3qXOFmtpw==}
+  '@gpahal/prettier-config@0.0.28':
+    resolution: {integrity: sha512-57oITcyfy8V6b6gR3NRAgpyj7muJVXuHLtCzBucVQpvJFJHfCAnYgeNPS3O/g/kAsOSigyPE5QmwkdtP8XXfdw==}
     peerDependencies:
-      '@ianvs/prettier-plugin-sort-imports': ^4.4
+      '@ianvs/prettier-plugin-sort-imports': ^4.6
       prettier-plugin-astro: ^0.14
       prettier-plugin-tailwindcss: ^0.6
     peerDependenciesMeta:
@@ -742,16 +742,22 @@ packages:
     resolution: {integrity: sha512-bV0Tgo9K4hfPCek+aMAn81RppFKv2ySDQeMoSZuvTASywNTnVJCArCZE2FWqpvIatKu7VMRLWlR1EazvVhDyhQ==}
     engines: {node: '>=18.18'}
 
-  '@ianvs/prettier-plugin-sort-imports@4.5.1':
-    resolution: {integrity: sha512-vOQwIyQHnHz0ikvHEQDzwUkNfX74o/7qNEpm9LiPtyBvCg/AU/DOkhwe1o92chPS1QzS6G7HeiO+OwIt8a358A==}
+  '@ianvs/prettier-plugin-sort-imports@4.6.0':
+    resolution: {integrity: sha512-ZGhdOuMv6Y0dqv5eaKMBfHR3cwTY11fFEUhiTDpx7v2m1FrfgqZsBOrLd/zA0lTEKAo9ltNlHd6jx5h3eh4Htg==}
     peerDependencies:
       '@prettier/plugin-oxc': ^0.0.4
       '@vue/compiler-sfc': 2.7.x || 3.x
+      content-tag: ^4.0.0
       prettier: 2 || 3 || ^4.0.0-0
+      prettier-plugin-ember-template-tag: ^2.1.0
     peerDependenciesMeta:
       '@prettier/plugin-oxc':
         optional: true
       '@vue/compiler-sfc':
+        optional: true
+      content-tag:
+        optional: true
+      prettier-plugin-ember-template-tag:
         optional: true
 
   '@isaacs/balanced-match@4.0.1':
@@ -4242,7 +4248,7 @@ snapshots:
       '@shikijs/types': 3.9.1
       '@shikijs/vscode-textmate': 10.0.2
 
-  '@gpahal/eslint-config@0.0.101(@typescript-eslint/utils@8.39.0(eslint@9.32.0)(typescript@5.9.2))(eslint@9.32.0)(typescript@5.9.2)':
+  '@gpahal/eslint-config@0.0.102(@typescript-eslint/utils@8.39.0(eslint@9.32.0)(typescript@5.9.2))(eslint@9.32.0)(typescript@5.9.2)':
     dependencies:
       '@eslint/js': 9.32.0
       '@eslint/json': 0.13.1
@@ -4270,9 +4276,9 @@ snapshots:
       - supports-color
       - typescript
 
-  '@gpahal/prettier-config@0.0.27(@ianvs/prettier-plugin-sort-imports@4.5.1(prettier@3.6.2))':
+  '@gpahal/prettier-config@0.0.28(@ianvs/prettier-plugin-sort-imports@4.6.0(prettier@3.6.2))':
     dependencies:
-      '@ianvs/prettier-plugin-sort-imports': 4.5.1(prettier@3.6.2)
+      '@ianvs/prettier-plugin-sort-imports': 4.6.0(prettier@3.6.2)
 
   '@gpahal/std@0.0.30':
     dependencies:
@@ -4295,7 +4301,7 @@ snapshots:
 
   '@humanwhocodes/retry@0.4.3': {}
 
-  '@ianvs/prettier-plugin-sort-imports@4.5.1(prettier@3.6.2)':
+  '@ianvs/prettier-plugin-sort-imports@4.6.0(prettier@3.6.2)':
     dependencies:
       '@babel/generator': 7.28.0
       '@babel/parser': 7.28.0
