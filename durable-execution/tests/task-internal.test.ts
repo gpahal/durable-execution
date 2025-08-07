@@ -1,5 +1,6 @@
-import { validateTaskId } from 'src/task'
 import { describe, expect, it } from 'vitest'
+
+import { validateTaskId } from '../src/task-internal'
 
 describe('validate task id', () => {
   it('should validate an valid id', () => {

@@ -58,7 +58,7 @@ describe('executorCrash', () => {
         }
 
         for (const executionId of runningTaskExecutionIds) {
-          const handle = executor.getTaskHandle(task, executionId)
+          const handle = await executor.getTaskHandle(task, executionId)
           const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
           console.log('Task finished', finishedExecution)
 

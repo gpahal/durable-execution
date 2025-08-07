@@ -31,29 +31,28 @@ export function createSuperjsonSerializer(): Serializer {
 /**
  * Wrap a serializer to catch errors and throw a {@link DurableExecutionError}.
  *
- * @param serializer - The serializer to wrap.
- * @returns The wrapped serializer.
- *
  * @category Serializer
  */
-export function wrapSerializer(serializer: Serializer): Serializer {
-  return {
-    serialize: (value) => {
-      try {
-        return serializer.serialize(value)
-      } catch (error) {
-        throw new DurableExecutionError(`Error serializing value: ${getErrorMessage(error)}`, false)
-      }
-    },
-    deserialize: (value) => {
-      try {
-        return serializer.deserialize(value)
-      } catch (error) {
-        throw new DurableExecutionError(
-          `Error deserializing value: ${getErrorMessage(error)}`,
-          false,
-        )
-      }
-    },
+export class WrappedSerializer implements Serializer {
+  private readonly serializer: Serializer
+
+  constructor(serializer: Serializer) {
+    this.serializer = serializer
+  }
+
+  serialize<T>(value: T): string {
+    try {
+      return this.serializer.serialize(value)
+    } catch (error) {
+      throw new DurableExecutionError(`Error serializing value: ${getErrorMessage(error)}`, false)
+    }
+  }
+
+  deserialize<T>(value: string): T {
+    try {
+      return this.serializer.deserialize(value)
+    } catch (error) {
+      throw new DurableExecutionError(`Error deserializing value: ${getErrorMessage(error)}`, false)
+    }
   }
 }

@@ -12,11 +12,11 @@ import {
   DurableExecutionTimedOutError,
 } from './errors'
 import { createConsoleLogger, createLoggerDebugDisabled, type Logger } from './logger'
-import { createSuperjsonSerializer, wrapSerializer, type Serializer } from './serializer'
+import { createSuperjsonSerializer, WrappedSerializer, type Serializer } from './serializer'
 import {
   convertTaskExecutionStorageObjectToTaskExecution,
   createDurableTaskExecutionStorageObject,
-  EXPIRES_AT_INFINITY,
+  getDurableTaskExecutionStorageObjectParentError,
   updateTaskExecutionsWithLimit,
   type DurableStorage,
   type DurableStorageTx,
@@ -25,9 +25,7 @@ import {
 } from './storage'
 import {
   ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS,
-  DurableTaskInternal,
   FINISHED_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS,
-  generateTaskExecutionId,
   type DurableChildTaskExecution,
   type DurableChildTaskExecutionOutput,
   type DurableParentTaskOptions,
@@ -38,6 +36,7 @@ import {
   type DurableTaskOptions,
   type DurableTaskRunContext,
 } from './task'
+import { DurableTaskInternal, generateTaskExecutionId } from './task-internal'
 import { generateId, sleepWithJitter, summarizeStandardSchemaIssues } from './utils'
 
 export {
@@ -83,7 +82,7 @@ export type {
   DurableTaskEnqueueOptions,
   DurableTaskHandle,
 } from './task'
-export { type Serializer, createSuperjsonSerializer, wrapSerializer } from './serializer'
+export { type Serializer, createSuperjsonSerializer, WrappedSerializer } from './serializer'
 export {
   createInMemoryStorage,
   createTransactionMutex,
@@ -253,7 +252,7 @@ export class DurableExecutor {
     } = {},
   ) {
     this.storage = storage
-    this.serializer = wrapSerializer(serializer ?? createSuperjsonSerializer())
+    this.serializer = new WrappedSerializer(serializer ?? createSuperjsonSerializer())
     this.logger = logger ?? createConsoleLogger('DurableExecutor')
     if (!enableDebug) {
       this.logger = createLoggerDebugDisabled(this.logger)
@@ -693,10 +692,29 @@ export class DurableExecutor {
    * @param executionId - The id of the execution to get the handle for.
    * @returns The handle to the task execution.
    */
-  getTaskHandle<TInput = unknown, TOutput = unknown>(
+  async getTaskHandle<TInput = unknown, TOutput = unknown>(
     task: DurableTask<TInput, TOutput>,
     executionId: string,
-  ): DurableTaskHandle<TOutput> {
+  ): Promise<DurableTaskHandle<TOutput>> {
+    const taskInternal = this.taskInternalsMap.get(task.id)
+    if (!taskInternal) {
+      throw new DurableExecutionError(
+        `Task ${task.id} not found. Use DurableExecutor.task() to add it before enqueuing it.`,
+        false,
+      )
+    }
+
+    const execution = await this.withTransaction(async (tx) => {
+      const executions = await tx.getTaskExecutions({
+        type: 'by_execution_ids',
+        executionIds: [executionId],
+      })
+      return executions.length === 0 ? undefined : executions[0]
+    })
+    if (!execution) {
+      throw new DurableExecutionError(`Execution ${executionId} not found`, false)
+    }
+
     return this.getTaskHandleInternal(task.id, executionId)
   }
 
@@ -949,11 +967,7 @@ export class DurableExecutor {
         await tx.updateTaskExecutions(
           { type: 'by_execution_ids', executionIds: [parentExecution.executionId] },
           {
-            finalizeTaskError:
-              execution.error ??
-              convertDurableExecutionErrorToStorageObject(
-                new DurableExecutionError('Unknown error', false),
-              ),
+            finalizeTaskError: getDurableTaskExecutionStorageObjectParentError(execution),
             status:
               parentExecution.status === 'waiting_for_finalize_task'
                 ? 'finalize_task_failed'
@@ -1094,11 +1108,7 @@ export class DurableExecutor {
         index: childIdx,
         taskId: execution.taskId,
         executionId: execution.executionId,
-        error:
-          execution.error ??
-          convertDurableExecutionErrorToStorageObject(
-            new DurableExecutionError('Unknown error', false),
-          ),
+        error: getDurableTaskExecutionStorageObjectParentError(execution),
       })
       await tx.updateTaskExecutions(
         { type: 'by_execution_ids', executionIds: [parentExecution.executionId] },
@@ -1141,7 +1151,7 @@ export class DurableExecutor {
       {
         error: convertDurableExecutionErrorToStorageObject(
           new DurableExecutionCancelledError(
-            `Parent task ${execution.taskId} with execution id ${execution.executionId} failed: ${execution.error?.message ?? 'Unknown error'}`,
+            `Parent task ${execution.taskId} with execution id ${execution.executionId} failed: ${getDurableTaskExecutionStorageObjectParentError(execution).message}`,
           ),
         ),
         status: 'cancelled',
@@ -1179,7 +1189,7 @@ export class DurableExecutor {
           ),
           status: 'ready',
           startAt: now,
-          expiresAt: EXPIRES_AT_INFINITY,
+          unsetExpiresAt: true,
           updatedAt: now,
         },
         3,
@@ -1603,7 +1613,7 @@ export class DurableExecutor {
           status: 'ready',
           retryAttempts: execution.retryAttempts + 1,
           startAt: new Date(now.getTime() + delayMs),
-          expiresAt: EXPIRES_AT_INFINITY,
+          unsetExpiresAt: true,
           updatedAt: now,
         }
       } else {

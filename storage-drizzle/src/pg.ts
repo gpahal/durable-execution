@@ -70,7 +70,7 @@ export function createDurableTaskExecutionsPgTable(tableName = 'durable_task_exe
       startAt: timestamp('start_at', { withTimezone: true }).notNull(),
       startedAt: timestamp('started_at', { withTimezone: true }),
       finishedAt: timestamp('finished_at', { withTimezone: true }),
-      expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+      expiresAt: timestamp('expires_at', { withTimezone: true }),
       createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
       updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
     },

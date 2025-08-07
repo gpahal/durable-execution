@@ -225,12 +225,12 @@ const taskA = executor
 
 To validate input with a schema, use the `inputSchema` method before the `task` method. Any
 [Standard Schema](https://standardschema.dev/) can be used as an input schema. In this example,
-valibot is used as the input schema.
+zod is used as the input schema.
 
 ```ts
-import * as v from 'valibot'
+import { z } from 'zod'
 
-const taskA = executor.inputSchema(v.object({ name: v.string() })).task({
+const taskA = executor.inputSchema(z.object({ name: z.string() })).task({
   id: 'a',
   timeoutMs: 1000,
   run: (ctx, input) => {
@@ -859,7 +859,7 @@ coordinate the output of the recursive task and children tasks.
 
 ```ts
 const recursiveTask: DurableTask<{ index: number }, { count: number }> = executor
-  .inputSchema(v.object({ index: v.pipe(v.number(), v.integer(), v.minValue(0)) }))
+  .inputSchema(z.object({ index: z.number().int().min(0) }))
   .parentTask({
     id: 'recursive',
     timeoutMs: 1000,
@@ -907,48 +907,46 @@ setTimeout(() => {
 }, 2000)
 
 const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: number }> =
-  executor
-    .inputSchema(v.object({ prevCount: v.pipe(v.number(), v.integer(), v.minValue(0)) }))
-    .parentTask({
-      id: 'polling',
-      sleepMsBeforeRun: 100,
-      timeoutMs: 1000,
-      runParent: (ctx, input) => {
-        if (value != null) {
-          return {
-            output: {
-              isDone: true,
-              value,
-            } as { isDone: false; value: undefined } | { isDone: true; value: number },
-          }
-        }
-
+  executor.inputSchema(z.object({ prevCount: z.number().int().min(0) })).parentTask({
+    id: 'polling',
+    sleepMsBeforeRun: 100,
+    timeoutMs: 1000,
+    runParent: (ctx, input) => {
+      if (value != null) {
         return {
           output: {
-            isDone: false,
+            isDone: true,
             value,
           } as { isDone: false; value: undefined } | { isDone: true; value: number },
-          childrenTasks: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
+        }
+      }
+
+      return {
+        output: {
+          isDone: false,
+          value,
+        } as { isDone: false; value: undefined } | { isDone: true; value: number },
+        childrenTasks: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
+      }
+    },
+    finalizeTask: {
+      id: 'pollingFinalize',
+      timeoutMs: 1000,
+      run: (ctx, { input, output, childrenTasksOutputs }) => {
+        if (output.isDone) {
+          return {
+            count: input.prevCount + 1,
+            value: output.value,
+          }
+        }
+
+        return childrenTasksOutputs[0]!.output as {
+          count: number
+          value: number
         }
       },
-      finalizeTask: {
-        id: 'pollingFinalize',
-        timeoutMs: 1000,
-        run: (ctx, { input, output, childrenTasksOutputs }) => {
-          if (output.isDone) {
-            return {
-              count: input.prevCount + 1,
-              value: output.value,
-            }
-          }
-
-          return childrenTasksOutputs[0]!.output as {
-            count: number
-            value: number
-          }
-        },
-      },
-    })
+    },
+  })
 
 // Input: { prevCount: 0 }
 // Output: {

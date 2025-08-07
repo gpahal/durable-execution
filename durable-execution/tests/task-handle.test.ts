@@ -24,6 +24,12 @@ describe('taskHandle', () => {
     }
   })
 
+  it('should handle invalid task id', async () => {
+    await expect(executor.getTaskHandle({ id: 'invalid' }, 'invalid')).rejects.toThrow(
+      'Task invalid not found',
+    )
+  })
+
   it('should handle correct execution id', async () => {
     let executed = 0
     const task = executor.task({
@@ -38,7 +44,7 @@ describe('taskHandle', () => {
 
     const originalHandle = await executor.enqueueTask(task, undefined)
     const executionId = originalHandle.getTaskExecutionId()
-    const handle = executor.getTaskHandle(task, executionId)
+    const handle = await executor.getTaskHandle(task, executionId)
     expect(handle.getTaskId()).toBe('test')
     expect(handle.getTaskExecutionId()).toBeDefined()
 
@@ -53,7 +59,7 @@ describe('taskHandle', () => {
     expect(execution.expiresAt).toBeInstanceOf(Date)
   })
 
-  it('should handle invalid execution id', () => {
+  it('should handle invalid execution id', async () => {
     const task = executor.task({
       id: 'test',
       timeoutMs: 10_000,
@@ -63,9 +69,24 @@ describe('taskHandle', () => {
       },
     })
 
-    const handle = executor.getTaskHandle(task, 'invalid')
-    expect(handle.getTaskId()).toBe('test')
-    expect(handle.getTaskExecutionId()).toBeDefined()
+    await expect(executor.getTaskHandle(task, 'invalid')).rejects.toThrow(
+      'Execution invalid not found',
+    )
+  })
+
+  it('should handle invalid execution id', async () => {
+    const task = executor.task({
+      id: 'test',
+      timeoutMs: 10_000,
+      run: async () => {
+        await sleep(1000)
+        return 'test'
+      },
+    })
+
+    await expect(executor.getTaskHandle(task, 'invalid')).rejects.toThrow(
+      'Execution invalid not found',
+    )
   })
 
   it('should handle wait and get finished task execution with cancelled signal', async () => {
@@ -80,7 +101,7 @@ describe('taskHandle', () => {
 
     const originalHandle = await executor.enqueueTask(task, undefined)
     const executionId = originalHandle.getTaskExecutionId()
-    const handle = executor.getTaskHandle(task, executionId)
+    const handle = await executor.getTaskHandle(task, executionId)
     expect(handle.getTaskId()).toBe('test')
     expect(handle.getTaskExecutionId()).toBeDefined()
 
@@ -103,7 +124,7 @@ describe('taskHandle', () => {
 
     const originalHandle = await executor.enqueueTask(task, undefined)
     const executionId = originalHandle.getTaskExecutionId()
-    const handle = executor.getTaskHandle(task, executionId)
+    const handle = await executor.getTaskHandle(task, executionId)
     expect(handle.getTaskId()).toBe('test')
     expect(handle.getTaskExecutionId()).toBeDefined()
 
@@ -126,7 +147,7 @@ describe('taskHandle', () => {
 
     const originalHandle = await executor.enqueueTask(task, undefined)
     const executionId = originalHandle.getTaskExecutionId()
-    const handle = executor.getTaskHandle(task, executionId)
+    const handle = await executor.getTaskHandle(task, executionId)
     expect(handle.getTaskId()).toBe('test')
     expect(handle.getTaskExecutionId()).toBeDefined()
 
@@ -148,7 +169,7 @@ describe('taskHandle', () => {
 
     const originalHandle = await executor.enqueueTask(task, undefined)
     const executionId = originalHandle.getTaskExecutionId()
-    const handle = executor.getTaskHandle(task, executionId)
+    const handle = await executor.getTaskHandle(task, executionId)
     expect(handle.getTaskId()).toBe('test')
     expect(handle.getTaskExecutionId()).toBeDefined()
 

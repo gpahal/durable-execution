@@ -80,7 +80,7 @@ export function createDurableTaskExecutionsSQLiteTable(tableName = 'durable_task
       startAt: integer('start_at', { mode: 'timestamp' }).notNull(),
       startedAt: integer('started_at', { mode: 'timestamp' }),
       finishedAt: integer('finished_at', { mode: 'timestamp' }),
-      expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+      expiresAt: integer('expires_at', { mode: 'timestamp' }),
       createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
       updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
     },

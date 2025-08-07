@@ -60,7 +60,7 @@
     "nanoid": "catalog:prod",
     "superjson": "catalog:prod",
     "ts-custom-error": "catalog:prod",
-    "valibot": "catalog:prod"
+    "zod": "catalog:prod"
   },
   "devDependencies": {
     "typedoc": "catalog:dev",

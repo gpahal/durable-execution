@@ -1,5 +1,5 @@
-import * as v from 'valibot'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 
 import { sleep } from '@gpahal/std/promises'
 
@@ -255,8 +255,8 @@ describe('parentTask', () => {
 
     const task = executor
       .inputSchema(
-        v.object({
-          name: v.string(),
+        z.object({
+          name: z.string(),
         }),
       )
       .parentTask({
@@ -330,8 +330,9 @@ describe('parentTask', () => {
 
     const task = executor
       .inputSchema(
-        v.object({
-          name: v.string(),
+        z.object({
+          name: z.string(),
+          version: z.number(),
         }),
       )
       .parentTask({

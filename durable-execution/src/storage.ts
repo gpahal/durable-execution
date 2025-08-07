@@ -1,5 +1,6 @@
 import {
   convertDurableExecutionErrorStorageObjectToError,
+  convertDurableExecutionErrorToStorageObject,
   DurableExecutionError,
   type DurableExecutionErrorStorageObject,
 } from './errors'
@@ -255,21 +256,22 @@ export type DurableTaskExecutionStorageObject = {
    */
   retryAttempts: number
   /**
-   * The start time of the task execution. Used for delaying the execution.
+   * The start time of the task execution. Used for delaying the execution. Set on enqueue.
    */
   startAt: Date
   /**
-   * The time the task execution started.
+   * The time the task execution started. Set on start.
    */
   startedAt?: Date
   /**
-   * The time the task execution finished.
+   * The time the task execution finished. Set on finish.
    */
   finishedAt?: Date
   /**
-   * The time the task execution expires. It is used to recover from process failures.
+   * The time the task execution expires. It is used to recover from process failures. Set on
+   * start.
    */
-  expiresAt: Date
+  expiresAt?: Date
   /**
    * The time the task execution was created.
    */
@@ -279,13 +281,6 @@ export type DurableTaskExecutionStorageObject = {
    */
   updatedAt: Date
 }
-
-/**
- * An expires at date that never expires.
- *
- * @category Storage
- */
-export const EXPIRES_AT_INFINITY = new Date('9999-12-31T23:59:59.999Z')
 
 export function createDurableTaskExecutionStorageObject({
   now,
@@ -330,7 +325,6 @@ export function createDurableTaskExecutionStorageObject({
     needsPromiseCancellation: false,
     retryAttempts: 0,
     startAt: new Date(now.getTime() + sleepMsBeforeRun),
-    expiresAt: EXPIRES_AT_INFINITY,
     createdAt: now,
     updatedAt: now,
   }
@@ -382,9 +376,6 @@ export type DurableTaskExecutionStorageObjectUpdate = {
   finalizeTask?: DurableChildTaskExecution
   finalizeTaskError?: DurableExecutionErrorStorageObject
   error?: DurableExecutionErrorStorageObject
-  /**
-   * Whether to unset the error. If true, the error will be set to undefined.
-   */
   unsetError?: boolean
   status?: DurableTaskExecutionStatusStorageObject
   isClosed?: boolean
@@ -394,6 +385,7 @@ export type DurableTaskExecutionStorageObjectUpdate = {
   startedAt?: Date
   finishedAt?: Date
   expiresAt?: Date
+  unsetExpiresAt?: boolean
   updatedAt: Date
 }
 
@@ -470,7 +462,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         status: 'running',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
-        expiresAt: execution.expiresAt,
+        expiresAt: execution.expiresAt!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -490,7 +482,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         finishedAt: execution.finishedAt!,
-        expiresAt: execution.expiresAt,
+        expiresAt: execution.expiresAt!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -510,7 +502,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         finishedAt: execution.finishedAt!,
-        expiresAt: execution.expiresAt,
+        expiresAt: execution.expiresAt!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -530,7 +522,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         status: 'waiting_for_children_tasks',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
-        expiresAt: execution.expiresAt,
+        expiresAt: execution.expiresAt!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -552,7 +544,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         finishedAt: execution.finishedAt!,
-        expiresAt: execution.expiresAt,
+        expiresAt: execution.expiresAt!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -573,7 +565,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         status: 'waiting_for_finalize_task',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
-        expiresAt: execution.expiresAt,
+        expiresAt: execution.expiresAt!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -596,7 +588,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         finishedAt: execution.finishedAt!,
-        expiresAt: execution.expiresAt,
+        expiresAt: execution.expiresAt!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -619,7 +611,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         finishedAt: execution.finishedAt!,
-        expiresAt: execution.expiresAt,
+        expiresAt: execution.expiresAt!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -642,7 +634,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         finishedAt: execution.finishedAt!,
-        expiresAt: execution.expiresAt,
+        expiresAt: execution.expiresAt!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -652,6 +644,33 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
       throw new DurableExecutionError(`Unknown execution status: ${execution.status}`, false)
     }
   }
+}
+
+export function getDurableTaskExecutionStorageObjectParentError(
+  execution: DurableTaskExecutionStorageObject,
+): DurableExecutionErrorStorageObject {
+  if (execution.error) {
+    return execution.error
+  }
+  if (execution.finalizeTaskError) {
+    return convertDurableExecutionErrorToStorageObject(
+      new DurableExecutionError(
+        `Finalize task with id ${execution.finalizeTask?.taskId} failed: ${execution.finalizeTaskError.message}`,
+        false,
+      ),
+    )
+  }
+  if (execution.childrenTasksErrors) {
+    return convertDurableExecutionErrorToStorageObject(
+      new DurableExecutionError(
+        `Children task errors:\n${execution.childrenTasksErrors.map((e) => `  Child task with id ${e.taskId} failed: ${e.error.message}`).join('\n')}`,
+        false,
+      ),
+    )
+  }
+  return convertDurableExecutionErrorToStorageObject(
+    new DurableExecutionError('Unknown error', false),
+  )
 }
 
 /**
@@ -804,7 +823,11 @@ class InMemoryStorageTx implements DurableStorageTx {
     const executions = this.getTaskExecutions(where)
     for (const execution of executions) {
       for (const key in update) {
-        if (key != null) {
+        if (key === 'unsetError') {
+          execution.error = undefined
+        } else if (key === 'unsetExpiresAt') {
+          execution.expiresAt = undefined
+        } else if (key != null) {
           // @ts-expect-error - This is safe because we know the key is valid
           // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
           execution[key] = update[key]

@@ -2,11 +2,15 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
+import { MySqlContainer, type StartedMySqlContainer } from '@testcontainers/mysql'
 import type {
+  generateMySQLDrizzleJson as generateMySQLDrizzleJsonType,
+  generateMySQLMigration as generateMySQLMigrationType,
   pushSchema as pushSchemaType,
   pushSQLiteSchema as pushSQLiteSchemaType,
 } from 'drizzle-kit/api'
 import { drizzle as drizzleLibsql } from 'drizzle-orm/libsql'
+import { drizzle as drizzleMySQL } from 'drizzle-orm/mysql2'
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite'
 import {
   createInMemoryStorage,
@@ -14,22 +18,28 @@ import {
   type DurableStorage,
   type DurableTask,
 } from 'durable-execution'
+import { createPool, type Pool } from 'mysql2/promise'
 import { describe, expect, it } from 'vitest'
 
 import { sleep } from '@gpahal/std/promises'
 
 import {
+  createDurableTaskExecutionsMySQLTable,
   createDurableTaskExecutionsPgTable,
   createDurableTaskExecutionsSQLiteTable,
+  createMySQLDurableStorage,
   createPgDurableStorage,
   createSQLiteDurableStorage,
 } from '../src'
 
 const require = createRequire(import.meta.url)
-const { pushSchema, pushSQLiteSchema } = require('drizzle-kit/api') as {
-  pushSchema: typeof pushSchemaType
-  pushSQLiteSchema: typeof pushSQLiteSchemaType
-}
+const { pushSQLiteSchema, pushSchema, generateMySQLDrizzleJson, generateMySQLMigration } =
+  require('drizzle-kit/api') as {
+    pushSQLiteSchema: typeof pushSQLiteSchemaType
+    pushSchema: typeof pushSchemaType
+    generateMySQLDrizzleJson: typeof generateMySQLDrizzleJsonType
+    generateMySQLMigration: typeof generateMySQLMigrationType
+  }
 
 async function runStorageTest(storage: DurableStorage, cleanup?: () => void | Promise<void>) {
   const executor = new DurableExecutor(storage, {
@@ -223,6 +233,119 @@ async function runExecutorTest(executor: DurableExecutor) {
     expect(execution.finishedAt).toBeInstanceOf(Date)
     expect(execution.finishedAt.getTime()).toBeGreaterThanOrEqual(execution.startedAt.getTime())
   }
+
+  const retryTask = executor.task({
+    id: 'retry',
+    retryOptions: {
+      maxAttempts: 3,
+    },
+    timeoutMs: 1000,
+    run: (ctx) => {
+      if (ctx.attempt < 2) {
+        throw new Error('Failed')
+      }
+      return 'Success'
+    },
+  })
+
+  const retryTaskHandle = await executor.enqueueTask(retryTask, undefined)
+  const retryExecution = await retryTaskHandle.waitAndGetTaskFinishedExecution()
+  expect(retryExecution.status).toBe('completed')
+  assert(retryExecution.status === 'completed')
+  expect(retryExecution.taskId).toBe('retry')
+  expect(retryExecution.executionId).toMatch(/^te_/)
+  expect(retryExecution.output).toBe('Success')
+  expect(retryExecution.retryAttempts).toBe(2)
+  expect(retryExecution.startedAt).toBeInstanceOf(Date)
+  expect(retryExecution.finishedAt).toBeInstanceOf(Date)
+  expect(retryExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+    retryExecution.startedAt.getTime(),
+  )
+
+  const failingTask = executor.task({
+    id: 'failing',
+    timeoutMs: 1000,
+    run: () => {
+      throw new Error('Failed')
+    },
+  })
+
+  const failingTaskHandle = await executor.enqueueTask(failingTask, undefined)
+  const failingExecution = await failingTaskHandle.waitAndGetTaskFinishedExecution()
+  expect(failingExecution.status).toBe('failed')
+  assert(failingExecution.status === 'failed')
+  expect(failingExecution.taskId).toBe('failing')
+  expect(failingExecution.executionId).toMatch(/^te_/)
+  expect(failingExecution.error).toBeDefined()
+  expect(failingExecution.error.message).toBe('Failed')
+  expect(failingExecution.startedAt).toBeInstanceOf(Date)
+  expect(failingExecution.finishedAt).toBeInstanceOf(Date)
+  expect(failingExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+    failingExecution.startedAt.getTime(),
+  )
+
+  const parentTaskWithFailingChild = executor.parentTask({
+    id: 'parentWithFailingChild',
+    timeoutMs: 1000,
+    runParent: () => {
+      return {
+        output: undefined,
+        childrenTasks: [{ task: failingTask, input: undefined }],
+      }
+    },
+  })
+
+  const parentTaskWithFailingChildHandle = await executor.enqueueTask(
+    parentTaskWithFailingChild,
+    undefined,
+  )
+  const parentTaskWithFailingChildExecution =
+    await parentTaskWithFailingChildHandle.waitAndGetTaskFinishedExecution()
+  expect(parentTaskWithFailingChildExecution.status).toBe('children_tasks_failed')
+  assert(parentTaskWithFailingChildExecution.status === 'children_tasks_failed')
+  expect(parentTaskWithFailingChildExecution.taskId).toBe('parentWithFailingChild')
+  expect(parentTaskWithFailingChildExecution.childrenTasksErrors).toBeDefined()
+  expect(parentTaskWithFailingChildExecution.childrenTasksErrors[0]!.error.message).toBe('Failed')
+  expect(parentTaskWithFailingChildExecution.startedAt).toBeInstanceOf(Date)
+  expect(parentTaskWithFailingChildExecution.finishedAt).toBeInstanceOf(Date)
+  expect(parentTaskWithFailingChildExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+    parentTaskWithFailingChildExecution.startedAt.getTime(),
+  )
+
+  const parentTaskWithFailingFinalizeTask = executor.parentTask({
+    id: 'parentWithFailingFinalizeTask',
+    timeoutMs: 1000,
+    runParent: () => {
+      return {
+        output: undefined,
+        childrenTasks: [{ task: taskA1, input: { name: 'world' } }],
+      }
+    },
+    finalizeTask: {
+      id: 'parentWithFailingFinalizeTaskFinalize',
+      timeoutMs: 1000,
+      run: () => {
+        throw new Error('Failed')
+      },
+    },
+  })
+
+  const parentTaskWithFailingFinalizeTaskHandle = await executor.enqueueTask(
+    parentTaskWithFailingFinalizeTask,
+    undefined,
+  )
+  const parentTaskWithFailingFinalizeTaskExecution =
+    await parentTaskWithFailingFinalizeTaskHandle.waitAndGetTaskFinishedExecution()
+  expect(parentTaskWithFailingFinalizeTaskExecution.status).toBe('finalize_task_failed')
+  assert(parentTaskWithFailingFinalizeTaskExecution.status === 'finalize_task_failed')
+  expect(parentTaskWithFailingFinalizeTaskExecution.taskId).toBe('parentWithFailingFinalizeTask')
+  expect(parentTaskWithFailingFinalizeTaskExecution.finalizeTaskError).toBeDefined()
+  expect(parentTaskWithFailingFinalizeTaskExecution.finalizeTaskError.message).toBe('Failed')
+  expect(parentTaskWithFailingFinalizeTaskExecution.startedAt).toBeInstanceOf(Date)
+  expect(parentTaskWithFailingFinalizeTaskExecution.finishedAt).toBeInstanceOf(Date)
+  expect(parentTaskWithFailingFinalizeTaskExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+    parentTaskWithFailingFinalizeTaskExecution.startedAt.getTime(),
+  )
 }
 
 export async function withTemporaryDirectory(fn: (dirPath: string) => Promise<void>) {
@@ -270,4 +393,34 @@ describe('index', () => {
       await runStorageTest(storage)
     })
   })
+
+  /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+  it('should complete with mysql storage', { timeout: 300_000 }, async () => {
+    const container: StartedMySqlContainer = await new MySqlContainer('mysql:8.4').start()
+
+    const pool: Pool = createPool({
+      host: container.getHost(),
+      port: container.getPort(),
+      user: container.getUsername(),
+      password: container.getUserPassword(),
+      database: container.getDatabase(),
+      connectionLimit: 10,
+    })
+
+    const table = createDurableTaskExecutionsMySQLTable()
+    const db = drizzleMySQL(pool)
+    const prev = await generateMySQLDrizzleJson({})
+    const cur = await generateMySQLDrizzleJson({ table })
+    const statements: Array<string> = await generateMySQLMigration(prev, cur)
+    for (const stmt of statements) {
+      await pool.query(stmt)
+    }
+
+    const storage = createMySQLDurableStorage(db, table)
+    await runStorageTest(storage, async () => {
+      await pool.end()
+      await container.stop()
+    })
+  })
+  /* eslint-enable @typescript-eslint/no-unsafe-assignment */
 })
