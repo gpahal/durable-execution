@@ -1,6 +1,6 @@
 import { getErrorMessage } from '@gpahal/std/errors'
 
-import { DurableTaskCancelledError, DurableTaskError } from './errors'
+import { DurableExecutionCancelledError, DurableExecutionError } from './errors'
 import { createConsoleLogger, type Logger } from './logger'
 
 /**
@@ -11,7 +11,7 @@ import { createConsoleLogger, type Logger } from './logger'
  * ```ts
  * async function doSomething() {
  *   const onCancel = () => {
- *     throw new DurableTaskCancelledError()
+ *     throw new DurableExecutionCancelledError()
  *   }
  *   cancelSignal.onCancelled(onCancel)
  *
@@ -137,7 +137,7 @@ export function createTimeoutCancelSignal(
 
 /**
  * Create a cancellable promise. If a signal is provided, the promise will be rejected with a
- * `DurableTaskCancelledError` if the signal is cancelled.
+ * {@link DurableExecutionCancelledError} if the signal is cancelled.
  *
  * @example
  * ```ts
@@ -150,11 +150,12 @@ export function createTimeoutCancelSignal(
  * @param promise - The promise to cancel.
  * @param signal - A signal to cancel the promise.
  * @param cancelledError - An optional error to use when the promise is cancelled. If not provided,
- * a `DurableTaskCancelledError` will be used. If the error is a `DurableTaskError`, it will be
- * returned as is, otherwise a `DurableTaskCancelledError` will be created with the error message.
+ * a `DurableExecutionCancelledError` will be used. If the error is a `DurableExecutionError`, it
+ * will be returned as is, otherwise a `DurableExecutionCancelledError` will be created with the
+ * error message.
  *
- * @returns A promise that will be rejected with a `DurableTaskCancelledError` if the signal is
- * cancelled.
+ * @returns A promise that will be rejected with a `DurableExecutionCancelledError` if the signal
+ * is cancelled.
  *
  * @category Cancel
  */
@@ -169,12 +170,12 @@ export function createCancellablePromise<T>(
 
   const getCancelledError = () => {
     if (!cancelledError) {
-      return new DurableTaskCancelledError()
+      return new DurableExecutionCancelledError()
     }
-    if (cancelledError instanceof DurableTaskError) {
+    if (cancelledError instanceof DurableExecutionError) {
       return cancelledError
     }
-    return new DurableTaskCancelledError(getErrorMessage(cancelledError))
+    return new DurableExecutionCancelledError(getErrorMessage(cancelledError))
   }
 
   return new Promise((resolve, reject) => {

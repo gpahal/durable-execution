@@ -1,4 +1,4 @@
-import { DurableTaskCancelledError } from 'src'
+import { DurableExecutionCancelledError } from 'src'
 import { describe, it } from 'vitest'
 
 import { sleep } from '@gpahal/std/promises'
@@ -54,6 +54,6 @@ describe('cancellable promise', () => {
     const [cancelSignal, cancel] = createCancelSignal()
     const cancellablePromise = createCancellablePromise(sleep(500), cancelSignal)
     cancel()
-    await expect(cancellablePromise).rejects.toThrow(DurableTaskCancelledError)
+    await expect(cancellablePromise).rejects.toThrow(DurableExecutionCancelledError)
   })
 })

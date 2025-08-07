@@ -2,9 +2,10 @@ import * as v from 'valibot'
 
 import { createCancellablePromise, createTimeoutCancelSignal, type CancelSignal } from './cancel'
 import {
-  DurableTaskError,
-  DurableTaskTimedOutError,
-  type DurableTaskCancelledError,
+  DurableExecutionError,
+  DurableExecutionTimedOutError,
+  type DurableExecutionCancelledError,
+  type DurableExecutionErrorStorageObject,
 } from './errors'
 import { generateId } from './utils'
 
@@ -66,8 +67,6 @@ const vRetryOptions = v.pipe(
   }),
 )
 
-const vTimeoutMs = v.pipe(v.number(), v.integer(), v.minValue(1))
-
 const vSleepMsBeforeRun = v.pipe(
   v.nullish(v.pipe(v.number(), v.integer())),
   v.transform((val) => {
@@ -78,13 +77,15 @@ const vSleepMsBeforeRun = v.pipe(
   }),
 )
 
+const vTimeoutMs = v.pipe(v.number(), v.integer(), v.minValue(1))
+
 export class DurableTaskInternal {
   private readonly taskInternalsMap: Map<string, DurableTaskInternal>
 
   readonly id: string
   readonly retryOptions: DurableTaskRetryOptions
-  private readonly timeoutMs: number
   private readonly sleepMsBeforeRun: number
+  private readonly timeoutMs: number
   private readonly validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
   readonly disableChildrenTasksOutputsInOutput: boolean
   private readonly runParent: (
@@ -100,8 +101,8 @@ export class DurableTaskInternal {
     taskInternalsMap: Map<string, DurableTaskInternal>,
     id: string,
     retryOptions: DurableTaskRetryOptions,
-    timeoutMs: number,
     sleepMsBeforeRun: number,
+    timeoutMs: number,
     validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
     disableChildrenTasksOutputsInOutput: boolean,
     runParent: (
@@ -116,8 +117,8 @@ export class DurableTaskInternal {
     this.taskInternalsMap = taskInternalsMap
     this.id = id
     this.retryOptions = retryOptions
-    this.timeoutMs = timeoutMs
     this.sleepMsBeforeRun = sleepMsBeforeRun
+    this.timeoutMs = timeoutMs
     this.validateInputFn = validateInputFn
     this.disableChildrenTasksOutputsInOutput = disableChildrenTasksOutputsInOutput
     this.runParent = runParent
@@ -130,12 +131,12 @@ export class DurableTaskInternal {
   ): {
     id: string
     retryOptions: DurableTaskRetryOptions
-    timeoutMs: number
     sleepMsBeforeRun: number
+    timeoutMs: number
   } {
     validateTaskId(taskOptions.id)
     if (taskInternalsMap.has(taskOptions.id)) {
-      throw new DurableTaskError(
+      throw new DurableExecutionError(
         `Task ${taskOptions.id} already exists. Use unique ids for tasks`,
         false,
       )
@@ -143,24 +144,24 @@ export class DurableTaskInternal {
 
     const parsedRetryOptions = v.safeParse(vRetryOptions, taskOptions.retryOptions)
     if (!parsedRetryOptions.success) {
-      throw new DurableTaskError(
+      throw new DurableExecutionError(
         `Invalid retry options for task ${taskOptions.id}: ${v.summarize(parsedRetryOptions.issues)}`,
-        false,
-      )
-    }
-
-    const parsedTimeoutMs = v.safeParse(vTimeoutMs, taskOptions.timeoutMs)
-    if (!parsedTimeoutMs.success) {
-      throw new DurableTaskError(
-        `Invalid timeout value for task ${taskOptions.id}: ${v.summarize(parsedTimeoutMs.issues)}`,
         false,
       )
     }
 
     const parsedSleepMsBeforeRun = v.safeParse(vSleepMsBeforeRun, taskOptions.sleepMsBeforeRun)
     if (!parsedSleepMsBeforeRun.success) {
-      throw new DurableTaskError(
+      throw new DurableExecutionError(
         `Invalid sleep ms before run for task ${taskOptions.id}: ${v.summarize(parsedSleepMsBeforeRun.issues)}`,
+        false,
+      )
+    }
+
+    const parsedTimeoutMs = v.safeParse(vTimeoutMs, taskOptions.timeoutMs)
+    if (!parsedTimeoutMs.success) {
+      throw new DurableExecutionError(
+        `Invalid timeout value for task ${taskOptions.id}: ${v.summarize(parsedTimeoutMs.issues)}`,
         false,
       )
     }
@@ -168,8 +169,8 @@ export class DurableTaskInternal {
     return {
       id: taskOptions.id,
       retryOptions: parsedRetryOptions.output,
-      timeoutMs: parsedTimeoutMs.output,
       sleepMsBeforeRun: parsedSleepMsBeforeRun.output,
+      timeoutMs: parsedTimeoutMs.output,
     }
   }
 
@@ -195,8 +196,8 @@ export class DurableTaskInternal {
       taskInternalsMap,
       commonOptions.id,
       commonOptions.retryOptions,
-      commonOptions.timeoutMs,
       commonOptions.sleepMsBeforeRun,
+      commonOptions.timeoutMs,
       validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
       true,
       runParent as (
@@ -252,8 +253,8 @@ export class DurableTaskInternal {
       taskInternalsMap,
       commonOptions.id,
       commonOptions.retryOptions,
-      commonOptions.timeoutMs,
       commonOptions.sleepMsBeforeRun,
+      commonOptions.timeoutMs,
       validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
       false,
       runParent as (
@@ -275,7 +276,7 @@ export class DurableTaskInternal {
     if (options?.retryOptions) {
       const parsedRetryOptions = v.safeParse(vRetryOptions, options.retryOptions)
       if (!parsedRetryOptions.success) {
-        throw new DurableTaskError(
+        throw new DurableExecutionError(
           `Invalid retry options for task ${this.id}: ${v.summarize(parsedRetryOptions.issues)}`,
           false,
         )
@@ -284,28 +285,28 @@ export class DurableTaskInternal {
       validatedOptions.retryOptions = parsedRetryOptions.output
     }
 
-    if (options?.timeoutMs) {
-      const parsedTimeoutMs = v.safeParse(vTimeoutMs, options.timeoutMs)
-      if (!parsedTimeoutMs.success) {
-        throw new DurableTaskError(
-          `Invalid timeout value for task ${this.id}: ${v.summarize(parsedTimeoutMs.issues)}`,
-          false,
-        )
-      }
-
-      validatedOptions.timeoutMs = parsedTimeoutMs.output
-    }
-
     if (options?.sleepMsBeforeRun) {
       const parsedSleepMsBeforeRun = v.safeParse(vSleepMsBeforeRun, options.sleepMsBeforeRun)
       if (!parsedSleepMsBeforeRun.success) {
-        throw new DurableTaskError(
+        throw new DurableExecutionError(
           `Invalid sleep ms before run for task ${this.id}: ${v.summarize(parsedSleepMsBeforeRun.issues)}`,
           false,
         )
       }
 
       validatedOptions.sleepMsBeforeRun = parsedSleepMsBeforeRun.output
+    }
+
+    if (options?.timeoutMs) {
+      const parsedTimeoutMs = v.safeParse(vTimeoutMs, options.timeoutMs)
+      if (!parsedTimeoutMs.success) {
+        throw new DurableExecutionError(
+          `Invalid timeout value for task ${this.id}: ${v.summarize(parsedTimeoutMs.issues)}`,
+          false,
+        )
+      }
+
+      validatedOptions.timeoutMs = parsedTimeoutMs.output
     }
 
     return validatedOptions
@@ -315,12 +316,12 @@ export class DurableTaskInternal {
     return options?.retryOptions != null ? options.retryOptions : this.retryOptions
   }
 
-  getTimeoutMs(options?: DurableTaskEnqueueOptions): number {
-    return options?.timeoutMs != null ? options.timeoutMs : this.timeoutMs
-  }
-
   getSleepMsBeforeRun(options?: DurableTaskEnqueueOptions): number {
     return options?.sleepMsBeforeRun != null ? options.sleepMsBeforeRun : this.sleepMsBeforeRun
+  }
+
+  getTimeoutMs(options?: DurableTaskEnqueueOptions): number {
+    return options?.timeoutMs != null ? options.timeoutMs : this.timeoutMs
   }
 
   async validateInput(input: unknown): Promise<unknown> {
@@ -344,7 +345,7 @@ export class DurableTaskInternal {
       createCancellablePromise(
         this.runParent(ctx, input),
         timeoutCancelSignal,
-        new DurableTaskTimedOutError(),
+        new DurableExecutionTimedOutError(),
       ),
       cancelSignal,
     )
@@ -368,15 +369,15 @@ export type DurableTaskCommonOptions = {
    */
   retryOptions?: DurableTaskRetryOptions
   /**
-   * The timeout for the task run function. If a value < 0 is returned, the task will be marked as
-   * failed and will not be retried.
-   */
-  timeoutMs: number
-  /**
    * The delay before running the task run function. If the value is < 0 or undefined, it will be
    * treated as 0.
    */
   sleepMsBeforeRun?: number
+  /**
+   * The timeout for the task run function. If a value < 0 is returned, the task will be marked as
+   * failed and will not be retried.
+   */
+  timeoutMs: number
 }
 
 /**
@@ -452,10 +453,10 @@ export type DurableTaskOptions<TInput = unknown, TOutput = unknown> = DurableTas
    * The task run logic. It returns the output.
    *
    * Behavior on throwing errors:
-   * - If the task throws an error or a `{@link DurableTaskError}`, the task will be marked as
+   * - If the task throws an error or a `{@link DurableExecutionError}`, the task will be marked as
    * failed
-   * - If the task throws a `{@link DurableTaskTimedOutError}`, it will be marked as timed out
-   * - If the task throws a `{@link DurableTaskCancelledError}`, it will be marked as cancelled
+   * - If the task throws a `{@link DurableExecutionTimedOutError}`, it will be marked as timed out
+   * - If the task throws a `{@link DurableExecutionCancelledError}`, it will be marked as cancelled
    * - Failed and timed out tasks might be retried based on the task's retry configuration
    * - Cancelled tasks will not be retried
    *
@@ -705,7 +706,7 @@ export type DurableTaskRunContext = {
   /**
    * The error of the previous attempt.
    */
-  prevError?: DurableTaskError
+  prevError?: DurableExecutionError
 }
 
 /**
@@ -761,10 +762,10 @@ export type DurableTaskReadyExecution = {
   taskId: string
   executionId: string
   retryOptions: DurableTaskRetryOptions
-  timeoutMs: number
   sleepMsBeforeRun: number
+  timeoutMs: number
   runInput: unknown
-  error?: DurableTaskError
+  error?: DurableExecutionError
   status: 'ready'
   retryAttempts: number
   createdAt: Date
@@ -789,7 +790,7 @@ export type DurableTaskRunningExecution = Omit<DurableTaskReadyExecution, 'statu
  */
 export type DurableTaskFailedExecution = Omit<DurableTaskRunningExecution, 'status' | 'error'> & {
   status: 'failed'
-  error: DurableTaskError
+  error: DurableExecutionError
   finishedAt: Date
 }
 
@@ -800,7 +801,7 @@ export type DurableTaskFailedExecution = Omit<DurableTaskRunningExecution, 'stat
  */
 export type DurableTaskTimedOutExecution = Omit<DurableTaskRunningExecution, 'status' | 'error'> & {
   status: 'timed_out'
-  error: DurableTaskTimedOutError
+  error: DurableExecutionTimedOutError
   finishedAt: Date
 }
 
@@ -857,7 +858,7 @@ export type DurableTaskFinalizeTaskFailedExecution = Omit<
   'status'
 > & {
   status: 'finalize_task_failed'
-  finalizeTaskError: DurableTaskError
+  finalizeTaskError: DurableExecutionError
   finishedAt: Date
 }
 
@@ -891,7 +892,7 @@ export type DurableTaskCancelledExecution = Omit<
   'status' | 'error'
 > & {
   status: 'cancelled'
-  error: DurableTaskCancelledError
+  error: DurableExecutionCancelledError
   /**
    * The output of the task. This is only present for tasks whose run method completed
    * successfully.
@@ -952,15 +953,27 @@ export type DurableChildTaskExecutionError = {
   index: number
   taskId: string
   executionId: string
-  error: DurableTaskError
+  error: DurableExecutionError
 }
 
 /**
- * The status of a durable task execution.
+ * A storage object for a child task execution error of a durable task execution.
  *
  * @category Task
  */
-export type DurableTaskExecutionStatus =
+export type DurableChildTaskExecutionErrorStorageObject = {
+  index: number
+  taskId: string
+  executionId: string
+  error: DurableExecutionErrorStorageObject
+}
+
+/**
+ * A storage object for the status of a durable task execution.
+ *
+ * @category Storage
+ */
+export type DurableTaskExecutionStatusStorageObject =
   | 'ready'
   | 'running'
   | 'failed'
@@ -972,7 +985,7 @@ export type DurableTaskExecutionStatus =
   | 'completed'
   | 'cancelled'
 
-export const ALL_TASK_EXECUTION_STATUSES = [
+export const ALL_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS = [
   'ready',
   'running',
   'failed',
@@ -983,21 +996,21 @@ export const ALL_TASK_EXECUTION_STATUSES = [
   'finalize_task_failed',
   'completed',
   'cancelled',
-] as Array<DurableTaskExecutionStatus>
-export const ACTIVE_TASK_EXECUTION_STATUSES = [
+] as Array<DurableTaskExecutionStatusStorageObject>
+export const ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS = [
   'ready',
   'running',
   'waiting_for_children_tasks',
   'waiting_for_finalize_task',
-] as Array<DurableTaskExecutionStatus>
-export const FINISHED_TASK_EXECUTION_STATUSES = [
+] as Array<DurableTaskExecutionStatusStorageObject>
+export const FINISHED_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS = [
   'failed',
   'timed_out',
   'children_tasks_failed',
   'finalize_task_failed',
   'completed',
   'cancelled',
-] as Array<DurableTaskExecutionStatus>
+] as Array<DurableTaskExecutionStatusStorageObject>
 
 /**
  * The options for enqueuing a task. If provided, the task will be enqueued with the given
@@ -1008,8 +1021,8 @@ export const FINISHED_TASK_EXECUTION_STATUSES = [
  */
 export type DurableTaskEnqueueOptions = {
   retryOptions?: DurableTaskRetryOptions
-  timeoutMs?: number
   sleepMsBeforeRun?: number
+  timeoutMs?: number
 }
 
 /**
@@ -1115,12 +1128,15 @@ const _TASK_ID_REGEX = /^\w+$/
  */
 export function validateTaskId(id: string): void {
   if (id.length === 0) {
-    throw new DurableTaskError('Id cannot be empty', false)
+    throw new DurableExecutionError('Id cannot be empty', false)
   }
   if (id.length > 255) {
-    throw new DurableTaskError('Id cannot be longer than 255 characters', false)
+    throw new DurableExecutionError('Id cannot be longer than 255 characters', false)
   }
   if (!_TASK_ID_REGEX.test(id)) {
-    throw new DurableTaskError('Id can only contain alphanumeric characters and underscores', false)
+    throw new DurableExecutionError(
+      'Id can only contain alphanumeric characters and underscores',
+      false,
+    )
   }
 }

@@ -1,15 +1,15 @@
 import {
-  DURABLE_TASK_CANCELLED_ERROR_TAG,
-  DURABLE_TASK_TIMED_OUT_ERROR_TAG,
-  DurableTaskCancelledError,
-  DurableTaskError,
-  DurableTaskTimedOutError,
+  convertDurableExecutionErrorStorageObjectToError,
+  DurableExecutionError,
+  type DurableExecutionErrorStorageObject,
 } from './errors'
 import { createConsoleLogger, createLoggerDebugDisabled, type Logger } from './logger'
 import { type Serializer } from './serializer'
 import {
+  type DurableChildTaskExecution,
+  type DurableChildTaskExecutionErrorStorageObject,
   type DurableTaskExecution,
-  type DurableTaskExecutionStatus,
+  type DurableTaskExecutionStatusStorageObject,
   type DurableTaskRetryOptions,
 } from './task'
 
@@ -193,13 +193,13 @@ export type DurableTaskExecutionStorageObject = {
    */
   retryOptions: DurableTaskRetryOptions
   /**
-   * The timeout ms of the task execution.
-   */
-  timeoutMs: number
-  /**
    * The sleep ms before run of the task execution.
    */
   sleepMsBeforeRun: number
+  /**
+   * The timeout ms of the task execution.
+   */
+  timeoutMs: number
   /**
    * The run input of the task execution.
    */
@@ -219,28 +219,28 @@ export type DurableTaskExecutionStorageObject = {
   /**
    * The children tasks of the execution. It is only present for waiting_for_children_tasks status.
    */
-  childrenTasks?: Array<DurableTaskChildExecutionStorageObject>
+  childrenTasks?: Array<DurableChildTaskExecution>
   /**
    * The errors of the children tasks. It is only present for children_tasks_failed status. In case
    * of multiple errors, the order of errors is not defined.
    */
-  childrenTasksErrors?: Array<DurableTaskChildErrorStorageObject>
+  childrenTasksErrors?: Array<DurableChildTaskExecutionErrorStorageObject>
   /**
    * The finalize task child execution of the execution.
    */
-  finalizeTask?: DurableTaskChildExecutionStorageObject
+  finalizeTask?: DurableChildTaskExecution
   /**
    * The error of the finalize task execution. It is only present for finalize_task_failed status.
    */
-  finalizeTaskError?: DurableTaskErrorStorageObject
+  finalizeTaskError?: DurableExecutionErrorStorageObject
   /**
    * The error of the execution.
    */
-  error?: DurableTaskErrorStorageObject
+  error?: DurableExecutionErrorStorageObject
   /**
    * The status of the execution.
    */
-  status: DurableTaskExecutionStatus
+  status: DurableTaskExecutionStatusStorageObject
   /**
    * Whether the execution is closed. Once the execution is finished, a background process
    * will update the status of its parent task if present and children if present.
@@ -281,28 +281,6 @@ export type DurableTaskExecutionStorageObject = {
 }
 
 /**
- * A storage object for a child task of a durable task execution.
- *
- * @category Storage
- */
-export type DurableTaskChildExecutionStorageObject = {
-  taskId: string
-  executionId: string
-}
-
-/**
- * A storage object for a child task error of a durable task execution.
- *
- * @category Storage
- */
-export type DurableTaskChildErrorStorageObject = {
-  index: number
-  taskId: string
-  executionId: string
-  error: DurableTaskErrorStorageObject
-}
-
-/**
  * An expires at date that never expires.
  *
  * @category Storage
@@ -316,8 +294,8 @@ export function createDurableTaskExecutionStorageObject({
   taskId,
   executionId,
   retryOptions,
-  timeoutMs,
   sleepMsBeforeRun,
+  timeoutMs,
   runInput,
 }: {
   now: Date
@@ -333,8 +311,8 @@ export function createDurableTaskExecutionStorageObject({
   taskId: string
   executionId: string
   retryOptions: DurableTaskRetryOptions
-  timeoutMs: number
   sleepMsBeforeRun: number
+  timeoutMs: number
   runInput: string
 }): DurableTaskExecutionStorageObject {
   return {
@@ -343,8 +321,8 @@ export function createDurableTaskExecutionStorageObject({
     taskId,
     executionId,
     retryOptions,
-    timeoutMs,
     sleepMsBeforeRun,
+    timeoutMs,
     runInput,
     childrenTasksCompletedCount: 0,
     status: 'ready',
@@ -374,18 +352,18 @@ export type DurableTaskExecutionStorageWhere =
   | {
       type: 'by_execution_ids'
       executionIds: Array<string>
-      statuses?: Array<DurableTaskExecutionStatus>
+      statuses?: Array<DurableTaskExecutionStatusStorageObject>
       needsPromiseCancellation?: boolean
     }
   | {
       type: 'by_statuses'
-      statuses: Array<DurableTaskExecutionStatus>
+      statuses: Array<DurableTaskExecutionStatusStorageObject>
       isClosed?: boolean
       expiresAtLessThan?: Date
     }
   | {
       type: 'by_start_at_less_than'
-      statuses: Array<DurableTaskExecutionStatus>
+      statuses: Array<DurableTaskExecutionStatusStorageObject>
       startAtLessThan: Date
     }
 
@@ -399,16 +377,16 @@ export type DurableTaskExecutionStorageObjectUpdate = {
   runOutput?: string
   output?: string
   childrenTasksCompletedCount?: number
-  childrenTasks?: Array<DurableTaskChildExecutionStorageObject>
-  childrenTasksErrors?: Array<DurableTaskChildErrorStorageObject>
-  finalizeTask?: DurableTaskChildExecutionStorageObject
-  finalizeTaskError?: DurableTaskErrorStorageObject
-  error?: DurableTaskErrorStorageObject
+  childrenTasks?: Array<DurableChildTaskExecution>
+  childrenTasksErrors?: Array<DurableChildTaskExecutionErrorStorageObject>
+  finalizeTask?: DurableChildTaskExecution
+  finalizeTaskError?: DurableExecutionErrorStorageObject
+  error?: DurableExecutionErrorStorageObject
   /**
    * Whether to unset the error. If true, the error will be set to undefined.
    */
   unsetError?: boolean
-  status?: DurableTaskExecutionStatus
+  status?: DurableTaskExecutionStatusStorageObject
   isClosed?: boolean
   needsPromiseCancellation?: boolean
   retryAttempts?: number
@@ -444,7 +422,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         index: childError.index,
         taskId: childError.taskId,
         executionId: childError.executionId,
-        error: convertDurableTaskErrorStorageObjectToError(childError.error),
+        error: convertDurableExecutionErrorStorageObjectToError(childError.error),
       }))
     : undefined
   const finalizeTask = execution.finalizeTask
@@ -454,10 +432,10 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
       }
     : undefined
   const finalizeTaskError = execution.finalizeTaskError
-    ? convertDurableTaskErrorStorageObjectToError(execution.finalizeTaskError)
+    ? convertDurableExecutionErrorStorageObjectToError(execution.finalizeTaskError)
     : undefined
   const error = execution.error
-    ? convertDurableTaskErrorStorageObjectToError(execution.error)
+    ? convertDurableExecutionErrorStorageObjectToError(execution.error)
     : undefined
 
   switch (execution.status) {
@@ -468,8 +446,8 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         taskId: execution.taskId,
         executionId: execution.executionId,
         retryOptions: execution.retryOptions,
-        timeoutMs: execution.timeoutMs,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
+        timeoutMs: execution.timeoutMs,
         runInput,
         error,
         status: 'ready',
@@ -485,8 +463,8 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         taskId: execution.taskId,
         executionId: execution.executionId,
         retryOptions: execution.retryOptions,
-        timeoutMs: execution.timeoutMs,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
+        timeoutMs: execution.timeoutMs,
         runInput,
         error,
         status: 'running',
@@ -504,8 +482,8 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         taskId: execution.taskId,
         executionId: execution.executionId,
         retryOptions: execution.retryOptions,
-        timeoutMs: execution.timeoutMs,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
+        timeoutMs: execution.timeoutMs,
         runInput,
         error: error!,
         status: 'failed',
@@ -524,8 +502,8 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         taskId: execution.taskId,
         executionId: execution.executionId,
         retryOptions: execution.retryOptions,
-        timeoutMs: execution.timeoutMs,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
+        timeoutMs: execution.timeoutMs,
         runInput,
         error: error!,
         status: 'timed_out',
@@ -544,8 +522,8 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         taskId: execution.taskId,
         executionId: execution.executionId,
         retryOptions: execution.retryOptions,
-        timeoutMs: execution.timeoutMs,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
+        timeoutMs: execution.timeoutMs,
         runInput,
         runOutput: runOutput!,
         childrenTasks: childrenTasks ?? [],
@@ -564,8 +542,8 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         taskId: execution.taskId,
         executionId: execution.executionId,
         retryOptions: execution.retryOptions,
-        timeoutMs: execution.timeoutMs,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
+        timeoutMs: execution.timeoutMs,
         runInput,
         runOutput: runOutput!,
         childrenTasks: childrenTasks ?? [],
@@ -586,8 +564,8 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         taskId: execution.taskId,
         executionId: execution.executionId,
         retryOptions: execution.retryOptions,
-        timeoutMs: execution.timeoutMs,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
+        timeoutMs: execution.timeoutMs,
         runInput,
         runOutput: runOutput!,
         childrenTasks: childrenTasks ?? [],
@@ -607,8 +585,8 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         taskId: execution.taskId,
         executionId: execution.executionId,
         retryOptions: execution.retryOptions,
-        timeoutMs: execution.timeoutMs,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
+        timeoutMs: execution.timeoutMs,
         runInput,
         runOutput: runOutput!,
         childrenTasks: childrenTasks ?? [],
@@ -630,8 +608,8 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         taskId: execution.taskId,
         executionId: execution.executionId,
         retryOptions: execution.retryOptions,
-        timeoutMs: execution.timeoutMs,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
+        timeoutMs: execution.timeoutMs,
         runInput,
         runOutput: runOutput!,
         output: output!,
@@ -653,8 +631,8 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         taskId: execution.taskId,
         executionId: execution.executionId,
         retryOptions: execution.retryOptions,
-        timeoutMs: execution.timeoutMs,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
+        timeoutMs: execution.timeoutMs,
         runInput,
         runOutput,
         childrenTasks: childrenTasks,
@@ -671,39 +649,9 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
     }
     default: {
       // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-      throw new DurableTaskError(`Unknown execution status: ${execution.status}`, false)
+      throw new DurableExecutionError(`Unknown execution status: ${execution.status}`, false)
     }
   }
-}
-
-/**
- * A storage object for a durable task error.
- *
- * @category Storage
- */
-export type DurableTaskErrorStorageObject = {
-  tag: string
-  message: string
-  isRetryable: boolean
-}
-
-export function convertDurableTaskErrorStorageObjectToError(
-  error: DurableTaskErrorStorageObject,
-): DurableTaskError {
-  const tag = error.tag
-  if (tag === DURABLE_TASK_TIMED_OUT_ERROR_TAG) {
-    return new DurableTaskTimedOutError(error.message, error.isRetryable)
-  }
-  if (tag === DURABLE_TASK_CANCELLED_ERROR_TAG) {
-    return new DurableTaskCancelledError(error.message)
-  }
-  return new DurableTaskError(error.message, error.isRetryable)
-}
-
-export function convertDurableTaskErrorToStorageObject(
-  error: DurableTaskError,
-): DurableTaskErrorStorageObject {
-  return { tag: error.tag, message: error.message, isRetryable: error.isRetryable }
 }
 
 /**

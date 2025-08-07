@@ -911,8 +911,8 @@ const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: nu
     .inputSchema(v.object({ prevCount: v.pipe(v.number(), v.integer(), v.minValue(0)) }))
     .parentTask({
       id: 'polling',
-      timeoutMs: 1000,
       sleepMsBeforeRun: 100,
+      timeoutMs: 1000,
       runParent: (ctx, input) => {
         if (value != null) {
           return {

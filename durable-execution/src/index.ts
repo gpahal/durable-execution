@@ -4,27 +4,31 @@ import { getErrorMessage } from '@gpahal/std/errors'
 import { sleep } from '@gpahal/std/promises'
 
 import { createCancellablePromise, createCancelSignal, type CancelSignal } from './cancel'
-import { DurableTaskCancelledError, DurableTaskError, DurableTaskTimedOutError } from './errors'
+import {
+  convertDurableExecutionErrorStorageObjectToError,
+  convertDurableExecutionErrorToStorageObject,
+  DurableExecutionCancelledError,
+  DurableExecutionError,
+  DurableExecutionTimedOutError,
+} from './errors'
 import { createConsoleLogger, createLoggerDebugDisabled, type Logger } from './logger'
 import { createSuperjsonSerializer, wrapSerializer, type Serializer } from './serializer'
 import {
-  convertDurableTaskErrorStorageObjectToError,
-  convertDurableTaskErrorToStorageObject,
   convertTaskExecutionStorageObjectToTaskExecution,
   createDurableTaskExecutionStorageObject,
   EXPIRES_AT_INFINITY,
   updateTaskExecutionsWithLimit,
   type DurableStorage,
   type DurableStorageTx,
-  type DurableTaskChildExecutionStorageObject,
   type DurableTaskExecutionStorageObject,
   type DurableTaskExecutionStorageObjectUpdate,
 } from './storage'
 import {
-  ACTIVE_TASK_EXECUTION_STATUSES,
+  ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS,
   DurableTaskInternal,
-  FINISHED_TASK_EXECUTION_STATUSES,
+  FINISHED_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS,
   generateTaskExecutionId,
+  type DurableChildTaskExecution,
   type DurableChildTaskExecutionOutput,
   type DurableParentTaskOptions,
   type DurableTask,
@@ -42,7 +46,12 @@ export {
   createTimeoutCancelSignal,
   createCancellablePromise,
 } from './cancel'
-export { DurableTaskError, DurableTaskTimedOutError, DurableTaskCancelledError } from './errors'
+export {
+  DurableExecutionError,
+  DurableExecutionTimedOutError,
+  DurableExecutionCancelledError,
+  type DurableExecutionErrorStorageObject,
+} from './errors'
 export { type Logger, createConsoleLogger } from './logger'
 export type {
   DurableTask,
@@ -69,7 +78,8 @@ export type {
   DurableChildTaskExecution,
   DurableChildTaskExecutionOutput,
   DurableChildTaskExecutionError,
-  DurableTaskExecutionStatus,
+  DurableChildTaskExecutionErrorStorageObject,
+  DurableTaskExecutionStatusStorageObject,
   DurableTaskEnqueueOptions,
   DurableTaskHandle,
 } from './task'
@@ -81,11 +91,8 @@ export {
   type DurableStorage,
   type DurableStorageTx,
   type DurableTaskExecutionStorageObject,
-  type DurableTaskChildExecutionStorageObject,
-  type DurableTaskChildErrorStorageObject,
   type DurableTaskExecutionStorageWhere,
   type DurableTaskExecutionStorageObjectUpdate,
-  type DurableTaskErrorStorageObject,
 } from './storage'
 
 /**
@@ -283,7 +290,7 @@ export class DurableExecutor {
       try {
         return await this.storage.withTransaction(fn)
       } catch (error) {
-        if (error instanceof DurableTaskError && !error.isRetryable) {
+        if (error instanceof DurableExecutionError && !error.isRetryable) {
           throw error
         }
         if (i === maxRetryAttempts) {
@@ -298,7 +305,7 @@ export class DurableExecutor {
 
   private throwIfShutdown(): void {
     if (this.shutdownSignal.isCancelled()) {
-      throw new DurableTaskError('Executor shutdown', false)
+      throw new DurableExecutionError('Executor shutdown', false)
     }
   }
 
@@ -447,7 +454,10 @@ export class DurableExecutor {
         const runInput = await validateInputFn(input)
         return runInput
       } catch (error) {
-        throw new DurableTaskError(`Invalid input to task ${id}: ${getErrorMessage(error)}`, false)
+        throw new DurableExecutionError(
+          `Invalid input to task ${id}: ${getErrorMessage(error)}`,
+          false,
+        )
       }
     }
 
@@ -483,17 +493,20 @@ export class DurableExecutor {
       try {
         const validateResult = await inputSchema['~standard'].validate(input)
         if (validateResult.issues != null) {
-          throw new DurableTaskError(
+          throw new DurableExecutionError(
             `Invalid input to task ${id}: ${summarizeStandardSchemaIssues(validateResult.issues)}`,
             false,
           )
         }
         return validateResult.value
       } catch (error) {
-        if (error instanceof DurableTaskError) {
+        if (error instanceof DurableExecutionError) {
           throw error
         }
-        throw new DurableTaskError(`Invalid input to task ${id}: ${getErrorMessage(error)}`, false)
+        throw new DurableExecutionError(
+          `Invalid input to task ${id}: ${getErrorMessage(error)}`,
+          false,
+        )
       }
     }
 
@@ -583,7 +596,7 @@ export class DurableExecutor {
     ...tasks: SequentialDurableTasks<T>
   ): DurableTask<ExtractDurableTaskInput<T[0]>, ExtractDurableTaskOutput<LastElement<T>>> {
     if (tasks.length === 0) {
-      throw new DurableTaskError('No tasks provided', false)
+      throw new DurableExecutionError('No tasks provided', false)
     }
     if (tasks.length === 1) {
       return tasks[0]
@@ -643,7 +656,7 @@ export class DurableExecutor {
 
     const taskInternal = this.taskInternalsMap.get(task.id)
     if (!taskInternal) {
-      throw new DurableTaskError(
+      throw new DurableExecutionError(
         `Task ${task.id} not found. Use DurableExecutor.task() to add it before enqueuing it.`,
         false,
       )
@@ -653,8 +666,8 @@ export class DurableExecutor {
     const executionId = generateTaskExecutionId()
     const now = new Date()
     const retryOptions = taskInternal.getRetryOptions(options)
-    const timeoutMs = taskInternal.getTimeoutMs(options)
     const sleepMsBeforeRun = taskInternal.getSleepMsBeforeRun(options)
+    const timeoutMs = taskInternal.getTimeoutMs(options)
     await this.withTransaction(async (tx) => {
       await tx.insertTaskExecutions([
         createDurableTaskExecutionStorageObject({
@@ -662,8 +675,8 @@ export class DurableExecutor {
           taskId: taskInternal.id,
           executionId,
           retryOptions,
-          timeoutMs,
           sleepMsBeforeRun,
+          timeoutMs,
           runInput: this.serializer.serialize(runInput),
         }),
       ])
@@ -703,7 +716,7 @@ export class DurableExecutor {
           return executions.length === 0 ? undefined : executions[0]
         })
         if (!execution) {
-          throw new DurableTaskError(`Execution ${executionId} not found`, false)
+          throw new DurableExecutionError(`Execution ${executionId} not found`, false)
         }
         return convertTaskExecutionStorageObjectToTaskExecution(execution, this.serializer)
       },
@@ -724,7 +737,7 @@ export class DurableExecutor {
         let isFirstIteration = true
         while (true) {
           if (cancelSignal?.isCancelled()) {
-            throw new DurableTaskCancelledError()
+            throw new DurableExecutionCancelledError()
           }
 
           if (isFirstIteration) {
@@ -733,7 +746,7 @@ export class DurableExecutor {
             await createCancellablePromise(sleep(resolvedPollingIntervalMs), cancelSignal)
 
             if (cancelSignal?.isCancelled()) {
-              throw new DurableTaskCancelledError()
+              throw new DurableExecutionCancelledError()
             }
           }
 
@@ -745,10 +758,10 @@ export class DurableExecutor {
             return executions.length === 0 ? undefined : executions[0]
           })
           if (!execution) {
-            throw new DurableTaskError(`Execution ${executionId} not found`, false)
+            throw new DurableExecutionError(`Execution ${executionId} not found`, false)
           }
 
-          if (FINISHED_TASK_EXECUTION_STATUSES.includes(execution.status)) {
+          if (FINISHED_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS.includes(execution.status)) {
             return convertTaskExecutionStorageObjectToTaskExecution(
               execution,
               this.serializer,
@@ -767,10 +780,12 @@ export class DurableExecutor {
             {
               type: 'by_execution_ids',
               executionIds: [executionId],
-              statuses: ACTIVE_TASK_EXECUTION_STATUSES,
+              statuses: ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS,
             },
             {
-              error: convertDurableTaskErrorToStorageObject(new DurableTaskCancelledError()),
+              error: convertDurableExecutionErrorToStorageObject(
+                new DurableExecutionCancelledError(),
+              ),
               status: 'cancelled',
               needsPromiseCancellation: true,
               finishedAt: now,
@@ -809,7 +824,7 @@ export class DurableExecutor {
         consecutiveErrors = 0
         backoffMs = 1000
       } catch (error) {
-        if (error instanceof DurableTaskCancelledError) {
+        if (error instanceof DurableExecutionCancelledError) {
           this.logger.info(`Executor cancelled. Stopping ${processName}`)
           return
         }
@@ -817,7 +832,7 @@ export class DurableExecutor {
         consecutiveErrors++
         this.logger.error(`Error in ${processName}: consecutive_errors=${consecutiveErrors}`, error)
 
-        const isRetryableError = error instanceof DurableTaskError ? error.isRetryable : true
+        const isRetryableError = error instanceof DurableExecutionError ? error.isRetryable : true
         const waitTime = isRetryableError ? Math.min(backoffMs, 5000) : backoffMs
         if (consecutiveErrors >= maxConsecutiveErrors) {
           this.logger.error(
@@ -849,7 +864,7 @@ export class DurableExecutor {
         tx,
         {
           type: 'by_statuses',
-          statuses: FINISHED_TASK_EXECUTION_STATUSES,
+          statuses: FINISHED_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS,
           isClosed: false,
         },
         { isClosed: true, updatedAt: now },
@@ -866,7 +881,7 @@ export class DurableExecutor {
         executionIds: updatedExecutionIds,
       })
       if (executions.length !== updatedExecutionIds.length) {
-        throw new DurableTaskError('Some task executions not found', true)
+        throw new DurableExecutionError('Some task executions not found', true)
       }
 
       for (const execution of executions) {
@@ -936,7 +951,9 @@ export class DurableExecutor {
           {
             finalizeTaskError:
               execution.error ??
-              convertDurableTaskErrorToStorageObject(new DurableTaskError('Unknown error', false)),
+              convertDurableExecutionErrorToStorageObject(
+                new DurableExecutionError('Unknown error', false),
+              ),
             status:
               parentExecution.status === 'waiting_for_finalize_task'
                 ? 'finalize_task_failed'
@@ -989,7 +1006,7 @@ export class DurableExecutor {
             parentTaskInternal.finalizeTask.id,
           )
           if (!finalizeTaskTaskInternal) {
-            throw new DurableTaskError(
+            throw new DurableExecutionError(
               `Parent finalize task ${parentTaskInternal.finalizeTask.id} not found`,
               false,
             )
@@ -1004,8 +1021,8 @@ export class DurableExecutor {
             await finalizeTaskTaskInternal.validateInput(finalizeTaskInput)
           const executionId = generateTaskExecutionId()
           const retryOptions = finalizeTaskTaskInternal.getRetryOptions()
-          const timeoutMs = finalizeTaskTaskInternal.getTimeoutMs()
           const sleepMsBeforeRun = finalizeTaskTaskInternal.getSleepMsBeforeRun()
+          const timeoutMs = finalizeTaskTaskInternal.getTimeoutMs()
           await tx.insertTaskExecutions([
             createDurableTaskExecutionStorageObject({
               now,
@@ -1017,8 +1034,8 @@ export class DurableExecutor {
               taskId: finalizeTaskTaskInternal.id,
               executionId,
               retryOptions,
-              timeoutMs,
               sleepMsBeforeRun,
+              timeoutMs,
               runInput: this.serializer.serialize(finalizeTaskRunInput),
             }),
           ])
@@ -1079,7 +1096,9 @@ export class DurableExecutor {
         executionId: execution.executionId,
         error:
           execution.error ??
-          convertDurableTaskErrorToStorageObject(new DurableTaskError('Unknown error', false)),
+          convertDurableExecutionErrorToStorageObject(
+            new DurableExecutionError('Unknown error', false),
+          ),
       })
       await tx.updateTaskExecutions(
         { type: 'by_execution_ids', executionIds: [parentExecution.executionId] },
@@ -1117,11 +1136,11 @@ export class DurableExecutor {
       {
         type: 'by_execution_ids',
         executionIds: childrenExecutionIds,
-        statuses: ACTIVE_TASK_EXECUTION_STATUSES,
+        statuses: ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS,
       },
       {
-        error: convertDurableTaskErrorToStorageObject(
-          new DurableTaskCancelledError(
+        error: convertDurableExecutionErrorToStorageObject(
+          new DurableExecutionCancelledError(
             `Parent task ${execution.taskId} with execution id ${execution.executionId} failed: ${execution.error?.message ?? 'Unknown error'}`,
           ),
         ),
@@ -1155,8 +1174,8 @@ export class DurableExecutor {
           expiresAtLessThan: now,
         },
         {
-          error: convertDurableTaskErrorToStorageObject(
-            new DurableTaskError('Task expired', false),
+          error: convertDurableExecutionErrorToStorageObject(
+            new DurableExecutionError('Task expired', false),
           ),
           status: 'ready',
           startAt: now,
@@ -1257,7 +1276,7 @@ export class DurableExecutor {
         executionIds,
       })
       if (executions.length !== executionIds.length) {
-        throw new DurableTaskError('Some task executions not found', true)
+        throw new DurableExecutionError('Some task executions not found', true)
       }
 
       const toRunExecutions = [] as Array<[DurableTaskInternal, DurableTaskExecutionStorageObject]>
@@ -1270,11 +1289,11 @@ export class DurableExecutor {
             {
               type: 'by_execution_ids',
               executionIds: [execution.executionId],
-              statuses: ACTIVE_TASK_EXECUTION_STATUSES,
+              statuses: ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS,
             },
             {
-              error: convertDurableTaskErrorToStorageObject(
-                new DurableTaskError('Task not found', false),
+              error: convertDurableExecutionErrorToStorageObject(
+                new DurableExecutionError('Task not found', false),
               ),
               status: 'failed',
               finishedAt: now,
@@ -1376,7 +1395,7 @@ export class DurableExecutor {
       shutdownSignal: this.shutdownSignal,
       attempt: execution.retryAttempts,
       prevError: execution.error
-        ? convertDurableTaskErrorStorageObjectToError(execution.error)
+        ? convertDurableExecutionErrorStorageObjectToError(execution.error)
         : undefined,
     }
 
@@ -1412,7 +1431,7 @@ export class DurableExecutor {
         if (taskInternal.finalizeTask) {
           const finalizeTaskTaskInternal = this.taskInternalsMap.get(taskInternal.finalizeTask.id)
           if (!finalizeTaskTaskInternal) {
-            throw new DurableTaskError(
+            throw new DurableExecutionError(
               `Finalize task ${taskInternal.finalizeTask.id} not found`,
               false,
             )
@@ -1426,8 +1445,8 @@ export class DurableExecutor {
           const runInput = await finalizeTaskTaskInternal.validateInput(finalizeTaskInput)
           const executionId = generateTaskExecutionId()
           const retryOptions = finalizeTaskTaskInternal.getRetryOptions()
-          const timeoutMs = finalizeTaskTaskInternal.getTimeoutMs()
           const sleepMsBeforeRun = finalizeTaskTaskInternal.getSleepMsBeforeRun()
+          const timeoutMs = finalizeTaskTaskInternal.getTimeoutMs()
           await this.withTransaction(async (tx) => {
             await tx.insertTaskExecutions([
               createDurableTaskExecutionStorageObject({
@@ -1444,8 +1463,8 @@ export class DurableExecutor {
                 taskId: finalizeTaskTaskInternal.id,
                 executionId,
                 retryOptions,
-                timeoutMs,
                 sleepMsBeforeRun,
+                timeoutMs,
                 runInput: this.serializer.serialize(runInput),
               }),
             ])
@@ -1498,19 +1517,18 @@ export class DurableExecutor {
         }
       } else {
         const childrenTaskExecutions: Array<DurableTaskExecutionStorageObject> = []
-        const childrenTaskExecutionsStorageObjects: Array<DurableTaskChildExecutionStorageObject> =
-          []
+        const childrenTaskExecutionsStorageObjects: Array<DurableChildTaskExecution> = []
         for (const child of childrenTasks) {
           const childTaskInternal = this.taskInternalsMap.get(child.task.id)
           if (!childTaskInternal) {
-            throw new DurableTaskError(`Child task ${child.task.id} not found`, false)
+            throw new DurableExecutionError(`Child task ${child.task.id} not found`, false)
           }
 
           const runInput = await childTaskInternal.validateInput(child.input)
           const executionId = generateTaskExecutionId()
           const retryOptions = childTaskInternal.getRetryOptions(child.options)
-          const timeoutMs = childTaskInternal.getTimeoutMs(child.options)
           const sleepMsBeforeRun = childTaskInternal.getSleepMsBeforeRun(child.options)
+          const timeoutMs = childTaskInternal.getTimeoutMs(child.options)
           childrenTaskExecutions.push(
             createDurableTaskExecutionStorageObject({
               now,
@@ -1525,8 +1543,8 @@ export class DurableExecutor {
               taskId: child.task.id,
               executionId,
               retryOptions,
-              timeoutMs,
               sleepMsBeforeRun,
+              timeoutMs,
               runInput: this.serializer.serialize(runInput),
             }),
           )
@@ -1556,10 +1574,10 @@ export class DurableExecutor {
         })
       }
     } catch (error) {
-      const durableTaskError =
-        error instanceof DurableTaskError
+      const durableExecutionError =
+        error instanceof DurableExecutionError
           ? error
-          : new DurableTaskError(getErrorMessage(error), true)
+          : new DurableExecutionError(getErrorMessage(error), true)
 
       const now = new Date()
       let update: DurableTaskExecutionStorageObjectUpdate
@@ -1567,7 +1585,7 @@ export class DurableExecutor {
       // Check if the error is retryable and the retry attempts are less than the maximum retry
       // attempts. If so, update the execution status to ready.
       if (
-        durableTaskError.isRetryable &&
+        durableExecutionError.isRetryable &&
         execution.retryAttempts < execution.retryOptions.maxAttempts
       ) {
         const baseDelayMs = execution.retryOptions.baseDelayMs ?? 0
@@ -1581,7 +1599,7 @@ export class DurableExecutor {
           delayMs = Math.min(delayMs, maxDelayMs)
         }
         update = {
-          error: convertDurableTaskErrorToStorageObject(durableTaskError),
+          error: convertDurableExecutionErrorToStorageObject(durableExecutionError),
           status: 'ready',
           retryAttempts: execution.retryAttempts + 1,
           startAt: new Date(now.getTime() + delayMs),
@@ -1590,13 +1608,13 @@ export class DurableExecutor {
         }
       } else {
         const status =
-          error instanceof DurableTaskTimedOutError
+          error instanceof DurableExecutionTimedOutError
             ? 'timed_out'
-            : error instanceof DurableTaskCancelledError
+            : error instanceof DurableExecutionCancelledError
               ? 'cancelled'
               : 'failed'
         update = {
-          error: convertDurableTaskErrorToStorageObject(durableTaskError),
+          error: convertDurableExecutionErrorToStorageObject(durableExecutionError),
           status,
           finishedAt: now,
           updatedAt: now,

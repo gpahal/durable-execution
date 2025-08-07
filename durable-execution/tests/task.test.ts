@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { sleep } from '@gpahal/std/promises'
 
 import {
+  DurableExecutionCancelledError,
+  DurableExecutionError,
   DurableExecutor,
-  DurableTaskCancelledError,
-  DurableTaskError,
   type DurableTaskRunContext,
 } from '../src'
 import { InMemoryStorage } from './in-memory-storage'
@@ -219,7 +219,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskError')
+    expect(finishedExecution.error?.getErrorType()).toBe('generic')
     expect(finishedExecution.error?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
@@ -284,7 +284,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Test error 1')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskError')
+    expect(finishedExecution.error?.getErrorType()).toBe('generic')
     expect(finishedExecution.error?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
@@ -303,7 +303,7 @@ describe('simpleTask', () => {
       timeoutMs: 1000,
       run: () => {
         executed++
-        throw new DurableTaskError('Test error', false)
+        throw new DurableExecutionError('Test error', false)
       },
     })
 
@@ -317,7 +317,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskError')
+    expect(finishedExecution.error?.getErrorType()).toBe('generic')
     expect(finishedExecution.error?.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
@@ -347,7 +347,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Task timed out')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskTimedOutError')
+    expect(finishedExecution.error?.getErrorType()).toBe('timed_out')
     expect(finishedExecution.error?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
@@ -421,7 +421,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Task cancelled')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskCancelledError')
+    expect(finishedExecution.error?.getErrorType()).toBe('cancelled')
     expect(finishedExecution.error?.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeUndefined()
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
@@ -451,7 +451,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Task cancelled')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskCancelledError')
+    expect(finishedExecution.error?.getErrorType()).toBe('cancelled')
     expect(finishedExecution.error?.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
@@ -486,7 +486,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Task cancelled')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskCancelledError')
+    expect(finishedExecution.error?.getErrorType()).toBe('cancelled')
     expect(finishedExecution.error?.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeUndefined()
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
@@ -515,7 +515,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Task cancelled')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskCancelledError')
+    expect(finishedExecution.error?.getErrorType()).toBe('cancelled')
     expect(finishedExecution.error?.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
@@ -551,7 +551,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskError')
+    expect(finishedExecution.error?.getErrorType()).toBe('generic')
     expect(finishedExecution.error?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
@@ -573,8 +573,8 @@ describe('simpleTask', () => {
       retryOptions: {
         maxAttempts: 1,
       },
-      timeoutMs: 1000,
       sleepMsBeforeRun: 250,
+      timeoutMs: 1000,
       run: async () => {
         executed++
         await sleep(0)
@@ -593,7 +593,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskError')
+    expect(finishedExecution.error?.getErrorType()).toBe('generic')
     expect(finishedExecution.error?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.startedAt.getTime()).toBeGreaterThanOrEqual(
@@ -615,8 +615,8 @@ describe('simpleTask', () => {
       retryOptions: {
         maxAttempts: 1,
       },
-      timeoutMs: 1000,
       sleepMsBeforeRun: -100,
+      timeoutMs: 1000,
       run: async () => {
         executed++
         await sleep(0)
@@ -635,7 +635,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskError')
+    expect(finishedExecution.error?.getErrorType()).toBe('generic')
     expect(finishedExecution.error?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
@@ -674,7 +674,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskError')
+    expect(finishedExecution.error?.getErrorType()).toBe('generic')
     expect(finishedExecution.error?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
@@ -726,7 +726,7 @@ describe('simpleTask', () => {
         executed++
         for (let i = 0; i < 20; i++) {
           if (ctx.shutdownSignal.isCancelled()) {
-            throw new DurableTaskCancelledError()
+            throw new DurableExecutionCancelledError()
           }
           await sleep(500)
         }
@@ -745,7 +745,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
     expect(finishedExecution.error?.message).toBe('Task cancelled')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskCancelledError')
+    expect(finishedExecution.error?.getErrorType()).toBe('cancelled')
     expect(finishedExecution.error?.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)

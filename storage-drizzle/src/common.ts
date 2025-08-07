@@ -1,8 +1,8 @@
 import type {
-  DurableTaskChildErrorStorageObject,
-  DurableTaskChildExecutionStorageObject,
-  DurableTaskErrorStorageObject,
-  DurableTaskExecutionStatus,
+  DurableChildTaskExecution,
+  DurableChildTaskExecutionErrorStorageObject,
+  DurableExecutionErrorStorageObject,
+  DurableTaskExecutionStatusStorageObject,
   DurableTaskExecutionStorageObject,
   DurableTaskExecutionStorageObjectUpdate,
   DurableTaskRetryOptions,
@@ -23,12 +23,12 @@ export type DurableTaskExecutionDbValue = {
   runOutput?: string | null
   output?: string | null
   childrenTasksCompletedCount: number
-  childrenTasks?: Array<DurableTaskChildExecutionStorageObject> | null
-  childrenTasksErrors?: Array<DurableTaskChildErrorStorageObject> | null
-  finalizeTask?: DurableTaskChildExecutionStorageObject | null
-  finalizeTaskError?: DurableTaskErrorStorageObject | null
-  error?: DurableTaskErrorStorageObject | null
-  status: DurableTaskExecutionStatus
+  childrenTasks?: Array<DurableChildTaskExecution> | null
+  childrenTasksErrors?: Array<DurableChildTaskExecutionErrorStorageObject> | null
+  finalizeTask?: DurableChildTaskExecution | null
+  finalizeTaskError?: DurableExecutionErrorStorageObject | null
+  error?: DurableExecutionErrorStorageObject | null
+  status: DurableTaskExecutionStatusStorageObject
   isClosed: boolean
   needsPromiseCancellation: boolean
   retryAttempts: number
@@ -44,12 +44,12 @@ export type DurableTaskExecutionDbUpdateValue = {
   runOutput?: string
   output?: string
   childrenTasksCompletedCount?: number
-  childrenTasks?: Array<DurableTaskChildExecutionStorageObject>
-  childrenTasksErrors?: Array<DurableTaskChildErrorStorageObject>
-  finalizeTask?: DurableTaskChildExecutionStorageObject
-  finalizeTaskError?: DurableTaskErrorStorageObject
-  error?: DurableTaskErrorStorageObject | null
-  status?: DurableTaskExecutionStatus
+  childrenTasks?: Array<DurableChildTaskExecution>
+  childrenTasksErrors?: Array<DurableChildTaskExecutionErrorStorageObject>
+  finalizeTask?: DurableChildTaskExecution
+  finalizeTaskError?: DurableExecutionErrorStorageObject
+  error?: DurableExecutionErrorStorageObject | null
+  status?: DurableTaskExecutionStatusStorageObject
   isClosed?: boolean
   needsPromiseCancellation?: boolean
   retryAttempts?: number

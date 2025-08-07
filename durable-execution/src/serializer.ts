@@ -2,7 +2,7 @@ import superjson from 'superjson'
 
 import { getErrorMessage } from '@gpahal/std/errors'
 
-import { DurableTaskError } from './errors'
+import { DurableExecutionError } from './errors'
 
 /**
  * A serializer.
@@ -29,7 +29,7 @@ export function createSuperjsonSerializer(): Serializer {
 }
 
 /**
- * Wrap a serializer to catch errors and throw a {@link DurableTaskError}.
+ * Wrap a serializer to catch errors and throw a {@link DurableExecutionError}.
  *
  * @param serializer - The serializer to wrap.
  * @returns The wrapped serializer.
@@ -42,14 +42,17 @@ export function wrapSerializer(serializer: Serializer): Serializer {
       try {
         return serializer.serialize(value)
       } catch (error) {
-        throw new DurableTaskError(`Error serializing value: ${getErrorMessage(error)}`, false)
+        throw new DurableExecutionError(`Error serializing value: ${getErrorMessage(error)}`, false)
       }
     },
     deserialize: (value) => {
       try {
         return serializer.deserialize(value)
       } catch (error) {
-        throw new DurableTaskError(`Error deserializing value: ${getErrorMessage(error)}`, false)
+        throw new DurableExecutionError(
+          `Error deserializing value: ${getErrorMessage(error)}`,
+          false,
+        )
       }
     },
   }

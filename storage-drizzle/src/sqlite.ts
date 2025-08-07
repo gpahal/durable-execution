@@ -10,12 +10,12 @@ import {
 } from 'drizzle-orm/sqlite-core'
 import {
   createTransactionMutex,
+  type DurableChildTaskExecution,
+  type DurableChildTaskExecutionErrorStorageObject,
+  type DurableExecutionErrorStorageObject,
   type DurableStorage,
   type DurableStorageTx,
-  type DurableTaskChildErrorStorageObject,
-  type DurableTaskChildExecutionStorageObject,
-  type DurableTaskErrorStorageObject,
-  type DurableTaskExecutionStatus,
+  type DurableTaskExecutionStatusStorageObject,
   type DurableTaskExecutionStorageObject,
   type DurableTaskExecutionStorageObjectUpdate,
   type DurableTaskExecutionStorageWhere,
@@ -59,19 +59,19 @@ export function createDurableTaskExecutionsSQLiteTable(tableName = 'durable_task
       output: text('output'),
       childrenTasksCompletedCount: integer('children_tasks_completed_count').notNull(),
       childrenTasks: text('children_tasks', { mode: 'json' }).$type<
-        Array<DurableTaskChildExecutionStorageObject>
+        Array<DurableChildTaskExecution>
       >(),
       childrenTasksErrors: text('children_tasks_errors', { mode: 'json' }).$type<
-        Array<DurableTaskChildErrorStorageObject>
+        Array<DurableChildTaskExecutionErrorStorageObject>
       >(),
       finalizeTask: text('finalize_task', {
         mode: 'json',
-      }).$type<DurableTaskChildExecutionStorageObject>(),
+      }).$type<DurableChildTaskExecution>(),
       finalizeTaskError: text('finalize_task_error', {
         mode: 'json',
-      }).$type<DurableTaskErrorStorageObject>(),
-      error: text('error', { mode: 'json' }).$type<DurableTaskErrorStorageObject>(),
-      status: text('status').$type<DurableTaskExecutionStatus>().notNull(),
+      }).$type<DurableExecutionErrorStorageObject>(),
+      error: text('error', { mode: 'json' }).$type<DurableExecutionErrorStorageObject>(),
+      status: text('status').$type<DurableTaskExecutionStatusStorageObject>().notNull(),
       isClosed: integer('is_closed', { mode: 'boolean' }).notNull(),
       needsPromiseCancellation: integer('needs_promise_cancellation', {
         mode: 'boolean',

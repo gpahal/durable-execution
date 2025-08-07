@@ -1,19 +1,18 @@
 import { CustomError } from 'ts-custom-error'
 
-export const DURABLE_TASK_ERROR_TAG = 'DurableTaskError'
-export const DURABLE_TASK_TIMED_OUT_ERROR_TAG = 'DurableTaskTimedOutError'
-export const DURABLE_TASK_CANCELLED_ERROR_TAG = 'DurableTaskCancelledError'
-
 /**
- * Base class for all errors thrown by {@link DurableTask} and {@link DurableExecutor}.
+ * The type of a durable execution error.
  *
  * @category Errors
  */
-export class DurableTaskError extends CustomError {
-  /**
-   * The tag for the error.
-   */
-  tag: string
+export type DurableExecutionErrorType = 'generic' | 'timed_out' | 'cancelled'
+
+/**
+ * Base class for all errors thrown by {@link DurableExecutor} and {@link DurableTask}.
+ *
+ * @category Errors
+ */
+export class DurableExecutionError extends CustomError {
   /**
    * Whether the error is retryable.
    */
@@ -25,8 +24,11 @@ export class DurableTaskError extends CustomError {
    */
   constructor(message: string, isRetryable = true) {
     super(message)
-    this.tag = DURABLE_TASK_ERROR_TAG
     this.isRetryable = isRetryable
+  }
+
+  getErrorType(): DurableExecutionErrorType {
+    return 'generic'
   }
 }
 
@@ -37,13 +39,16 @@ export class DurableTaskError extends CustomError {
  *
  * @category Errors
  */
-export class DurableTaskTimedOutError extends DurableTaskError {
+export class DurableExecutionTimedOutError extends DurableExecutionError {
   /**
    * @param message - The error message.
    */
   constructor(message?: string, isRetryable = true) {
     super(message ?? 'Task timed out', isRetryable)
-    this.tag = DURABLE_TASK_TIMED_OUT_ERROR_TAG
+  }
+
+  override getErrorType(): DurableExecutionErrorType {
+    return 'timed_out'
   }
 }
 
@@ -53,12 +58,50 @@ export class DurableTaskTimedOutError extends DurableTaskError {
  *
  * @category Errors
  */
-export class DurableTaskCancelledError extends DurableTaskError {
+export class DurableExecutionCancelledError extends DurableExecutionError {
   /**
    * @param message - The error message.
    */
   constructor(message?: string) {
     super(message ?? 'Task cancelled', false)
-    this.tag = DURABLE_TASK_CANCELLED_ERROR_TAG
   }
+
+  override getErrorType(): DurableExecutionErrorType {
+    return 'cancelled'
+  }
+}
+
+/**
+ * A storage object for a durable execution error.
+ *
+ * @category Errors
+ */
+export type DurableExecutionErrorStorageObject = {
+  errorType: DurableExecutionErrorType
+  message: string
+  isRetryable: boolean
+}
+
+export function convertDurableExecutionErrorStorageObjectToError(
+  error: DurableExecutionErrorStorageObject,
+): DurableExecutionError {
+  if (error.errorType === 'timed_out') {
+    return new DurableExecutionTimedOutError(error.message, error.isRetryable)
+  }
+  if (error.errorType === 'cancelled') {
+    return new DurableExecutionCancelledError(error.message)
+  }
+  return new DurableExecutionError(error.message, error.isRetryable)
+}
+
+export function convertDurableExecutionErrorToStorageObject(
+  error: DurableExecutionError,
+): DurableExecutionErrorStorageObject {
+  if (error instanceof DurableExecutionTimedOutError) {
+    return { errorType: 'timed_out', message: error.message, isRetryable: error.isRetryable }
+  }
+  if (error instanceof DurableExecutionCancelledError) {
+    return { errorType: 'cancelled', message: error.message, isRetryable: false }
+  }
+  return { errorType: 'generic', message: error.message, isRetryable: error.isRetryable }
 }

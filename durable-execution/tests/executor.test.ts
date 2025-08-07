@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutor, DurableTaskError, type DurableTaskRunContext } from '../src'
+import { DurableExecutionError, DurableExecutor, type DurableTaskRunContext } from '../src'
 import { InMemoryStorage } from './in-memory-storage'
 
 describe('executor', () => {
@@ -150,7 +150,7 @@ describe('executor', () => {
     let executed = 0
     storage.withTransaction = () => {
       executed++
-      throw new DurableTaskError('Mocked withTransaction error', false)
+      throw new DurableExecutionError('Mocked withTransaction error', false)
     }
 
     try {
