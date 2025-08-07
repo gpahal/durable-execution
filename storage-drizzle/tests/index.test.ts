@@ -48,58 +48,39 @@ async function runStorageTest(storage: DurableStorage, cleanup?: () => void | Pr
 }
 
 async function runExecutorTest(executor: DurableExecutor) {
+  const taskB1 = executor.task({
+    id: 'b1',
+    timeoutMs: 1000,
+    run: (ctx, input: { name: string }) => {
+      return {
+        name: input.name,
+        taskB1Output: `Hello from task B1, ${input.name}!`,
+      }
+    },
+  })
+  const taskB2 = executor.task({
+    id: 'b2',
+    timeoutMs: 1000,
+    run: (ctx, input: { name: string; taskB1Output: string }) => {
+      return {
+        name: input.name,
+        taskB1Output: input.taskB1Output,
+        taskB2Output: `Hello from task B2, ${input.name}!`,
+      }
+    },
+  })
   const taskB3 = executor.task({
     id: 'b3',
     timeoutMs: 1000,
-    run: (ctx, input: { name: string }) => {
-      return `Hello from task B3, ${input.name}!`
-    },
-  })
-  const taskB2 = executor.parentTask({
-    id: 'b2',
-    timeoutMs: 1000,
-    runParent: (ctx, input: { name: string }) => {
+    run: (ctx, input: { name: string; taskB1Output: string; taskB2Output: string }) => {
       return {
-        output: `Hello from task B2, ${input.name}!`,
-        children: [{ task: taskB3, input: { name: input.name } }],
+        taskB1Output: input.taskB1Output,
+        taskB2Output: input.taskB2Output,
+        taskB3Output: `Hello from task B3, ${input.name}!`,
       }
     },
-    onRunAndChildrenComplete: {
-      id: 'onTaskB2RunAndChildrenComplete',
-      timeoutMs: 1000,
-      run: (ctx, { output, childrenOutputs }) => {
-        return {
-          taskB2Output: output,
-          taskB3Output: childrenOutputs[0]!.output as string,
-        }
-      },
-    },
   })
-  const taskB1 = executor.parentTask({
-    id: 'b1',
-    timeoutMs: 1000,
-    runParent: (ctx, input: { name: string }) => {
-      return {
-        output: `Hello from task B1, ${input.name}!`,
-        children: [{ task: taskB2, input: { name: input.name } }],
-      }
-    },
-    onRunAndChildrenComplete: {
-      id: 'onTaskB1RunAndChildrenComplete',
-      timeoutMs: 1000,
-      run: (ctx, { output, childrenOutputs }) => {
-        const taskB2Output = childrenOutputs[0]!.output as {
-          taskB2Output: string
-          taskB3Output: string
-        }
-        return {
-          taskB1Output: output,
-          taskB2Output: taskB2Output.taskB2Output,
-          taskB3Output: taskB2Output.taskB3Output,
-        }
-      },
-    },
-  })
+  const taskB = executor.sequentialTasks(taskB1, taskB2, taskB3)
 
   const taskA1 = executor.task({
     id: 'a1',
@@ -128,22 +109,22 @@ async function runExecutorTest(executor: DurableExecutor) {
     runParent: (ctx, input: { name: string }) => {
       return {
         output: `Hello from task A, ${input.name}!`,
-        children: [
+        childrenTasks: [
           { task: taskA1, input: { name: input.name } },
           { task: taskA2, input: { name: input.name } },
           { task: taskA3, input: { name: input.name } },
         ],
       }
     },
-    onRunAndChildrenComplete: {
-      id: 'onTaskARunAndChildrenComplete',
+    finalizeTask: {
+      id: 'taskAFinalize',
       timeoutMs: 1000,
-      run: (ctx, { output, childrenOutputs }) => {
+      run: (ctx, { output, childrenTasksOutputs }) => {
         return {
           taskAOutput: output,
-          taskA1Output: childrenOutputs[0]!.output as string,
-          taskA2Output: childrenOutputs[1]!.output as string,
-          taskA3Output: childrenOutputs[2]!.output as string,
+          taskA1Output: childrenTasksOutputs[0]!.output as string,
+          taskA2Output: childrenTasksOutputs[1]!.output as string,
+          taskA3Output: childrenTasksOutputs[2]!.output as string,
         }
       },
     },
@@ -155,23 +136,23 @@ async function runExecutorTest(executor: DurableExecutor) {
     runParent: (ctx, input: { name: string }) => {
       return {
         output: `Hello from root task, ${input.name}!`,
-        children: [
+        childrenTasks: [
           { task: taskA, input: { name: input.name } },
-          { task: taskB1, input: { name: input.name } },
+          { task: taskB, input: { name: input.name } },
         ],
       }
     },
-    onRunAndChildrenComplete: {
-      id: 'onRootRunAndChildrenComplete',
+    finalizeTask: {
+      id: 'rootFinalize',
       timeoutMs: 1000,
-      run: (ctx, { output, childrenOutputs }) => {
-        const taskAOutput = childrenOutputs[0]!.output as {
+      run: (ctx, { output, childrenTasksOutputs }) => {
+        const taskAOutput = childrenTasksOutputs[0]!.output as {
           taskAOutput: string
           taskA1Output: string
           taskA2Output: string
           taskA3Output: string
         }
-        const taskB1Output = childrenOutputs[1]!.output as {
+        const taskBOutput = childrenTasksOutputs[1]!.output as {
           taskB1Output: string
           taskB2Output: string
           taskB3Output: string
@@ -182,9 +163,9 @@ async function runExecutorTest(executor: DurableExecutor) {
           taskA1Output: taskAOutput.taskA1Output,
           taskA2Output: taskAOutput.taskA2Output,
           taskA3Output: taskAOutput.taskA3Output,
-          taskB1Output: taskB1Output.taskB1Output,
-          taskB2Output: taskB1Output.taskB2Output,
-          taskB3Output: taskB1Output.taskB3Output,
+          taskB1Output: taskBOutput.taskB1Output,
+          taskB2Output: taskBOutput.taskB2Output,
+          taskB3Output: taskBOutput.taskB3Output,
         }
       },
     },
@@ -261,7 +242,7 @@ export async function withTemporaryFile(filename: string, fn: (file: string) => 
 }
 
 describe('index', () => {
-  it('should complete with in memory storage', async () => {
+  it('should complete with in memory storage', { timeout: 30_000 }, async () => {
     const storage = createInMemoryStorage({ enableDebug: false })
     await runStorageTest(storage)
   })

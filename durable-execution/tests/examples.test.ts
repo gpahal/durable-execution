@@ -135,8 +135,13 @@ describe('examples', () => {
     let totalAttempts = 0
     const taskA = executor.task({
       id: 'a',
+      retryOptions: {
+        maxAttempts: 5,
+        baseDelayMs: 100,
+        delayMultiplier: 1.5,
+        maxDelayMs: 1000,
+      },
       timeoutMs: 1000,
-      maxRetryAttempts: 5,
       run: (ctx, input: { name: string }) => {
         totalAttempts++
         if (ctx.attempt < 2) {
@@ -221,7 +226,7 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from parent task, ${input.name}!`,
-          children: [
+          childrenTasks: [
             {
               task: taskA,
               input: { name: input.name },
@@ -244,8 +249,12 @@ describe('examples', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.output).toBe('Hello from parent task, world!')
-    expect(finishedExecution.output.childrenOutputs[0]!.output).toBe('Hello from task A, world!')
-    expect(finishedExecution.output.childrenOutputs[1]!.output).toBe('Hello from task B, world!')
+    expect(finishedExecution.output.childrenTasksOutputs[0]!.output).toBe(
+      'Hello from task A, world!',
+    )
+    expect(finishedExecution.output.childrenTasksOutputs[1]!.output).toBe(
+      'Hello from task B, world!',
+    )
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -275,7 +284,7 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from parent task, ${input.name}!`,
-          children: [
+          childrenTasks: [
             {
               task: taskA,
               input: { name: input.name },
@@ -287,14 +296,14 @@ describe('examples', () => {
           ],
         }
       },
-      onRunAndChildrenComplete: {
+      finalizeTask: {
         id: 'onParentRunAndChildrenComplete',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenOutputs }) => {
+        run: (ctx, { output, childrenTasksOutputs }) => {
           return {
             parentOutput: output,
-            taskAOutput: childrenOutputs[0]!.output as string,
-            taskBOutput: childrenOutputs[1]!.output as string,
+            taskAOutput: childrenTasksOutputs[0]!.output as string,
+            taskBOutput: childrenTasksOutputs[1]!.output as string,
           }
         },
       },
@@ -388,22 +397,22 @@ describe('examples', () => {
           output: `Hello from task B, ${input.name}!`,
         }
       },
-      onRunAndChildrenComplete: {
-        id: 'onTaskBRunAndChildrenComplete',
+      finalizeTask: {
+        id: 'taskBFinalize',
         timeoutMs: 1000,
         runParent: (ctx, { input, output }) => {
           return {
             output,
-            children: [{ task: taskC, input: { name: input.name } }],
+            childrenTasks: [{ task: taskC, input: { name: input.name } }],
           }
         },
-        onRunAndChildrenComplete: {
-          id: 'onTaskBRunAndChildrenCompleteNested',
+        finalizeTask: {
+          id: 'taskBFinalizeNested',
           timeoutMs: 1000,
-          run: (ctx, { output, childrenOutputs }) => {
+          run: (ctx, { output, childrenTasksOutputs }) => {
             return {
               taskBOutput: output,
-              taskCOutput: childrenOutputs[0]!.output as string,
+              taskCOutput: childrenTasksOutputs[0]!.output as string,
             }
           },
         },
@@ -417,20 +426,20 @@ describe('examples', () => {
           output: `Hello from task A, ${input.name}!`,
         }
       },
-      onRunAndChildrenComplete: {
-        id: 'onTaskARunAndChildrenComplete',
+      finalizeTask: {
+        id: 'taskAFinalize',
         timeoutMs: 1000,
         runParent: (ctx, { input, output }) => {
           return {
             output,
-            children: [{ task: taskB, input: { name: input.name } }],
+            childrenTasks: [{ task: taskB, input: { name: input.name } }],
           }
         },
-        onRunAndChildrenComplete: {
-          id: 'onTaskARunAndChildrenCompleteNested',
+        finalizeTask: {
+          id: 'taskAFinalizeNested',
           timeoutMs: 1000,
-          run: (ctx, { output, childrenOutputs }) => {
-            const taskBOutput = childrenOutputs[0]!.output as {
+          run: (ctx, { output, childrenTasksOutputs }) => {
+            const taskBOutput = childrenTasksOutputs[0]!.output as {
               taskBOutput: string
               taskCOutput: string
             }
@@ -498,21 +507,21 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from task A, ${input.name}!`,
-          children: [
+          childrenTasks: [
             { task: taskA1, input: { name: input.name } },
             { task: taskA2, input: { name: input.name } },
           ],
         }
       },
-      onRunAndChildrenComplete: {
-        id: 'onTaskARunAndChildrenComplete',
+      finalizeTask: {
+        id: 'taskAFinalize',
         timeoutMs: 1000,
-        run: (ctx, { input, output, childrenOutputs }) => {
+        run: (ctx, { input, output, childrenTasksOutputs }) => {
           return {
             name: input.name,
             taskAOutput: output,
-            taskA1Output: childrenOutputs[0]!.output as string,
-            taskA2Output: childrenOutputs[1]!.output as string,
+            taskA1Output: childrenTasksOutputs[0]!.output as string,
+            taskA2Output: childrenTasksOutputs[1]!.output as string,
           }
         },
       },
@@ -531,20 +540,20 @@ describe('examples', () => {
             taskA2Output: input.taskA2Output,
             taskBOutput: `Hello from task B, ${input.name}!`,
           },
-          children: [
+          childrenTasks: [
             { task: taskB1, input: { name: input.name } },
             { task: taskB2, input: { name: input.name } },
           ],
         }
       },
-      onRunAndChildrenComplete: {
-        id: 'onTaskBRunAndChildrenComplete',
+      finalizeTask: {
+        id: 'taskBFinalize',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenOutputs }) => {
+        run: (ctx, { output, childrenTasksOutputs }) => {
           return {
             ...output,
-            taskB1Output: childrenOutputs[0]!.output as string,
-            taskB2Output: childrenOutputs[1]!.output as string,
+            taskB1Output: childrenTasksOutputs[0]!.output as string,
+            taskB2Output: childrenTasksOutputs[1]!.output as string,
           }
         },
       },
@@ -635,22 +644,22 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from task A, ${input.name}!`,
-          children: [
+          childrenTasks: [
             { task: taskA1, input: { name: input.name } },
             { task: taskA2, input: { name: input.name } },
             { task: taskA3, input: { name: input.name } },
           ],
         }
       },
-      onRunAndChildrenComplete: {
-        id: 'onTaskARunAndChildrenComplete',
+      finalizeTask: {
+        id: 'taskAFinalize',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenOutputs }) => {
+        run: (ctx, { output, childrenTasksOutputs }) => {
           return {
             taskAOutput: output,
-            taskA1Output: childrenOutputs[0]!.output as string,
-            taskA2Output: childrenOutputs[1]!.output as string,
-            taskA3Output: childrenOutputs[2]!.output as string,
+            taskA1Output: childrenTasksOutputs[0]!.output as string,
+            taskA2Output: childrenTasksOutputs[1]!.output as string,
+            taskA3Output: childrenTasksOutputs[2]!.output as string,
           }
         },
       },
@@ -662,23 +671,23 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from root task, ${input.name}!`,
-          children: [
+          childrenTasks: [
             { task: taskA, input: { name: input.name } },
             { task: taskB, input: { name: input.name } },
           ],
         }
       },
-      onRunAndChildrenComplete: {
-        id: 'onRootRunAndChildrenComplete',
+      finalizeTask: {
+        id: 'rootFinalize',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenOutputs }) => {
-          const taskAOutput = childrenOutputs[0]!.output as {
+        run: (ctx, { output, childrenTasksOutputs }) => {
+          const taskAOutput = childrenTasksOutputs[0]!.output as {
             taskAOutput: string
             taskA1Output: string
             taskA2Output: string
             taskA3Output: string
           }
-          const taskBOutput = childrenOutputs[1]!.output as {
+          const taskBOutput = childrenTasksOutputs[1]!.output as {
             taskB1Output: string
             taskB2Output: string
             taskB3Output: string
@@ -729,18 +738,18 @@ describe('examples', () => {
           await sleep(1)
           return {
             output: undefined,
-            children:
+            childrenTasks:
               input.index >= 9 ? [] : [{ task: recursiveTask, input: { index: input.index + 1 } }],
           }
         },
-        onRunAndChildrenComplete: {
-          id: 'onRecursiveRunAndChildrenComplete',
+        finalizeTask: {
+          id: 'recursiveFinalize',
           timeoutMs: 1000,
-          run: (ctx, { childrenOutputs }) => {
+          run: (ctx, { childrenTasksOutputs }) => {
             return {
               count:
                 1 +
-                childrenOutputs.reduce(
+                childrenTasksOutputs.reduce(
                   (acc, childOutput) => acc + (childOutput.output as { count: number }).count,
                   0,
                 ),
@@ -777,7 +786,7 @@ describe('examples', () => {
         .parentTask({
           id: 'polling',
           timeoutMs: 1000,
-          sleepMsBeforeAttempt: 100,
+          sleepMsBeforeRun: 100,
           runParent: (ctx, input) => {
             if (value != null) {
               return {
@@ -785,7 +794,6 @@ describe('examples', () => {
                   isDone: true,
                   value,
                 } as { isDone: false; value: undefined } | { isDone: true; value: number },
-                children: [],
               }
             }
 
@@ -794,13 +802,13 @@ describe('examples', () => {
                 isDone: false,
                 value,
               } as { isDone: false; value: undefined } | { isDone: true; value: number },
-              children: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
+              childrenTasks: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
             }
           },
-          onRunAndChildrenComplete: {
-            id: 'onPollingRunAndChildrenComplete',
+          finalizeTask: {
+            id: 'pollingFinalize',
             timeoutMs: 1000,
-            run: (ctx, { input, output, childrenOutputs }) => {
+            run: (ctx, { input, output, childrenTasksOutputs }) => {
               if (output.isDone) {
                 return {
                   count: input.prevCount + 1,
@@ -808,7 +816,7 @@ describe('examples', () => {
                 }
               }
 
-              return childrenOutputs[0]!.output as {
+              return childrenTasksOutputs[0]!.output as {
                 count: number
                 value: number
               }

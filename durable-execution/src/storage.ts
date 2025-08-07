@@ -7,7 +7,11 @@ import {
 } from './errors'
 import { createConsoleLogger, createLoggerDebugDisabled, type Logger } from './logger'
 import { type Serializer } from './serializer'
-import { type DurableTaskExecution, type DurableTaskExecutionStatus } from './task'
+import {
+  type DurableTaskExecution,
+  type DurableTaskExecutionStatus,
+  type DurableTaskRetryOptions,
+} from './task'
 
 /**
  * A durable storage with support for transactions. Running multiple transactions in parallel
@@ -173,7 +177,7 @@ export type DurableTaskExecutionStorageObject = {
   parentTask?: {
     taskId: string
     executionId: string
-    isOnRunAndChildrenCompleteChild?: boolean
+    isFinalizeTask?: boolean
   }
 
   /**
@@ -184,6 +188,18 @@ export type DurableTaskExecutionStorageObject = {
    * The id of the execution.
    */
   executionId: string
+  /**
+   * The retry options of the task execution.
+   */
+  retryOptions: DurableTaskRetryOptions
+  /**
+   * The timeout ms of the task execution.
+   */
+  timeoutMs: number
+  /**
+   * The sleep ms before run of the task execution.
+   */
+  sleepMsBeforeRun: number
   /**
    * The run input of the task execution.
    */
@@ -197,26 +213,26 @@ export type DurableTaskExecutionStorageObject = {
    */
   output?: string
   /**
-   * The number of children that have been completed.
+   * The number of children tasks that have been completed.
    */
-  childrenCompletedCount: number
+  childrenTasksCompletedCount: number
   /**
-   * The children task executions of the execution.
+   * The children tasks of the execution. It is only present for waiting_for_children_tasks status.
    */
-  children?: Array<DurableTaskChildExecutionStorageObject>
+  childrenTasks?: Array<DurableTaskChildExecutionStorageObject>
   /**
-   * The errors of the children task executions. It is only present for children_failed status.
+   * The errors of the children tasks. It is only present for children_tasks_failed status. In case
+   * of multiple errors, the order of errors is not defined.
    */
-  childrenErrors?: Array<DurableTaskChildErrorStorageObject>
+  childrenTasksErrors?: Array<DurableTaskChildErrorStorageObject>
   /**
-   * The on run and children complete task child execution of the execution.
+   * The finalize task child execution of the execution.
    */
-  onRunAndChildrenComplete?: DurableTaskChildExecutionStorageObject
+  finalizeTask?: DurableTaskChildExecutionStorageObject
   /**
-   * The error of the on run and children complete task execution. It is only present for
-   * on_run_and_children_complete_failed status.
+   * The error of the finalize task execution. It is only present for finalize_task_failed status.
    */
-  onRunAndChildrenCompleteError?: DurableTaskErrorStorageObject
+  finalizeTaskError?: DurableTaskErrorStorageObject
   /**
    * The error of the execution.
    */
@@ -299,8 +315,10 @@ export function createDurableTaskExecutionStorageObject({
   parentTask,
   taskId,
   executionId,
+  retryOptions,
+  timeoutMs,
+  sleepMsBeforeRun,
   runInput,
-  sleepMsBeforeAttempt,
 }: {
   now: Date
   rootTask?: {
@@ -310,26 +328,30 @@ export function createDurableTaskExecutionStorageObject({
   parentTask?: {
     taskId: string
     executionId: string
-    isOnRunAndChildrenCompleteChild?: boolean
+    isFinalizeTask?: boolean
   }
   taskId: string
   executionId: string
+  retryOptions: DurableTaskRetryOptions
+  timeoutMs: number
+  sleepMsBeforeRun: number
   runInput: string
-  sleepMsBeforeAttempt: number
 }): DurableTaskExecutionStorageObject {
-  sleepMsBeforeAttempt = sleepMsBeforeAttempt && sleepMsBeforeAttempt > 0 ? sleepMsBeforeAttempt : 0
   return {
     rootTask,
     parentTask,
     taskId,
     executionId,
+    retryOptions,
+    timeoutMs,
+    sleepMsBeforeRun,
     runInput,
-    childrenCompletedCount: 0,
+    childrenTasksCompletedCount: 0,
     status: 'ready',
     isClosed: false,
     needsPromiseCancellation: false,
     retryAttempts: 0,
-    startAt: new Date(now.getTime() + sleepMsBeforeAttempt),
+    startAt: new Date(now.getTime() + sleepMsBeforeRun),
     expiresAt: EXPIRES_AT_INFINITY,
     createdAt: now,
     updatedAt: now,
@@ -376,11 +398,11 @@ export type DurableTaskExecutionStorageWhere =
 export type DurableTaskExecutionStorageObjectUpdate = {
   runOutput?: string
   output?: string
-  childrenCompletedCount?: number
-  children?: Array<DurableTaskChildExecutionStorageObject>
-  childrenErrors?: Array<DurableTaskChildErrorStorageObject>
-  onRunAndChildrenComplete?: DurableTaskChildExecutionStorageObject
-  onRunAndChildrenCompleteError?: DurableTaskErrorStorageObject
+  childrenTasksCompletedCount?: number
+  childrenTasks?: Array<DurableTaskChildExecutionStorageObject>
+  childrenTasksErrors?: Array<DurableTaskChildErrorStorageObject>
+  finalizeTask?: DurableTaskChildExecutionStorageObject
+  finalizeTaskError?: DurableTaskErrorStorageObject
   error?: DurableTaskErrorStorageObject
   /**
    * Whether to unset the error. If true, the error will be set to undefined.
@@ -411,28 +433,28 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
     ? serializer.deserialize<unknown>(execution.runOutput)
     : undefined
   const output = execution.output ? serializer.deserialize<TOutput>(execution.output) : undefined
-  const children = execution.children
-    ? execution.children.map((child) => ({
+  const childrenTasks = execution.childrenTasks
+    ? execution.childrenTasks.map((child) => ({
         taskId: child.taskId,
         executionId: child.executionId,
       }))
     : undefined
-  const childrenErrors = execution.childrenErrors
-    ? execution.childrenErrors.map((childError) => ({
+  const childrenTasksErrors = execution.childrenTasksErrors
+    ? execution.childrenTasksErrors.map((childError) => ({
         index: childError.index,
         taskId: childError.taskId,
         executionId: childError.executionId,
         error: convertDurableTaskErrorStorageObjectToError(childError.error),
       }))
     : undefined
-  const onRunAndChildrenComplete = execution.onRunAndChildrenComplete
+  const finalizeTask = execution.finalizeTask
     ? {
-        taskId: execution.onRunAndChildrenComplete.taskId,
-        executionId: execution.onRunAndChildrenComplete.executionId,
+        taskId: execution.finalizeTask.taskId,
+        executionId: execution.finalizeTask.executionId,
       }
     : undefined
-  const onRunAndChildrenCompleteError = execution.onRunAndChildrenCompleteError
-    ? convertDurableTaskErrorStorageObjectToError(execution.onRunAndChildrenCompleteError)
+  const finalizeTaskError = execution.finalizeTaskError
+    ? convertDurableTaskErrorStorageObjectToError(execution.finalizeTaskError)
     : undefined
   const error = execution.error
     ? convertDurableTaskErrorStorageObjectToError(execution.error)
@@ -445,6 +467,9 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         parentTask: execution.parentTask,
         taskId: execution.taskId,
         executionId: execution.executionId,
+        retryOptions: execution.retryOptions,
+        timeoutMs: execution.timeoutMs,
+        sleepMsBeforeRun: execution.sleepMsBeforeRun,
         runInput,
         error,
         status: 'ready',
@@ -459,6 +484,9 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         parentTask: execution.parentTask,
         taskId: execution.taskId,
         executionId: execution.executionId,
+        retryOptions: execution.retryOptions,
+        timeoutMs: execution.timeoutMs,
+        sleepMsBeforeRun: execution.sleepMsBeforeRun,
         runInput,
         error,
         status: 'running',
@@ -475,6 +503,9 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         parentTask: execution.parentTask,
         taskId: execution.taskId,
         executionId: execution.executionId,
+        retryOptions: execution.retryOptions,
+        timeoutMs: execution.timeoutMs,
+        sleepMsBeforeRun: execution.sleepMsBeforeRun,
         runInput,
         error: error!,
         status: 'failed',
@@ -492,6 +523,9 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         parentTask: execution.parentTask,
         taskId: execution.taskId,
         executionId: execution.executionId,
+        retryOptions: execution.retryOptions,
+        timeoutMs: execution.timeoutMs,
+        sleepMsBeforeRun: execution.sleepMsBeforeRun,
         runInput,
         error: error!,
         status: 'timed_out',
@@ -503,16 +537,19 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         updatedAt: execution.updatedAt,
       }
     }
-    case 'waiting_for_children': {
+    case 'waiting_for_children_tasks': {
       return {
         rootTask: execution.rootTask,
         parentTask: execution.parentTask,
         taskId: execution.taskId,
         executionId: execution.executionId,
+        retryOptions: execution.retryOptions,
+        timeoutMs: execution.timeoutMs,
+        sleepMsBeforeRun: execution.sleepMsBeforeRun,
         runInput,
         runOutput: runOutput!,
-        children: children ?? [],
-        status: 'waiting_for_children',
+        childrenTasks: childrenTasks ?? [],
+        status: 'waiting_for_children_tasks',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         expiresAt: execution.expiresAt,
@@ -520,17 +557,20 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         updatedAt: execution.updatedAt,
       }
     }
-    case 'children_failed': {
+    case 'children_tasks_failed': {
       return {
         rootTask: execution.rootTask,
         parentTask: execution.parentTask,
         taskId: execution.taskId,
         executionId: execution.executionId,
+        retryOptions: execution.retryOptions,
+        timeoutMs: execution.timeoutMs,
+        sleepMsBeforeRun: execution.sleepMsBeforeRun,
         runInput,
         runOutput: runOutput!,
-        children: children ?? [],
-        childrenErrors: childrenErrors ?? [],
-        status: 'children_failed',
+        childrenTasks: childrenTasks ?? [],
+        childrenTasksErrors: childrenTasksErrors ?? [],
+        status: 'children_tasks_failed',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         finishedAt: execution.finishedAt!,
@@ -539,17 +579,20 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         updatedAt: execution.updatedAt,
       }
     }
-    case 'waiting_for_on_run_and_children_complete': {
+    case 'waiting_for_finalize_task': {
       return {
         rootTask: execution.rootTask,
         parentTask: execution.parentTask,
         taskId: execution.taskId,
         executionId: execution.executionId,
+        retryOptions: execution.retryOptions,
+        timeoutMs: execution.timeoutMs,
+        sleepMsBeforeRun: execution.sleepMsBeforeRun,
         runInput,
         runOutput: runOutput!,
-        children: children ?? [],
-        onRunAndChildrenComplete: onRunAndChildrenComplete!,
-        status: 'waiting_for_on_run_and_children_complete',
+        childrenTasks: childrenTasks ?? [],
+        finalizeTask: finalizeTask!,
+        status: 'waiting_for_finalize_task',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         expiresAt: execution.expiresAt,
@@ -557,18 +600,21 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         updatedAt: execution.updatedAt,
       }
     }
-    case 'on_run_and_children_complete_failed': {
+    case 'finalize_task_failed': {
       return {
         rootTask: execution.rootTask,
         parentTask: execution.parentTask,
         taskId: execution.taskId,
         executionId: execution.executionId,
+        retryOptions: execution.retryOptions,
+        timeoutMs: execution.timeoutMs,
+        sleepMsBeforeRun: execution.sleepMsBeforeRun,
         runInput,
         runOutput: runOutput!,
-        children: children ?? [],
-        onRunAndChildrenComplete: onRunAndChildrenComplete!,
-        onRunAndChildrenCompleteError: onRunAndChildrenCompleteError!,
-        status: 'on_run_and_children_complete_failed',
+        childrenTasks: childrenTasks ?? [],
+        finalizeTask: finalizeTask!,
+        finalizeTaskError: finalizeTaskError!,
+        status: 'finalize_task_failed',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         finishedAt: execution.finishedAt!,
@@ -583,10 +629,14 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         parentTask: execution.parentTask,
         taskId: execution.taskId,
         executionId: execution.executionId,
+        retryOptions: execution.retryOptions,
+        timeoutMs: execution.timeoutMs,
+        sleepMsBeforeRun: execution.sleepMsBeforeRun,
         runInput,
         runOutput: runOutput!,
         output: output!,
-        children: children ?? [],
+        childrenTasks: childrenTasks ?? [],
+        finalizeTask,
         status: 'completed',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
@@ -602,9 +652,13 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         parentTask: execution.parentTask,
         taskId: execution.taskId,
         executionId: execution.executionId,
+        retryOptions: execution.retryOptions,
+        timeoutMs: execution.timeoutMs,
+        sleepMsBeforeRun: execution.sleepMsBeforeRun,
         runInput,
         runOutput,
-        children,
+        childrenTasks: childrenTasks,
+        finalizeTask,
         error: error!,
         status: 'cancelled',
         retryAttempts: execution.retryAttempts,

@@ -1,4 +1,4 @@
-name: Run tests and upload coverage
+name: Run tests
 
 on:
   push:
@@ -27,17 +27,3 @@ jobs:
 
       - name: Run tests
         run: pnpm test-coverage
-
-      - name: Upload coverage for durable-execution to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./durable-execution/coverage/coverage-final.json
-          flags: durable-execution
-
-      - name: Upload coverage for storage-drizzle to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./storage-drizzle/coverage/coverage-final.json
-          flags: storage-drizzle

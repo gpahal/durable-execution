@@ -1,8 +1,5 @@
 import * as v from 'valibot'
 
-import { getErrorMessage } from '@gpahal/std/errors'
-import { isFunction } from '@gpahal/std/functions'
-
 import { createCancellablePromise, createTimeoutCancelSignal, type CancelSignal } from './cancel'
 import {
   DurableTaskError,
@@ -24,11 +21,46 @@ export type DurableTask<TInput, TOutput> = {
   id: string
 }
 
-const vMaxRetryAttempts = v.pipe(
-  v.nullish(v.pipe(v.number(), v.integer())),
+const vRetryOptions = v.pipe(
+  v.nullish(
+    v.pipe(
+      v.object({
+        maxAttempts: v.pipe(v.number(), v.integer(), v.minValue(0)),
+        baseDelayMs: v.pipe(
+          v.nullish(v.pipe(v.number(), v.integer(), v.minValue(0))),
+          v.transform((val) => {
+            if (val == null) {
+              return undefined
+            }
+            return val
+          }),
+        ),
+        delayMultiplier: v.pipe(
+          v.nullish(v.pipe(v.number(), v.minValue(0.1))),
+          v.transform((val) => {
+            if (val == null) {
+              return undefined
+            }
+            return val
+          }),
+        ),
+        maxDelayMs: v.pipe(
+          v.nullish(v.pipe(v.number(), v.integer(), v.minValue(0))),
+          v.transform((val) => {
+            if (val == null) {
+              return undefined
+            }
+            return val
+          }),
+        ),
+      }),
+    ),
+  ),
   v.transform((val) => {
-    if (val == null || val < 0) {
-      return 0
+    if (val == null) {
+      return {
+        maxAttempts: 0,
+      }
     }
     return val
   }),
@@ -36,7 +68,7 @@ const vMaxRetryAttempts = v.pipe(
 
 const vTimeoutMs = v.pipe(v.number(), v.integer(), v.minValue(1))
 
-const vSleepMsBeforeAttempt = v.pipe(
+const vSleepMsBeforeRun = v.pipe(
   v.nullish(v.pipe(v.number(), v.integer())),
   v.transform((val) => {
     if (val == null || val <= 0) {
@@ -50,46 +82,46 @@ export class DurableTaskInternal {
   private readonly taskInternalsMap: Map<string, DurableTaskInternal>
 
   readonly id: string
-  private readonly timeoutMs: number | ((attempt: number) => number)
-  readonly maxRetryAttempts: number
-  private readonly sleepMsBeforeAttempt: number | ((attempt: number) => number)
+  readonly retryOptions: DurableTaskRetryOptions
+  private readonly timeoutMs: number
+  private readonly sleepMsBeforeRun: number
   private readonly validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
-  readonly disableChildrenOutputsInOutput: boolean
+  readonly disableChildrenTasksOutputsInOutput: boolean
   private readonly runParent: (
     ctx: DurableTaskRunContext,
     input: unknown,
   ) => Promise<{
     output: unknown
-    children: Array<DurableTaskChild>
+    childrenTasks: Array<DurableChildTask>
   }>
-  readonly onRunAndChildrenComplete: DurableTaskInternal | undefined
+  readonly finalizeTask: DurableTaskInternal | undefined
 
   constructor(
     taskInternalsMap: Map<string, DurableTaskInternal>,
     id: string,
-    timeoutMs: number | ((attempt: number) => number),
-    maxRetryAttempts: number,
-    sleepMsBeforeAttempt: number | ((attempt: number) => number),
+    retryOptions: DurableTaskRetryOptions,
+    timeoutMs: number,
+    sleepMsBeforeRun: number,
     validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
-    disableChildrenOutputsInOutput: boolean,
+    disableChildrenTasksOutputsInOutput: boolean,
     runParent: (
       ctx: DurableTaskRunContext,
       input: unknown,
     ) => Promise<{
       output: unknown
-      children: Array<DurableTaskChild>
+      childrenTasks: Array<DurableChildTask>
     }>,
-    onRunAndChildrenComplete?: DurableTaskInternal,
+    finalizeTask: DurableTaskInternal | undefined,
   ) {
     this.taskInternalsMap = taskInternalsMap
     this.id = id
+    this.retryOptions = retryOptions
     this.timeoutMs = timeoutMs
-    this.maxRetryAttempts = maxRetryAttempts
-    this.sleepMsBeforeAttempt = sleepMsBeforeAttempt
+    this.sleepMsBeforeRun = sleepMsBeforeRun
     this.validateInputFn = validateInputFn
-    this.disableChildrenOutputsInOutput = disableChildrenOutputsInOutput
+    this.disableChildrenTasksOutputsInOutput = disableChildrenTasksOutputsInOutput
     this.runParent = runParent
-    this.onRunAndChildrenComplete = onRunAndChildrenComplete
+    this.finalizeTask = finalizeTask
   }
 
   static validateCommonTaskOptions(
@@ -97,9 +129,9 @@ export class DurableTaskInternal {
     taskOptions: Omit<DurableTaskOptions<unknown, unknown>, 'run'>,
   ): {
     id: string
-    timeoutMs: number | ((attempt: number) => number)
-    maxRetryAttempts: number
-    sleepMsBeforeAttempt: number | ((attempt: number) => number)
+    retryOptions: DurableTaskRetryOptions
+    timeoutMs: number
+    sleepMsBeforeRun: number
   } {
     validateTaskId(taskOptions.id)
     if (taskInternalsMap.has(taskOptions.id)) {
@@ -109,19 +141,35 @@ export class DurableTaskInternal {
       )
     }
 
-    const parsedMaxRetryAttempts = v.safeParse(vMaxRetryAttempts, taskOptions.maxRetryAttempts)
-    if (!parsedMaxRetryAttempts.success) {
+    const parsedRetryOptions = v.safeParse(vRetryOptions, taskOptions.retryOptions)
+    if (!parsedRetryOptions.success) {
       throw new DurableTaskError(
-        `Invalid max retry attempts for task ${taskOptions.id}: ${v.summarize(parsedMaxRetryAttempts.issues)}`,
+        `Invalid retry options for task ${taskOptions.id}: ${v.summarize(parsedRetryOptions.issues)}`,
+        false,
+      )
+    }
+
+    const parsedTimeoutMs = v.safeParse(vTimeoutMs, taskOptions.timeoutMs)
+    if (!parsedTimeoutMs.success) {
+      throw new DurableTaskError(
+        `Invalid timeout value for task ${taskOptions.id}: ${v.summarize(parsedTimeoutMs.issues)}`,
+        false,
+      )
+    }
+
+    const parsedSleepMsBeforeRun = v.safeParse(vSleepMsBeforeRun, taskOptions.sleepMsBeforeRun)
+    if (!parsedSleepMsBeforeRun.success) {
+      throw new DurableTaskError(
+        `Invalid sleep ms before run for task ${taskOptions.id}: ${v.summarize(parsedSleepMsBeforeRun.issues)}`,
         false,
       )
     }
 
     return {
       id: taskOptions.id,
-      timeoutMs: taskOptions.timeoutMs,
-      maxRetryAttempts: parsedMaxRetryAttempts.output,
-      sleepMsBeforeAttempt: taskOptions.sleepMsBeforeAttempt ?? 0,
+      retryOptions: parsedRetryOptions.output,
+      timeoutMs: parsedTimeoutMs.output,
+      sleepMsBeforeRun: parsedSleepMsBeforeRun.output,
     }
   }
 
@@ -139,16 +187,16 @@ export class DurableTaskInternal {
       const output = await taskOptions.run(ctx, input)
       return {
         output,
-        children: [],
+        childrenTasks: [],
       }
     }
 
     const taskInternal = new DurableTaskInternal(
       taskInternalsMap,
       commonOptions.id,
+      commonOptions.retryOptions,
       commonOptions.timeoutMs,
-      commonOptions.maxRetryAttempts,
-      commonOptions.sleepMsBeforeAttempt,
+      commonOptions.sleepMsBeforeRun,
       validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
       true,
       runParent as (
@@ -156,7 +204,7 @@ export class DurableTaskInternal {
         input: unknown,
       ) => Promise<{
         output: unknown
-        children: Array<DurableTaskChild>
+        childrenTasks: Array<DurableChildTask>
       }>,
       undefined,
     )
@@ -169,9 +217,10 @@ export class DurableTaskInternal {
     TInput = TRunInput,
     TRunOutput = unknown,
     TOutput = unknown,
+    TFinalizeTaskRunOutput = unknown,
   >(
     taskInternalsMap: Map<string, DurableTaskInternal>,
-    taskOptions: DurableParentTaskOptions<TRunInput, TRunOutput, TOutput>,
+    taskOptions: DurableParentTaskOptions<TRunInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
     validateInputFn?: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
   ): DurableTaskInternal {
     const commonOptions = DurableTaskInternal.validateCommonTaskOptions(
@@ -183,35 +232,28 @@ export class DurableTaskInternal {
       const runParentOutput = await taskOptions.runParent(ctx, input)
       return {
         output: runParentOutput.output,
-        children: runParentOutput.children ?? [],
+        childrenTasks: runParentOutput.childrenTasks ?? [],
       }
     }
 
-    let onRunAndChildrenComplete: DurableTaskInternal | undefined
-    if (taskOptions.onRunAndChildrenComplete) {
-      onRunAndChildrenComplete = isDurableOnRunAndChildrenCompleteTaskOptionsParentTaskOptions(
-        taskOptions.onRunAndChildrenComplete,
-      )
+    let finalizeTask: DurableTaskInternal | undefined
+    if (taskOptions.finalizeTask) {
+      finalizeTask = isDurableFinalizeTaskOptionsParentTaskOptions(taskOptions.finalizeTask)
         ? DurableTaskInternal.fromDurableParentTaskOptions(
             taskInternalsMap,
-            taskOptions.onRunAndChildrenComplete,
+            taskOptions.finalizeTask,
           )
-        : isDurableOnRunAndChildrenCompleteTaskOptionsTaskOptions(
-              taskOptions.onRunAndChildrenComplete,
-            )
-          ? DurableTaskInternal.fromDurableTaskOptions(
-              taskInternalsMap,
-              taskOptions.onRunAndChildrenComplete,
-            )
+        : isDurableFinalizeTaskOptionsTaskOptions(taskOptions.finalizeTask)
+          ? DurableTaskInternal.fromDurableTaskOptions(taskInternalsMap, taskOptions.finalizeTask)
           : undefined
     }
 
     const taskInternal = new DurableTaskInternal(
       taskInternalsMap,
       commonOptions.id,
+      commonOptions.retryOptions,
       commonOptions.timeoutMs,
-      commonOptions.maxRetryAttempts,
-      commonOptions.sleepMsBeforeAttempt,
+      commonOptions.sleepMsBeforeRun,
       validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
       false,
       runParent as (
@@ -219,52 +261,66 @@ export class DurableTaskInternal {
         input: unknown,
       ) => Promise<{
         output: unknown
-        children: Array<DurableTaskChild>
+        childrenTasks: Array<DurableChildTask>
       }>,
-      onRunAndChildrenComplete,
+      finalizeTask,
     )
     taskInternalsMap.set(taskInternal.id, taskInternal)
     return taskInternal
   }
 
-  getTimeoutMs(attempt: number): number {
-    let timeoutMs: unknown
-    try {
-      timeoutMs =
-        this.timeoutMs && isFunction(this.timeoutMs) ? this.timeoutMs(attempt) : this.timeoutMs
-    } catch (error) {
-      throw new DurableTaskError(
-        `Error in timeout function for task ${this.id} on attempt ${attempt}: ${getErrorMessage(error)}`,
-        false,
-      )
+  validateEnqueueOptions(options?: DurableTaskEnqueueOptions): DurableTaskEnqueueOptions {
+    const validatedOptions: DurableTaskEnqueueOptions = {}
+
+    if (options?.retryOptions) {
+      const parsedRetryOptions = v.safeParse(vRetryOptions, options.retryOptions)
+      if (!parsedRetryOptions.success) {
+        throw new DurableTaskError(
+          `Invalid retry options for task ${this.id}: ${v.summarize(parsedRetryOptions.issues)}`,
+          false,
+        )
+      }
+
+      validatedOptions.retryOptions = parsedRetryOptions.output
     }
 
-    const parsedTimeoutMs = v.safeParse(vTimeoutMs, timeoutMs)
-    if (!parsedTimeoutMs.success) {
-      throw new DurableTaskError(
-        `Invalid timeout value for task ${this.id} on attempt ${attempt}: ${v.summarize(parsedTimeoutMs.issues)}`,
-        false,
-      )
+    if (options?.timeoutMs) {
+      const parsedTimeoutMs = v.safeParse(vTimeoutMs, options.timeoutMs)
+      if (!parsedTimeoutMs.success) {
+        throw new DurableTaskError(
+          `Invalid timeout value for task ${this.id}: ${v.summarize(parsedTimeoutMs.issues)}`,
+          false,
+        )
+      }
+
+      validatedOptions.timeoutMs = parsedTimeoutMs.output
     }
-    return parsedTimeoutMs.output
+
+    if (options?.sleepMsBeforeRun) {
+      const parsedSleepMsBeforeRun = v.safeParse(vSleepMsBeforeRun, options.sleepMsBeforeRun)
+      if (!parsedSleepMsBeforeRun.success) {
+        throw new DurableTaskError(
+          `Invalid sleep ms before run for task ${this.id}: ${v.summarize(parsedSleepMsBeforeRun.issues)}`,
+          false,
+        )
+      }
+
+      validatedOptions.sleepMsBeforeRun = parsedSleepMsBeforeRun.output
+    }
+
+    return validatedOptions
   }
 
-  getSleepMsBeforeAttempt(attempt: number): number {
-    let sleepMsBeforeAttempt: unknown
-    try {
-      sleepMsBeforeAttempt =
-        this.sleepMsBeforeAttempt && isFunction(this.sleepMsBeforeAttempt)
-          ? this.sleepMsBeforeAttempt(attempt)
-          : this.sleepMsBeforeAttempt
-    } catch {
-      return 0
-    }
+  getRetryOptions(options?: DurableTaskEnqueueOptions): DurableTaskRetryOptions {
+    return options?.retryOptions != null ? options.retryOptions : this.retryOptions
+  }
 
-    const parsedSleepMsBeforeAttempt = v.safeParse(vSleepMsBeforeAttempt, sleepMsBeforeAttempt)
-    if (!parsedSleepMsBeforeAttempt.success) {
-      return 0
-    }
-    return parsedSleepMsBeforeAttempt.output
+  getTimeoutMs(options?: DurableTaskEnqueueOptions): number {
+    return options?.timeoutMs != null ? options.timeoutMs : this.timeoutMs
+  }
+
+  getSleepMsBeforeRun(options?: DurableTaskEnqueueOptions): number {
+    return options?.sleepMsBeforeRun != null ? options.sleepMsBeforeRun : this.sleepMsBeforeRun
   }
 
   async validateInput(input: unknown): Promise<unknown> {
@@ -274,15 +330,15 @@ export class DurableTaskInternal {
     return this.validateInputFn(this.id, input)
   }
 
-  async runWithTimeoutAndCancellation(
+  async runParentWithTimeoutAndCancellation(
     ctx: DurableTaskRunContext,
     input: unknown,
+    timeoutMs: number,
     cancelSignal: CancelSignal,
   ): Promise<{
     output: unknown
-    children: Array<DurableTaskChild>
+    childrenTasks: Array<DurableChildTask>
   }> {
-    const timeoutMs = this.getTimeoutMs(ctx.attempt)
     const timeoutCancelSignal = createTimeoutCancelSignal(timeoutMs)
     return await createCancellablePromise(
       createCancellablePromise(
@@ -308,28 +364,44 @@ export type DurableTaskCommonOptions = {
    */
   id: string
   /**
-   * The timeout for the task run function. If the value is a function, it will be called with the
-   * attempt number and should return the timeout in milliseconds. For the first attempt, the
-   * attempt number would be 0, and then for further retries, it would be 1, 2, etc.
-   *
-   * If a value < 0 is returned, the task will be marked as failed and will not be retried.
+   * The options for retrying the task.
    */
-  timeoutMs: number | ((attempt: number) => number)
+  retryOptions?: DurableTaskRetryOptions
   /**
-   * The maximum number of times to retry the task.
-   *
-   * If the value is 0, the task will not be retried. If the value is < 0 or undefined, it will be
+   * The timeout for the task run function. If a value < 0 is returned, the task will be marked as
+   * failed and will not be retried.
+   */
+  timeoutMs: number
+  /**
+   * The delay before running the task run function. If the value is < 0 or undefined, it will be
    * treated as 0.
    */
-  maxRetryAttempts?: number
+  sleepMsBeforeRun?: number
+}
+
+/**
+ * The options for retrying a durable task. The delay after nth retry is calculated as:
+ * `baseDelayMs * (delayMultiplier ** n)`. The delay is capped at `maxDelayMs` if provided.
+ *
+ * @category Task
+ */
+export type DurableTaskRetryOptions = {
   /**
-   * The delay before running the task run function. If a function is provided, it will be called
-   * with the attempt number and should return the delay in milliseconds. For the first attempt, the
-   * attempt number would be 0, and then for further retries, it would be 1, 2, etc.
-   *
-   * If the value is < 0 or undefined, it will be treated as 0.
+   * The maximum number of times the task can be retried.
    */
-  sleepMsBeforeAttempt?: number | ((attempt: number) => number)
+  maxAttempts: number
+  /**
+   * The base delay before each retry. Defaults to 1000 or 1 second.
+   */
+  baseDelayMs?: number
+  /**
+   * The multiplier for the delay before each retry. Default is 1.
+   */
+  delayMultiplier?: number
+  /**
+   * The maximum delay before each retry.
+   */
+  maxDelayMs?: number
 }
 
 /**
@@ -400,22 +472,20 @@ export type DurableTaskOptions<TInput = unknown, TOutput = unknown> = DurableTas
  * function completes, along with the output of the parent task.
  *
  * The {@link runParent} function is similar to the `run` function in {@link DurableTaskOptions},
- * but the output is of the form `{ output: TRunOutput, children: Array<DurableTaskChild> }` where
+ * but the output is of the form `{ output: TRunOutput, childrenTasks: Array<DurableChildTask> }` where
  * the children are the tasks to be run in parallel after the run function completes.
  *
- * The {@link onRunAndChildrenComplete} task is run after the runParent function and all the
- * children tasks complete. It is useful for combining the output of the runParent function and
- * children tasks. It's input has the following properties:
+ * The {@link finalizeTask} task is run after the runParent function and all the children tasks
+ * complete. It is useful for combining the output of the runParent function and children tasks.
+ * It's input has the following properties:
  *
- * - `input`: The input of the `onRunAndChildrenComplete` task. Same as the input of runParent
- *   function.
- * - `output`: The output of the runParent function.
- * - `childrenOutputs`: The outputs of the children tasks.
+ * - `input`: The input of the `finalizeTask` task. Same as the input of runParent function
+ * - `output`: The output of the runParent function
+ * - `childrenTasksOutputs`: The outputs of the children tasks
  *
- * If {@link onRunAndChildrenComplete} is provided, the output of the whole task is the output of
- * the {@link onRunAndChildrenComplete} task. If it is not provided, the output of the whole task is
- * the output of the form
- * `{ output: TRunOutput, childrenOutputs: Array<DurableTaskChildExecutionOutput> }`.
+ * If {@link finalizeTask} is provided, the output of the whole task is the output of the
+ * {@link finalizeTask} task. If it is not provided, the output of the whole task is the output of
+ * the form `{ output: TRunOutput, childrenTasksOutputs: Array<DurableChildTaskExecutionOutput> }`.
  *
  * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
  * section for more details on creating tasks.
@@ -469,7 +539,7 @@ export type DurableTaskOptions<TInput = unknown, TOutput = unknown> = DurableTas
  *           uploadUrl: input.uploadUrl,
  *           fileSize: 100,
  *         },
- *         children: [
+ *         childrenTasks: [
  *           {
  *             task: extractFileTitle,
  *             input: { filePath: input.filePath },
@@ -481,10 +551,10 @@ export type DurableTaskOptions<TInput = unknown, TOutput = unknown> = DurableTas
  *         ],
  *       }
  *     },
- *     onRunAndChildrenComplete: {
+ *     finalizeTask: {
  *       id: 'onUploadFileAndChildrenComplete',
  *       timeoutMs: 60_000, // 1 minute
- *       run: async (ctx, { input, output, childrenOutputs }) => {
+ *       run: async (ctx, { input, output, childrenTasksOutputs }) => {
  *         // ... combine the output of the run function and children tasks
  *         return {
  *           filePath: input.filePath,
@@ -505,9 +575,9 @@ export type DurableParentTaskOptions<
   TRunOutput = unknown,
   TOutput = {
     output: TRunOutput
-    childrenOutputs: Array<DurableTaskChildExecutionOutput>
+    childrenTasksOutputs: Array<DurableChildTaskExecutionOutput>
   },
-  TOnRunAndChildrenCompleteRunOutput = unknown,
+  TFinalizeTaskRunOutput = unknown,
 > = DurableTaskCommonOptions & {
   /**
    * The task run logic. It is similar to the `run` function in {@link DurableTaskOptions} but it
@@ -524,86 +594,70 @@ export type DurableParentTaskOptions<
   ) =>
     | {
         output: TRunOutput
-        children?: Array<DurableTaskChild>
+        childrenTasks?: Array<DurableChildTask>
       }
     | Promise<{
         output: TRunOutput
-        children?: Array<DurableTaskChild>
+        childrenTasks?: Array<DurableChildTask>
       }>
   /**
    * Task to run after the runParent function and children tasks complete. This is useful for
    * combining the output of the run function and children tasks.
    */
-  onRunAndChildrenComplete?: DurableOnRunAndChildrenCompleteTaskOptions<
-    TInput,
-    TRunOutput,
-    TOutput,
-    TOnRunAndChildrenCompleteRunOutput
-  >
+  finalizeTask?: DurableFinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>
 }
 
 /**
- * Options for the `onRunAndChildrenComplete` property in {@link DurableParentTaskOptions}. It is
- * similar to {@link DurableTaskOptions} or {@link DurableParentTaskOptions} but the input is of
- * the form:
+ * Options for the `finalizeTask` property in {@link DurableParentTaskOptions}. It is similar to
+ * {@link DurableTaskOptions} or {@link DurableParentTaskOptions} but the input is of the form:
  *
  * ```ts
  * {
  *   input: TRunInput,
  *   output: TRunOutput,
- *   childrenOutputs: Array<DurableTaskChildExecutionOutput>
+ *   childrenTasksOutputs: Array<DurableChildTaskExecutionOutput>
  * }
  * ```
  *
  * No validation is done on the input and the output of the parent task is the output of the
- * `onRunAndChildrenComplete` task.
+ * `finalizeTask` task.
  *
  * @category Task
  */
-export type DurableOnRunAndChildrenCompleteTaskOptions<
+export type DurableFinalizeTaskOptions<
   TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
-  TOnRunAndChildrenCompleteRunOutput = unknown,
+  TFinalizeTaskRunOutput = unknown,
 > =
   | DurableTaskOptions<DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>, TOutput>
   | DurableParentTaskOptions<
       DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>,
-      TOnRunAndChildrenCompleteRunOutput,
+      TFinalizeTaskRunOutput,
       TOutput
     >
 
-function isDurableOnRunAndChildrenCompleteTaskOptionsTaskOptions<
+function isDurableFinalizeTaskOptionsTaskOptions<
   TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
-  TOnRunAndChildrenCompleteRunOutput = unknown,
+  TFinalizeTaskRunOutput = unknown,
 >(
-  options: DurableOnRunAndChildrenCompleteTaskOptions<
-    TInput,
-    TRunOutput,
-    TOutput,
-    TOnRunAndChildrenCompleteRunOutput
-  >,
+  options: DurableFinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
 ): options is DurableTaskOptions<DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>, TOutput> {
   return 'run' in options && !('runParent' in options)
 }
 
-function isDurableOnRunAndChildrenCompleteTaskOptionsParentTaskOptions<
+function isDurableFinalizeTaskOptionsParentTaskOptions<
   TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
-  TOnRunAndChildrenCompleteRunOutput = unknown,
+  TFinalizeTaskRunOutput = unknown,
 >(
-  options: DurableOnRunAndChildrenCompleteTaskOptions<
-    TInput,
-    TRunOutput,
-    TOutput,
-    TOnRunAndChildrenCompleteRunOutput
-  >,
+  options: DurableFinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
 ): options is DurableParentTaskOptions<
   DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>,
-  TOnRunAndChildrenCompleteRunOutput,
+  TFinalizeTaskRunOutput,
   TOutput
 > {
   return 'runParent' in options && !('run' in options)
@@ -617,7 +671,7 @@ function isDurableOnRunAndChildrenCompleteTaskOptionsParentTaskOptions<
 export type DurableTaskOnChildrenCompleteInput<TInput = unknown, TRunOutput = unknown> = {
   input: TInput
   output: TRunOutput
-  childrenOutputs: Array<DurableTaskChildExecutionOutput>
+  childrenTasksOutputs: Array<DurableChildTaskExecutionOutput>
 }
 
 /**
@@ -666,10 +720,10 @@ export type DurableTaskExecution<TOutput = unknown> =
   | DurableTaskRunningExecution
   | DurableTaskFailedExecution
   | DurableTaskTimedOutExecution
-  | DurableTaskWaitingForChildrenExecution
-  | DurableTaskChildrenFailedExecution
-  | DurableTaskWaitingForOnRunAndChildrenCompleteExecution
-  | DurableTaskOnRunAndChildrenCompleteFailedExecution
+  | DurableTaskWaitingForChildrenTasksExecution
+  | DurableTaskChildrenTasksFailedExecution
+  | DurableTaskWaitingForFinalizeTaskExecution
+  | DurableTaskFinalizeTaskFailedExecution
   | DurableTaskCompletedExecution<TOutput>
   | DurableTaskCancelledExecution
 
@@ -683,8 +737,8 @@ export type DurableTaskExecution<TOutput = unknown> =
 export type DurableTaskFinishedExecution<TOutput = unknown> =
   | DurableTaskFailedExecution
   | DurableTaskTimedOutExecution
-  | DurableTaskChildrenFailedExecution
-  | DurableTaskOnRunAndChildrenCompleteFailedExecution
+  | DurableTaskChildrenTasksFailedExecution
+  | DurableTaskFinalizeTaskFailedExecution
   | DurableTaskCompletedExecution<TOutput>
   | DurableTaskCancelledExecution
 
@@ -706,6 +760,9 @@ export type DurableTaskReadyExecution = {
 
   taskId: string
   executionId: string
+  retryOptions: DurableTaskRetryOptions
+  timeoutMs: number
+  sleepMsBeforeRun: number
   runInput: unknown
   error?: DurableTaskError
   status: 'ready'
@@ -748,59 +805,59 @@ export type DurableTaskTimedOutExecution = Omit<DurableTaskRunningExecution, 'st
 }
 
 /**
- * A durable task execution that is waiting for children to complete.
+ * A durable task execution that is waiting for children tasks to complete.
  *
  * @category Task
  */
-export type DurableTaskWaitingForChildrenExecution = Omit<
+export type DurableTaskWaitingForChildrenTasksExecution = Omit<
   DurableTaskRunningExecution,
   'status' | 'error'
 > & {
-  status: 'waiting_for_children'
+  status: 'waiting_for_children_tasks'
   runOutput: unknown
-  children: Array<DurableTaskChildExecution>
+  childrenTasks: Array<DurableChildTaskExecution>
 }
 
 /**
- * A durable task execution that failed while waiting for children to complete because of one or
- * more child task executions failed.
+ * A durable task execution that failed while waiting for children tasks to complete because of one
+ * or more child task executions failed.
  *
  * @category Task
  */
-export type DurableTaskChildrenFailedExecution = Omit<
-  DurableTaskWaitingForChildrenExecution,
+export type DurableTaskChildrenTasksFailedExecution = Omit<
+  DurableTaskWaitingForChildrenTasksExecution,
   'status'
 > & {
-  status: 'children_failed'
-  childrenErrors: Array<DurableTaskChildExecutionError>
+  status: 'children_tasks_failed'
+  childrenTasksErrors: Array<DurableChildTaskExecutionError>
   finishedAt: Date
 }
 
 /**
- * A durable task execution that is waiting for the on run and children complete task to complete.
+ * A durable task execution that is waiting for the finalize task to complete.
  *
  * @category Task
  */
-export type DurableTaskWaitingForOnRunAndChildrenCompleteExecution = Omit<
-  DurableTaskWaitingForChildrenExecution,
+export type DurableTaskWaitingForFinalizeTaskExecution = Omit<
+  DurableTaskWaitingForChildrenTasksExecution,
   'status' | 'error'
 > & {
-  status: 'waiting_for_on_run_and_children_complete'
-  onRunAndChildrenComplete: DurableTaskChildExecution
+  status: 'waiting_for_finalize_task'
+  finalizeTask: DurableChildTaskExecution
 }
 
 /**
- * A durable task execution that failed while waiting for the on run and children complete task to
- * complete because the on run and children complete task execution failed.
+ * A durable task execution that failed while waiting for the finalize task to complete because the
+ * finalize task execution failed.
  *
  * @category Task
  */
-export type DurableTaskOnRunAndChildrenCompleteFailedExecution = Omit<
-  DurableTaskWaitingForOnRunAndChildrenCompleteExecution,
+export type DurableTaskFinalizeTaskFailedExecution = Omit<
+  DurableTaskWaitingForFinalizeTaskExecution,
   'status'
 > & {
-  status: 'on_run_and_children_complete_failed'
-  onRunAndChildrenCompleteError: DurableTaskError
+  status: 'finalize_task_failed'
+  finalizeTaskError: DurableTaskError
   finishedAt: Date
 }
 
@@ -810,11 +867,15 @@ export type DurableTaskOnRunAndChildrenCompleteFailedExecution = Omit<
  * @category Task
  */
 export type DurableTaskCompletedExecution<TOutput = unknown> = Omit<
-  DurableTaskWaitingForChildrenExecution,
+  DurableTaskWaitingForChildrenTasksExecution,
   'status' | 'output'
 > & {
   status: 'completed'
   output: TOutput
+  /**
+   * The finalize task execution. This is only present for tasks which have a finalize task.
+   */
+  finalizeTask?: DurableChildTaskExecution
   finishedAt: Date
 }
 
@@ -837,10 +898,15 @@ export type DurableTaskCancelledExecution = Omit<
    */
   runOutput?: unknown
   /**
-   * The children task executions that were running when the task was cancelled. This is only
-   * present for tasks whose run method completed successfully.
+   * The children tasks that were running when the task was cancelled. This is only present for
+   * tasks whose run method completed successfully.
    */
-  children?: Array<DurableTaskChildExecution>
+  childrenTasks?: Array<DurableChildTaskExecution>
+  /**
+   * The finalize task execution. This is only present for tasks which have a finalize task and
+   * whose run method completed successfully.
+   */
+  finalizeTask?: DurableChildTaskExecution
   finishedAt: Date
 }
 
@@ -849,9 +915,10 @@ export type DurableTaskCancelledExecution = Omit<
  *
  * @category Task
  */
-export type DurableTaskChild<TInput = unknown, TOutput = unknown> = {
+export type DurableChildTask<TInput = unknown, TOutput = unknown> = {
   task: DurableTask<TInput, TOutput>
   input: TInput
+  options?: DurableTaskEnqueueOptions
 }
 
 /**
@@ -859,7 +926,7 @@ export type DurableTaskChild<TInput = unknown, TOutput = unknown> = {
  *
  * @category Task
  */
-export type DurableTaskChildExecution = {
+export type DurableChildTaskExecution = {
   taskId: string
   executionId: string
 }
@@ -869,7 +936,7 @@ export type DurableTaskChildExecution = {
  *
  * @category Task
  */
-export type DurableTaskChildExecutionOutput<TOutput = unknown> = {
+export type DurableChildTaskExecutionOutput<TOutput = unknown> = {
   index: number
   taskId: string
   executionId: string
@@ -881,7 +948,7 @@ export type DurableTaskChildExecutionOutput<TOutput = unknown> = {
  *
  * @category Task
  */
-export type DurableTaskChildExecutionError = {
+export type DurableChildTaskExecutionError = {
   index: number
   taskId: string
   executionId: string
@@ -898,10 +965,10 @@ export type DurableTaskExecutionStatus =
   | 'running'
   | 'failed'
   | 'timed_out'
-  | 'waiting_for_children'
-  | 'children_failed'
-  | 'waiting_for_on_run_and_children_complete'
-  | 'on_run_and_children_complete_failed'
+  | 'waiting_for_children_tasks'
+  | 'children_tasks_failed'
+  | 'waiting_for_finalize_task'
+  | 'finalize_task_failed'
   | 'completed'
   | 'cancelled'
 
@@ -910,27 +977,40 @@ export const ALL_TASK_EXECUTION_STATUSES = [
   'running',
   'failed',
   'timed_out',
-  'waiting_for_children',
-  'children_failed',
-  'waiting_for_on_run_and_children_complete',
-  'on_run_and_children_complete_failed',
+  'waiting_for_children_tasks',
+  'children_tasks_failed',
+  'waiting_for_finalize_task',
+  'finalize_task_failed',
   'completed',
   'cancelled',
 ] as Array<DurableTaskExecutionStatus>
 export const ACTIVE_TASK_EXECUTION_STATUSES = [
   'ready',
   'running',
-  'waiting_for_children',
-  'waiting_for_on_run_and_children_complete',
+  'waiting_for_children_tasks',
+  'waiting_for_finalize_task',
 ] as Array<DurableTaskExecutionStatus>
 export const FINISHED_TASK_EXECUTION_STATUSES = [
   'failed',
   'timed_out',
-  'children_failed',
-  'on_run_and_children_complete_failed',
+  'children_tasks_failed',
+  'finalize_task_failed',
   'completed',
   'cancelled',
 ] as Array<DurableTaskExecutionStatus>
+
+/**
+ * The options for enqueuing a task. If provided, the task will be enqueued with the given
+ * options. If not provided, the task will be enqueued with the default options provided in the
+ * task options.
+ *
+ * @category Task
+ */
+export type DurableTaskEnqueueOptions = {
+  retryOptions?: DurableTaskRetryOptions
+  timeoutMs?: number
+  sleepMsBeforeRun?: number
+}
 
 /**
  * A handle to a durable task execution. See
@@ -953,10 +1033,10 @@ export const FINISHED_TASK_EXECUTION_STATUSES = [
  *   // Do something with the timeout
  * } else if (finishedExecution.status === 'cancelled') {
  *   // Do something with the cancellation
- * } else if (finishedExecution.status === 'children_failed') {
- *   // Do something with the children failure
- * } else if (finishedExecution.status === 'on_run_and_children_complete_failed') {
- *   // Do something with the on run and children complete task failure
+ * } else if (finishedExecution.status === 'children_tasks_failed') {
+ *   // Do something with the children tasks failure
+ * } else if (finishedExecution.status === 'finalize_task_failed') {
+ *   // Do something with the finalize task failure
  * }
  *
  * // Cancel the task execution

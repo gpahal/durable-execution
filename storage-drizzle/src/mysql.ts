@@ -32,6 +32,7 @@ import type {
   DurableTaskExecutionStorageObject,
   DurableTaskExecutionStorageObjectUpdate,
   DurableTaskExecutionStorageWhere,
+  DurableTaskRetryOptions,
 } from 'durable-execution'
 
 import {
@@ -55,21 +56,21 @@ export function createDurableTaskExecutionsMySQLTable(tableName = 'durable_task_
       rootExecutionId: text('root_execution_id'),
       parentTaskId: text('parent_task_id'),
       parentExecutionId: text('parent_execution_id'),
-      isOnRunAndChildrenCompleteChild: boolean('is_on_run_and_children_complete_child'),
+      isFinalizeTask: boolean('is_finalize_task'),
       taskId: text('task_id').notNull(),
       executionId: text('execution_id').notNull(),
+      retryOptions: json('retry_options').$type<DurableTaskRetryOptions>().notNull(),
+      timeoutMs: int('timeout_ms').notNull(),
+      sleepMsBeforeRun: int('sleep_ms_before_run').notNull(),
       runInput: text('run_input').notNull(),
       runOutput: text('run_output'),
       output: text('output'),
-      childrenCompletedCount: int('children_completed_count').notNull(),
-      children: json('children').$type<Array<DurableTaskChildExecutionStorageObject>>(),
-      childrenErrors: json('children_errors').$type<Array<DurableTaskChildErrorStorageObject>>(),
-      onRunAndChildrenComplete: json(
-        'on_run_and_children_complete',
-      ).$type<DurableTaskChildExecutionStorageObject>(),
-      onRunAndChildrenCompleteError: json(
-        'on_run_and_children_complete_error',
-      ).$type<DurableTaskErrorStorageObject>(),
+      childrenTasksCompletedCount: int('children_tasks_completed_count').notNull(),
+      childrenTasks: json('children_tasks').$type<Array<DurableTaskChildExecutionStorageObject>>(),
+      childrenTasksErrors:
+        json('children_tasks_errors').$type<Array<DurableTaskChildErrorStorageObject>>(),
+      finalizeTask: json('finalize_task').$type<DurableTaskChildExecutionStorageObject>(),
+      finalizeTaskError: json('finalize_task_error').$type<DurableTaskErrorStorageObject>(),
       error: json('error').$type<DurableTaskErrorStorageObject>(),
       status: text('status').$type<DurableTaskExecutionStatus>().notNull(),
       isClosed: boolean('is_closed').notNull(),

@@ -19,6 +19,7 @@ import {
   type DurableTaskExecutionStorageObject,
   type DurableTaskExecutionStorageObjectUpdate,
   type DurableTaskExecutionStorageWhere,
+  type DurableTaskRetryOptions,
   type TransactionMutex,
 } from 'durable-execution'
 
@@ -43,25 +44,30 @@ export function createDurableTaskExecutionsSQLiteTable(tableName = 'durable_task
       rootExecutionId: text('root_execution_id'),
       parentTaskId: text('parent_task_id'),
       parentExecutionId: text('parent_execution_id'),
-      isOnRunAndChildrenCompleteChild: integer('is_on_run_and_children_complete_child', {
+      isFinalizeTask: integer('is_finalize_task', {
         mode: 'boolean',
       }),
       taskId: text('task_id').notNull(),
       executionId: text('execution_id').notNull(),
+      retryOptions: text('retry_options', { mode: 'json' })
+        .$type<DurableTaskRetryOptions>()
+        .notNull(),
+      timeoutMs: integer('timeout_ms').notNull(),
+      sleepMsBeforeRun: integer('sleep_ms_before_run').notNull(),
       runInput: text('run_input').notNull(),
       runOutput: text('run_output'),
       output: text('output'),
-      childrenCompletedCount: integer('children_completed_count').notNull(),
-      children: text('children', { mode: 'json' }).$type<
+      childrenTasksCompletedCount: integer('children_tasks_completed_count').notNull(),
+      childrenTasks: text('children_tasks', { mode: 'json' }).$type<
         Array<DurableTaskChildExecutionStorageObject>
       >(),
-      childrenErrors: text('children_errors', { mode: 'json' }).$type<
+      childrenTasksErrors: text('children_tasks_errors', { mode: 'json' }).$type<
         Array<DurableTaskChildErrorStorageObject>
       >(),
-      onRunAndChildrenComplete: text('on_run_and_children_complete', {
+      finalizeTask: text('finalize_task', {
         mode: 'json',
       }).$type<DurableTaskChildExecutionStorageObject>(),
-      onRunAndChildrenCompleteError: text('on_run_and_children_complete_error', {
+      finalizeTaskError: text('finalize_task_error', {
         mode: 'json',
       }).$type<DurableTaskErrorStorageObject>(),
       error: text('error', { mode: 'json' }).$type<DurableTaskErrorStorageObject>(),

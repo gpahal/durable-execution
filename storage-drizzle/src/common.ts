@@ -5,6 +5,7 @@ import type {
   DurableTaskExecutionStatus,
   DurableTaskExecutionStorageObject,
   DurableTaskExecutionStorageObjectUpdate,
+  DurableTaskRetryOptions,
 } from 'durable-execution'
 
 export type DurableTaskExecutionDbValue = {
@@ -12,17 +13,20 @@ export type DurableTaskExecutionDbValue = {
   rootExecutionId?: string | null
   parentTaskId?: string | null
   parentExecutionId?: string | null
-  isOnRunAndChildrenCompleteChild?: boolean | null
+  isFinalizeTask?: boolean | null
   taskId: string
   executionId: string
+  retryOptions: DurableTaskRetryOptions
+  timeoutMs: number
+  sleepMsBeforeRun: number
   runInput: string
   runOutput?: string | null
   output?: string | null
-  childrenCompletedCount: number
-  children?: Array<DurableTaskChildExecutionStorageObject> | null
-  childrenErrors?: Array<DurableTaskChildErrorStorageObject> | null
-  onRunAndChildrenComplete?: DurableTaskChildExecutionStorageObject | null
-  onRunAndChildrenCompleteError?: DurableTaskErrorStorageObject | null
+  childrenTasksCompletedCount: number
+  childrenTasks?: Array<DurableTaskChildExecutionStorageObject> | null
+  childrenTasksErrors?: Array<DurableTaskChildErrorStorageObject> | null
+  finalizeTask?: DurableTaskChildExecutionStorageObject | null
+  finalizeTaskError?: DurableTaskErrorStorageObject | null
   error?: DurableTaskErrorStorageObject | null
   status: DurableTaskExecutionStatus
   isClosed: boolean
@@ -39,11 +43,11 @@ export type DurableTaskExecutionDbValue = {
 export type DurableTaskExecutionDbUpdateValue = {
   runOutput?: string
   output?: string
-  childrenCompletedCount?: number
-  children?: Array<DurableTaskChildExecutionStorageObject>
-  childrenErrors?: Array<DurableTaskChildErrorStorageObject>
-  onRunAndChildrenComplete?: DurableTaskChildExecutionStorageObject
-  onRunAndChildrenCompleteError?: DurableTaskErrorStorageObject
+  childrenTasksCompletedCount?: number
+  childrenTasks?: Array<DurableTaskChildExecutionStorageObject>
+  childrenTasksErrors?: Array<DurableTaskChildErrorStorageObject>
+  finalizeTask?: DurableTaskChildExecutionStorageObject
+  finalizeTaskError?: DurableTaskErrorStorageObject
   error?: DurableTaskErrorStorageObject | null
   status?: DurableTaskExecutionStatus
   isClosed?: boolean
@@ -64,17 +68,20 @@ export function storageObjectToInsertValue(
     rootExecutionId: obj.rootTask?.executionId,
     parentTaskId: obj.parentTask?.taskId,
     parentExecutionId: obj.parentTask?.executionId,
-    isOnRunAndChildrenCompleteChild: obj.parentTask?.isOnRunAndChildrenCompleteChild,
+    isFinalizeTask: obj.parentTask?.isFinalizeTask,
     taskId: obj.taskId,
     executionId: obj.executionId,
+    retryOptions: obj.retryOptions,
+    timeoutMs: obj.timeoutMs,
+    sleepMsBeforeRun: obj.sleepMsBeforeRun,
     runInput: obj.runInput,
     runOutput: obj.runOutput,
     output: obj.output,
-    childrenCompletedCount: obj.childrenCompletedCount,
-    children: obj.children,
-    childrenErrors: obj.childrenErrors,
-    onRunAndChildrenComplete: obj.onRunAndChildrenComplete,
-    onRunAndChildrenCompleteError: obj.onRunAndChildrenCompleteError,
+    childrenTasksCompletedCount: obj.childrenTasksCompletedCount,
+    childrenTasks: obj.childrenTasks,
+    childrenTasksErrors: obj.childrenTasksErrors,
+    finalizeTask: obj.finalizeTask,
+    finalizeTaskError: obj.finalizeTaskError,
     error: obj.error,
     status: obj.status,
     isClosed: obj.isClosed,
@@ -95,8 +102,11 @@ export function selectValueToStorageObject(
   const obj: DurableTaskExecutionStorageObject = {
     taskId: row.taskId,
     executionId: row.executionId,
+    retryOptions: row.retryOptions,
+    timeoutMs: row.timeoutMs,
+    sleepMsBeforeRun: row.sleepMsBeforeRun,
     runInput: row.runInput,
-    childrenCompletedCount: row.childrenCompletedCount,
+    childrenTasksCompletedCount: row.childrenTasksCompletedCount,
     status: row.status,
     isClosed: row.isClosed,
     needsPromiseCancellation: row.needsPromiseCancellation,
@@ -118,7 +128,7 @@ export function selectValueToStorageObject(
     obj.parentTask = {
       taskId: row.parentTaskId,
       executionId: row.parentExecutionId,
-      isOnRunAndChildrenCompleteChild: row.isOnRunAndChildrenCompleteChild || false,
+      isFinalizeTask: row.isFinalizeTask ?? false,
     }
   }
 
@@ -130,20 +140,20 @@ export function selectValueToStorageObject(
     obj.output = row.output
   }
 
-  if (row.children) {
-    obj.children = row.children
+  if (row.childrenTasks) {
+    obj.childrenTasks = row.childrenTasks
   }
 
-  if (row.childrenErrors) {
-    obj.childrenErrors = row.childrenErrors
+  if (row.childrenTasksErrors) {
+    obj.childrenTasksErrors = row.childrenTasksErrors
   }
 
-  if (row.onRunAndChildrenComplete) {
-    obj.onRunAndChildrenComplete = row.onRunAndChildrenComplete
+  if (row.finalizeTask) {
+    obj.finalizeTask = row.finalizeTask
   }
 
-  if (row.onRunAndChildrenCompleteError) {
-    obj.onRunAndChildrenCompleteError = row.onRunAndChildrenCompleteError
+  if (row.finalizeTaskError) {
+    obj.finalizeTaskError = row.finalizeTaskError
   }
 
   if (row.error) {
@@ -173,24 +183,24 @@ export function storageUpdateToUpdateValue(
     row.output = update.output
   }
 
-  if (update.childrenCompletedCount !== undefined) {
-    row.childrenCompletedCount = update.childrenCompletedCount
+  if (update.childrenTasksCompletedCount !== undefined) {
+    row.childrenTasksCompletedCount = update.childrenTasksCompletedCount
   }
 
-  if (update.children !== undefined) {
-    row.children = update.children
+  if (update.childrenTasks !== undefined) {
+    row.childrenTasks = update.childrenTasks
   }
 
-  if (update.childrenErrors !== undefined) {
-    row.childrenErrors = update.childrenErrors
+  if (update.childrenTasksErrors !== undefined) {
+    row.childrenTasksErrors = update.childrenTasksErrors
   }
 
-  if (update.onRunAndChildrenComplete !== undefined) {
-    row.onRunAndChildrenComplete = update.onRunAndChildrenComplete
+  if (update.finalizeTask !== undefined) {
+    row.finalizeTask = update.finalizeTask
   }
 
-  if (update.onRunAndChildrenCompleteError !== undefined) {
-    row.onRunAndChildrenCompleteError = update.onRunAndChildrenCompleteError
+  if (update.finalizeTaskError !== undefined) {
+    row.finalizeTaskError = update.finalizeTaskError
   }
 
   if (update.error !== undefined) {

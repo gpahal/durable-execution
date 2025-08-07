@@ -2,7 +2,6 @@
 
 [![NPM Version](https://img.shields.io/npm/v/durable-execution)](https://www.npmjs.com/package/durable-execution)
 [![License](https://img.shields.io/npm/l/durable-execution)](https://github.com/gpahal/durable-execution/blob/main/LICENSE)
-[![Code Coverage](https://codecov.io/github/gpahal/durable-execution/graph/badge.svg?flag=durable-execution)](https://codecov.io/github/gpahal/durable-execution)
 
 A durable execution engine for running tasks durably and resiliently.
 
@@ -111,7 +110,7 @@ const uploadFile = executor
   .parentTask({
     id: 'uploadFile',
     timeoutMs: 60_000, // 1 minute
-    runParent: async (ctx, input) => {
+     runParent: async (ctx, input) => {
       // ... upload file to the given uploadUrl
       // Extract the file title and summarize the file in parallel
       return {
@@ -120,7 +119,7 @@ const uploadFile = executor
           uploadUrl: input.uploadUrl,
           fileSize: 100,
         },
-        children: [
+        childrenTasks: [
           {
             task: extractFileTitle,
             input: { filePath: input.filePath },
@@ -132,10 +131,10 @@ const uploadFile = executor
         ],
       }
     },
-    onRunAndChildrenComplete: {
+    finalizeTask: {
       id: 'onUploadFileAndChildrenComplete',
       timeoutMs: 60_000, // 1 minute
-      run: async (ctx, { input, output, childrenOutputs }) => {
+      run: async (ctx, { input, output, childrenTasksOutputs }) => {
         // ... combine the output of the run function and children tasks
         return {
           filePath: input.filePath,
@@ -144,7 +143,7 @@ const uploadFile = executor
           title: 'File Title',
           summary: 'File summary',
         }
-      },
+      }
     },
   })
 
@@ -250,8 +249,13 @@ const taskA = executor.inputSchema(v.object({ name: v.string() })).task({
 let totalAttempts = 0
 const taskA = executor.task({
   id: 'a',
+  retryOptions: {
+    maxAttempts: 5,
+    baseDelayMs: 100,
+    delayMultiplier: 1.5,
+    maxDelayMs: 1000,
+  },
   timeoutMs: 1000,
-  maxRetryAttempts: 5,
   run: (ctx, input: { name: string }) => {
     totalAttempts++
     if (ctx.attempt < 2) {
@@ -331,31 +335,7 @@ const parentTask = executor.parentTask({
   runParent: (ctx, input: { name: string }) => {
     return {
       output: `Hello from parent task, ${input.name}!`,
-      children: [
-        {
-          task: taskA,
-          input: { name: input.name },
-        },
-        {
-          task: taskB,
-          input: { name: input.name },
-        },
-      ],
-    }
-  },
-})
-
-// To use an input schema, use the schemaTask method instead of the task method
-const parentTask = executor.parentSchemaTask({
-  id: 'parent',
-  timeoutMs: 1000,
-  inputSchema: v.object({
-    name: v.string(),
-  }),
-  runParent: (ctx, input) => {
-    return {
-      output: `Hello from parent task, ${input.name}!`,
-      children: [
+      childrenTasks: [
         {
           task: taskA,
           input: { name: input.name },
@@ -387,9 +367,9 @@ flowchart TD
   parentTask --> taskB
 ```
 
-The `onRunAndChildrenComplete` task is run after the `runParent` function and all the children
-tasks complete. It is useful for combining the output of the `runParent` function and children
-tasks. The output of the `onRunAndChildrenComplete` task is the output of the parent task.
+The `finalizeTask` task is run after the `runParent` function and all the children tasks complete.
+It is useful for combining the output of the `runParent` function and children tasks. The output
+of the `finalizeTask` task is the output of the parent task.
 
 ```ts
 const taskA = executor.task({
@@ -413,7 +393,7 @@ const parentTask = executor.parentTask({
   runParent: (ctx, input: { name: string }) => {
     return {
       output: `Hello from parent task, ${input.name}!`,
-      children: [
+      childrenTasks: [
         {
           task: taskA,
           input: { name: input.name },
@@ -425,20 +405,18 @@ const parentTask = executor.parentTask({
       ],
     }
   },
-  onRunAndChildrenComplete: {
+  finalizeTask: {
     id: 'onParentRunAndChildrenComplete',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenOutputs }) => {
+    run: (ctx, { output, childrenTasksOutputs }) => {
       return {
         parentOutput: output,
-        taskAOutput: childrenOutputs[0]!.output as string,
-        taskBOutput: childrenOutputs[1]!.output as string,
+        taskAOutput: childrenTasksOutputs[0]!.output as string,
+        taskBOutput: childrenTasksOutputs[1]!.output as string,
       }
     },
   },
 })
-
-// To use an input schema, use the schemaTask method instead of the task method.
 
 // Input: { name: 'world' }
 // Output: {
@@ -522,8 +500,9 @@ The sequential tasks can also be created manually just by using the `parentTask`
 the `sequentialTasks` method is more convenient, it is useful to know how to create sequential
 tasks manually.
 
-The `onRunAndChildrenComplete` task can itself be a parent task with parallel children. This
-property can be used spawn parallel children from the task `runParent` function and then using the `onRunAndChildrenComplete` task to run a sequential task.
+The `finalizeTask` task can itself be a parent task with parallel children. This property can be
+used to spawn parallel children from the task `runParent` function and then using the
+`finalizeTask` task to run a sequential task.
 
 ```ts
 const taskC = executor.task({
@@ -541,22 +520,22 @@ const taskB = executor.parentTask({
       output: `Hello from task B, ${input.name}!`,
     }
   },
-  onRunAndChildrenComplete: {
-    id: 'onTaskBRunAndChildrenComplete',
+  finalizeTask: {
+    id: 'taskBFinalize',
     timeoutMs: 1000,
     runParent: (ctx, { input, output }) => {
       return {
         output,
-        children: [{ task: taskC, input: { name: input.name } }],
+        childrenTasks: [{ task: taskC, input: { name: input.name } }],
       }
     },
-    onRunAndChildrenComplete: {
-      id: 'onTaskBRunAndChildrenCompleteNested',
+    finalizeTask: {
+      id: 'taskBFinalizeNested',
       timeoutMs: 1000,
-      run: (ctx, { output, childrenOutputs }) => {
+      run: (ctx, { output, childrenTasksOutputs }) => {
         return {
           taskBOutput: output,
-          taskCOutput: childrenOutputs[0]!.output as string,
+          taskCOutput: childrenTasksOutputs[0]!.output as string,
         }
       },
     },
@@ -570,20 +549,20 @@ const taskA = executor.parentTask({
       output: `Hello from task A, ${input.name}!`,
     }
   },
-  onRunAndChildrenComplete: {
-    id: 'onTaskARunAndChildrenComplete',
+  finalizeTask: {
+    id: 'taskAFinalize',
     timeoutMs: 1000,
     runParent: (ctx, { input, output }) => {
       return {
         output,
-        children: [{ task: taskB, input: { name: input.name } }],
+        childrenTasks: [{ task: taskB, input: { name: input.name } }],
       }
     },
-    onRunAndChildrenComplete: {
-      id: 'onTaskARunAndChildrenCompleteNested',
+    finalizeTask: {
+      id: 'taskAFinalizeNested',
       timeoutMs: 1000,
-      run: (ctx, { output, childrenOutputs }) => {
-        const taskBOutput = childrenOutputs[0]!.output as {
+      run: (ctx, { output, childrenTasksOutputs }) => {
+        const taskBOutput = childrenTasksOutputs[0]!.output as {
           taskBOutput: string
           taskCOutput: string
         }
@@ -657,21 +636,21 @@ const taskA = executor.parentTask({
   runParent: (ctx, input: { name: string }) => {
     return {
       output: `Hello from task A, ${input.name}!`,
-      children: [
+      childrenTasks: [
         { task: taskA1, input: { name: input.name } },
         { task: taskA2, input: { name: input.name } },
       ],
     }
   },
-  onRunAndChildrenComplete: {
-    id: 'onTaskARunAndChildrenComplete',
+  finalizeTask: {
+    id: 'taskAFinalize',
     timeoutMs: 1000,
-    run: (ctx, { input, output, childrenOutputs }) => {
+    run: (ctx, { input, output, childrenTasksOutputs }) => {
       return {
         name: input.name,
         taskAOutput: output,
-        taskA1Output: childrenOutputs[0]!.output as string,
-        taskA2Output: childrenOutputs[1]!.output as string,
+        taskA1Output: childrenTasksOutputs[0]!.output as string,
+        taskA2Output: childrenTasksOutputs[1]!.output as string,
       }
     },
   },
@@ -690,20 +669,20 @@ const taskB = executor.parentTask({
         taskA2Output: input.taskA2Output,
         taskBOutput: `Hello from task B, ${input.name}!`,
       },
-      children: [
+      childrenTasks: [
         { task: taskB1, input: { name: input.name } },
         { task: taskB2, input: { name: input.name } },
       ],
     }
   },
-  onRunAndChildrenComplete: {
-    id: 'onTaskBRunAndChildrenComplete',
+  finalizeTask: {
+    id: 'taskBFinalize',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenOutputs }) => {
+    run: (ctx, { output, childrenTasksOutputs }) => {
       return {
         ...output,
-        taskB1Output: childrenOutputs[0]!.output as string,
-        taskB2Output: childrenOutputs[1]!.output as string,
+        taskB1Output: childrenTasksOutputs[0]!.output as string,
+        taskB2Output: childrenTasksOutputs[1]!.output as string,
       }
     },
   },
@@ -797,22 +776,22 @@ const taskA = executor.parentTask({
   runParent: (ctx, input: { name: string }) => {
     return {
       output: `Hello from task A, ${input.name}!`,
-      children: [
+      childrenTasks: [
         { task: taskA1, input: { name: input.name } },
         { task: taskA2, input: { name: input.name } },
         { task: taskA3, input: { name: input.name } },
       ],
     }
   },
-  onRunAndChildrenComplete: {
-    id: 'onTaskARunAndChildrenComplete',
+  finalizeTask: {
+    id: 'taskAFinalize',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenOutputs }) => {
+    run: (ctx, { output, childrenTasksOutputs }) => {
       return {
         taskAOutput: output,
-        taskA1Output: childrenOutputs[0]!.output as string,
-        taskA2Output: childrenOutputs[1]!.output as string,
-        taskA3Output: childrenOutputs[2]!.output as string,
+        taskA1Output: childrenTasksOutputs[0]!.output as string,
+        taskA2Output: childrenTasksOutputs[1]!.output as string,
+        taskA3Output: childrenTasksOutputs[2]!.output as string,
       }
     },
   },
@@ -824,23 +803,23 @@ const rootTask = executor.parentTask({
   runParent: (ctx, input: { name: string }) => {
     return {
       output: `Hello from root task, ${input.name}!`,
-      children: [
+      childrenTasks: [
         { task: taskA, input: { name: input.name } },
         { task: taskB, input: { name: input.name } },
       ],
     }
   },
-  onRunAndChildrenComplete: {
-    id: 'onRootRunAndChildrenComplete',
+  finalizeTask: {
+    id: 'rootFinalize',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenOutputs }) => {
-      const taskAOutput = childrenOutputs[0]!.output as {
+    run: (ctx, { output, childrenTasksOutputs }) => {
+      const taskAOutput = childrenTasksOutputs[0]!.output as {
         taskAOutput: string
         taskA1Output: string
         taskA2Output: string
         taskA3Output: string
       }
-      const taskBOutput = childrenOutputs[1]!.output as {
+      const taskBOutput = childrenTasksOutputs[1]!.output as {
         taskB1Output: string
         taskB2Output: string
         taskB3Output: string
@@ -875,8 +854,8 @@ const rootTask = executor.parentTask({
 ### Recursive task
 
 Recursive tasks require some type annotations to be able to infer the input and output types, since
-we are using the same variable inside the `runParent` function. Use the `onRunAndChildrenComplete`
-task to coordinate the output of the recursive task and children tasks.
+we are using the same variable inside the `runParent` function. Use the `finalizeTask` task to
+coordinate the output of the recursive task and children tasks.
 
 ```ts
 const recursiveTask: DurableTask<{ index: number }, { count: number }> = executor
@@ -888,18 +867,18 @@ const recursiveTask: DurableTask<{ index: number }, { count: number }> = executo
       await sleep(1)
       return {
         output: undefined,
-        children:
+        childrenTasks:
           input.index >= 9 ? [] : [{ task: recursiveTask, input: { index: input.index + 1 } }],
       }
     },
-    onRunAndChildrenComplete: {
-      id: 'onRecursiveRunAndChildrenComplete',
+    finalizeTask: {
+      id: 'recursiveFinalize',
       timeoutMs: 1000,
-      run: (ctx, { childrenOutputs }) => {
+      run: (ctx, { childrenTasksOutputs }) => {
         return {
           count:
             1 +
-            childrenOutputs.reduce(
+            childrenTasksOutputs.reduce(
               (acc, childOutput) => acc + (childOutput.output as { count: number }).count,
               0,
             ),
@@ -917,9 +896,9 @@ const recursiveTask: DurableTask<{ index: number }, { count: number }> = executo
 ### Polling task
 
 Polling tasks are useful when you want to wait for a value to be available. The
-`sleepMsBeforeAttempt` option is used to wait for a certain amount of time before attempting to
-get the value again. The `onRunAndChildrenComplete` task is used to combine the output of the
-polling task and children tasks.
+`sleepMsBeforeRun` option is used to wait for a certain amount of time before attempting to
+get the value again. The `finalizeTask` task is used to combine the output of the polling task and
+children tasks.
 
 ```ts
 let value: number | undefined
@@ -933,7 +912,7 @@ const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: nu
     .parentTask({
       id: 'polling',
       timeoutMs: 1000,
-      sleepMsBeforeAttempt: 100,
+      sleepMsBeforeRun: 100,
       runParent: (ctx, input) => {
         if (value != null) {
           return {
@@ -941,7 +920,6 @@ const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: nu
               isDone: true,
               value,
             } as { isDone: false; value: undefined } | { isDone: true; value: number },
-            children: [],
           }
         }
 
@@ -950,13 +928,13 @@ const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: nu
             isDone: false,
             value,
           } as { isDone: false; value: undefined } | { isDone: true; value: number },
-          children: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
+          childrenTasks: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
         }
       },
-      onRunAndChildrenComplete: {
-        id: 'onPollingRunAndChildrenComplete',
+      finalizeTask: {
+        id: 'pollingFinalize',
         timeoutMs: 1000,
-        run: (ctx, { input, output, childrenOutputs }) => {
+        run: (ctx, { input, output, childrenTasksOutputs }) => {
           if (output.isDone) {
             return {
               count: input.prevCount + 1,
@@ -964,7 +942,7 @@ const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: nu
             }
           }
 
-          return childrenOutputs[0]!.output as {
+          return childrenTasksOutputs[0]!.output as {
             count: number
             value: number
           }
@@ -1003,13 +981,13 @@ run function completes.
 ```mermaid
 flowchart TD
   A[Run function completed]-->B{Did task return children?}
-  B-->|Yes| C[status=waiting_for_children]
-  C-->|One or more children failed| D[status=children_failed]
-  C-->|All children completed| E{Does task have onRunAndChildrenComplete?}
-  E-->|Yes| F[status=waiting_for_on_run_and_children_complete]
+  B-->|Yes| C[status=waiting_for_children_tasks]
+  C-->|One or more children failed| D[status=children_tasks_failed]
+  C-->|All children completed| E{Does task have finalizeTask?}
+  E-->|Yes| F[status=waiting_for_finalize_task]
   E-->|No| G[status=completed]
-  F-->|onRunAndChildrenComplete failed| H[status=on_run_and_children_complete_failed]
-  F-->|onRunAndChildrenComplete completed| G
+  F-->|finalizeTask failed| H[status=finalize_task_failed]
+  F-->|finalizeTask completed| G
   B-->|No| E
   D-->|close| Z[isClosed=true]
   G-->|close| Z
@@ -1021,8 +999,8 @@ A task is considered finished when it's in one of the following states:
 - completed
 - failed
 - timed_out
-- children_failed
-- on_run_and_children_complete_failed
+- children_tasks_failed
+- finalize_task_failed
 - cancelled
 
 If a task is in any other state, it can be cancelled. The task will be marked as cancelled and
@@ -1034,18 +1012,17 @@ the steps that happen during the closure process:
 #### If the task completed successfully
 
 - If the task has a parent task, and all other siblings of the current task have also completed,
-  the parent task is marked as completed if it doesn't have a onRunAndChildrenComplete task. If
-  the parent task has a onRunAndChildrenComplete task, the parent task is marked as
-  waiting_for_on_run_and_children_complete and the onRunAndChildrenComplete task is enqueued
-- If the task was a onRunAndChildrenComplete task, the parent task is marked as completed
+  the parent task is marked as completed if it doesn't have a finalizeTask task. If the parent task
+  has a `finalizeTask` task, the parent task is marked as `waiting_for_finalize_task` and the
+  `finalizeTask` task is enqueued
+- If the task was a `finalizeTask` task, the parent task is marked as completed
 
 #### If the task failed for any reason
 
 - If the task has a parent task and the parent task is still waiting for children to complete, the
   parent task is marked as failed. If the parent task has already failed, nothing happens
 - If the task has children, all of children which haven't finished are cancelled
-- If the task was a onRunAndChildrenComplete task, the parent task is marked as
-  on_run_and_children_complete_failed
+- If the task was a `finalizeTask` task, the parent task is marked as `finalize_task_failed`
 
 ### Cancellation
 

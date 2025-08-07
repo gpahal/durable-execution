@@ -232,8 +232,10 @@ describe('simpleTask', () => {
     let executed = 0
     const task = executor.task({
       id: 'test',
+      retryOptions: {
+        maxAttempts: 1,
+      },
       timeoutMs: 1000,
-      maxRetryAttempts: 1,
       run: async (ctx) => {
         executed++
         if (ctx.attempt === 0) {
@@ -262,8 +264,10 @@ describe('simpleTask', () => {
     let executed = 0
     const task = executor.task({
       id: 'test',
+      retryOptions: {
+        maxAttempts: 1,
+      },
       timeoutMs: 1000,
-      maxRetryAttempts: 1,
       run: (ctx) => {
         executed++
         throw new Error(`Test error ${ctx.attempt}`)
@@ -293,8 +297,10 @@ describe('simpleTask', () => {
     let executed = 0
     const task = executor.task({
       id: 'test',
+      retryOptions: {
+        maxAttempts: 1,
+      },
       timeoutMs: 1000,
-      maxRetryAttempts: 1,
       run: () => {
         executed++
         throw new DurableTaskError('Test error', false)
@@ -350,22 +356,26 @@ describe('simpleTask', () => {
     )
   })
 
-  it('should complete with dynamic timeout and retry', async () => {
+  it('should complete with enqueue timeout', async () => {
     let executed = 0
     const task = executor.task({
       id: 'test',
-      timeoutMs: (attempt) => 25 + attempt * 75,
-      maxRetryAttempts: 1,
+      retryOptions: {
+        maxAttempts: 1,
+      },
+      timeoutMs: 10,
       run: async () => {
         executed++
         await sleep(50)
       },
     })
 
-    const handle = await executor.enqueueTask(task, undefined)
+    const handle = await executor.enqueueTask(task, undefined, {
+      timeoutMs: 1000,
+    })
 
     const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
-    expect(executed).toBe(2)
+    expect(executed).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('test')
@@ -377,67 +387,16 @@ describe('simpleTask', () => {
     )
   })
 
-  it('should timeout with dynamic timeout', async () => {
-    let executed = 0
-    const task = executor.task({
-      id: 'test',
-      timeoutMs: (attempt) => (attempt + 1) * 10,
-      maxRetryAttempts: 1,
-      run: async () => {
-        executed++
-        await sleep(100)
-      },
-    })
-
-    const handle = await executor.enqueueTask(task, undefined)
-
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
-    expect(executed).toBe(2)
-    expect(finishedExecution.status).toBe('timed_out')
-    assert(finishedExecution.status === 'timed_out')
-    expect(finishedExecution.taskId).toBe('test')
-    expect(finishedExecution.executionId).toMatch(/^te_/)
-    expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task timed out')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskTimedOutError')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
-    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
-      finishedExecution.startedAt.getTime(),
-    )
-  })
-
-  it('should fail with invalid timeout', async () => {
-    let executed = 0
-    const task = executor.task({
-      id: 'test',
-      timeoutMs: -1,
-      run: async () => {
-        executed++
-        await sleep(100)
-      },
-    })
-
-    const handle = await executor.enqueueTask(task, undefined)
-
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
-    expect(executed).toBe(0)
-    expect(finishedExecution.status).toBe('failed')
-    assert(finishedExecution.status === 'failed')
-    expect(finishedExecution.taskId).toBe('test')
-    expect(finishedExecution.executionId).toMatch(/^te_/)
-    expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain(
-      'Invalid timeout value for task test on attempt 0',
-    )
-    expect(finishedExecution.error?.tag).toBe('DurableTaskError')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
-    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
-      finishedExecution.startedAt.getTime(),
-    )
+  it('should handle invalid timeout', () => {
+    expect(() =>
+      executor.task({
+        id: 'test',
+        timeoutMs: -1,
+        run: async () => {
+          await sleep(100)
+        },
+      }),
+    ).toThrow('Invalid timeout value for task test')
   })
 
   it('should cancel immediately', async () => {
@@ -570,8 +529,10 @@ describe('simpleTask', () => {
     const contexts: Array<DurableTaskRunContext> = []
     const task = executor.task({
       id: 'test',
+      retryOptions: {
+        maxAttempts: 1,
+      },
       timeoutMs: 1000,
-      maxRetryAttempts: 1,
       run: async (ctx) => {
         executed++
         await sleep(0)
@@ -604,14 +565,16 @@ describe('simpleTask', () => {
     expect(contexts[1]!.prevError?.message).toBe('Test error')
   })
 
-  it('should apply sleepMsBeforeAttempt', async () => {
+  it('should apply sleepMsBeforeRun', async () => {
     let executed = 0
     const startTimes: Array<number> = []
     const task = executor.task({
       id: 'test',
+      retryOptions: {
+        maxAttempts: 1,
+      },
       timeoutMs: 1000,
-      maxRetryAttempts: 1,
-      sleepMsBeforeAttempt: 250,
+      sleepMsBeforeRun: 250,
       run: async () => {
         executed++
         await sleep(0)
@@ -633,61 +596,27 @@ describe('simpleTask', () => {
     expect(finishedExecution.error?.tag).toBe('DurableTaskError')
     expect(finishedExecution.error?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.startedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.createdAt.getTime() + 250,
+    )
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
       finishedExecution.startedAt.getTime(),
     )
     expect(startTimes.length).toBe(2)
-    expect(startTimes[1]! - startTimes[0]!).toBeGreaterThanOrEqual(250)
+    expect(startTimes[1]! - startTimes[0]!).toBeLessThan(250)
   })
 
-  it('should apply dynamic sleepMsBeforeAttempt before failed attempt', async () => {
+  it('should apply negative sleepMsBeforeRun', async () => {
     let executed = 0
     const startTimes: Array<number> = []
     const task = executor.task({
       id: 'test',
-      timeoutMs: 1000,
-      maxRetryAttempts: 2,
-      sleepMsBeforeAttempt: (attempt) => attempt * 250,
-      run: async () => {
-        executed++
-        await sleep(0)
-        startTimes.push(Date.now())
-        throw new Error('Test error')
+      retryOptions: {
+        maxAttempts: 1,
       },
-    })
-
-    const handle = await executor.enqueueTask(task, undefined)
-
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
-    expect(executed).toBe(3)
-    expect(finishedExecution.status).toBe('failed')
-    assert(finishedExecution.status === 'failed')
-    expect(finishedExecution.taskId).toBe('test')
-    expect(finishedExecution.executionId).toMatch(/^te_/)
-    expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskError')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
-    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
-      finishedExecution.startedAt.getTime(),
-    )
-    expect(startTimes.length).toBe(3)
-    expect(startTimes[1]! - startTimes[0]!).toBeGreaterThanOrEqual(250)
-    expect(startTimes[1]! - startTimes[0]!).toBeLessThan(500)
-    expect(startTimes[2]! - startTimes[1]!).toBeGreaterThanOrEqual(500)
-  })
-
-  it('should apply negative sleepMsBeforeAttempt', async () => {
-    let executed = 0
-    const startTimes: Array<number> = []
-    const task = executor.task({
-      id: 'test',
       timeoutMs: 1000,
-      maxRetryAttempts: 1,
-      sleepMsBeforeAttempt: -100,
+      sleepMsBeforeRun: -100,
       run: async () => {
         executed++
         await sleep(0)
@@ -723,8 +652,10 @@ describe('simpleTask', () => {
     const startTimes: Array<number> = []
     const task = executor.task({
       id: 'test',
+      retryOptions: {
+        maxAttempts: 1,
+      },
       timeoutMs: 1000,
-      maxRetryAttempts: 1,
       run: async () => {
         executed++
         await sleep(0)
@@ -755,65 +686,35 @@ describe('simpleTask', () => {
     expect(startTimes[1]! - startTimes[0]!).toBeLessThan(250)
   })
 
-  it('should handle negative maxRetryAttempts', async () => {
-    let executed = 0
-    const task = executor.task({
-      id: 'test',
-      timeoutMs: 1000,
-      maxRetryAttempts: -5,
-      run: () => {
-        executed++
-        throw new Error('Test error')
-      },
-    })
-
-    const handle = await executor.enqueueTask(task, undefined)
-
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
-    expect(executed).toBe(1)
-    expect(finishedExecution.status).toBe('failed')
-    assert(finishedExecution.status === 'failed')
-    expect(finishedExecution.taskId).toBe('test')
-    expect(finishedExecution.executionId).toMatch(/^te_/)
-    expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskError')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
-    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
-      finishedExecution.startedAt.getTime(),
-    )
+  it('should handle negative retryOptions.maxAttempts', () => {
+    expect(() =>
+      executor.task({
+        id: 'test',
+        retryOptions: {
+          maxAttempts: -5,
+        },
+        timeoutMs: 1000,
+        run: () => {
+          return 'test'
+        },
+      }),
+    ).toThrow('Invalid retry options for task test')
   })
 
-  it('should handle undefined maxRetryAttempts', async () => {
-    let executed = 0
-    const task = executor.task({
-      id: 'test',
-      timeoutMs: 1000,
-      run: () => {
-        executed++
-        throw new Error('Test error')
-      },
-    })
-
-    const handle = await executor.enqueueTask(task, undefined)
-
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
-    expect(executed).toBe(1)
-    expect(finishedExecution.status).toBe('failed')
-    assert(finishedExecution.status === 'failed')
-    expect(finishedExecution.taskId).toBe('test')
-    expect(finishedExecution.executionId).toMatch(/^te_/)
-    expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.tag).toBe('DurableTaskError')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
-    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
-      finishedExecution.startedAt.getTime(),
-    )
+  it('should handle undefined retryOptions.maxAttempts', () => {
+    expect(() =>
+      executor.task({
+        id: 'test',
+        retryOptions: {
+          // @ts-expect-error - Testing invalid input
+          maxAttempts: undefined,
+        },
+        timeoutMs: 1000,
+        run: () => {
+          return 'test'
+        },
+      }),
+    ).toThrow('Invalid retry options for task test')
   })
 
   it('should respect shutdown signal within task', async () => {
