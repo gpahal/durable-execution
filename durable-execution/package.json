@@ -1,6 +1,6 @@
 {
   "name": "durable-execution",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "A durable task engine for running tasks durably and resiliently",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
