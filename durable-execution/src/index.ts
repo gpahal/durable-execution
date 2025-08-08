@@ -5,7 +5,6 @@ import { sleep } from '@gpahal/std/promises'
 
 import { createCancellablePromise, createCancelSignal, type CancelSignal } from './cancel'
 import {
-  convertDurableExecutionErrorStorageObjectToError,
   convertDurableExecutionErrorToStorageObject,
   DurableExecutionCancelledError,
   DurableExecutionError,
@@ -1404,9 +1403,7 @@ export class DurableExecutor {
       cancelSignal,
       shutdownSignal: this.shutdownSignal,
       attempt: execution.retryAttempts,
-      prevError: execution.error
-        ? convertDurableExecutionErrorStorageObjectToError(execution.error)
-        : undefined,
+      prevError: execution.error,
     }
 
     // Make sure the execution is in running state to not do any wasteful work. This can happen in

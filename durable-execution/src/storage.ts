@@ -1,5 +1,4 @@
 import {
-  convertDurableExecutionErrorStorageObjectToError,
   convertDurableExecutionErrorToStorageObject,
   DurableExecutionError,
   type DurableExecutionErrorStorageObject,
@@ -414,7 +413,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
         index: childError.index,
         taskId: childError.taskId,
         executionId: childError.executionId,
-        error: convertDurableExecutionErrorStorageObjectToError(childError.error),
+        error: childError.error,
       }))
     : undefined
   const finalizeTask = execution.finalizeTask
@@ -424,11 +423,7 @@ export function convertTaskExecutionStorageObjectToTaskExecution<TOutput>(
       }
     : undefined
   const finalizeTaskError = execution.finalizeTaskError
-    ? convertDurableExecutionErrorStorageObjectToError(execution.finalizeTaskError)
-    : undefined
   const error = execution.error
-    ? convertDurableExecutionErrorStorageObjectToError(execution.error)
-    : undefined
 
   switch (execution.status) {
     case 'ready': {

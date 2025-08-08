@@ -1,10 +1,5 @@
 import type { CancelSignal } from './cancel'
-import type {
-  DurableExecutionCancelledError,
-  DurableExecutionError,
-  DurableExecutionErrorStorageObject,
-  DurableExecutionTimedOutError,
-} from './errors'
+import type { DurableExecutionError, DurableExecutionErrorStorageObject } from './errors'
 
 /**
  * A durable task that can be run using a durable executor. See the
@@ -373,7 +368,7 @@ export type DurableTaskRunContext = {
   /**
    * The error of the previous attempt.
    */
-  prevError?: DurableExecutionError
+  prevError?: DurableExecutionErrorStorageObject
 }
 
 /**
@@ -432,7 +427,7 @@ export type DurableTaskReadyExecution = {
   sleepMsBeforeRun: number
   timeoutMs: number
   runInput: unknown
-  error?: DurableExecutionError
+  error?: DurableExecutionErrorStorageObject
   status: 'ready'
   retryAttempts: number
   createdAt: Date
@@ -457,7 +452,7 @@ export type DurableTaskRunningExecution = Omit<DurableTaskReadyExecution, 'statu
  */
 export type DurableTaskFailedExecution = Omit<DurableTaskRunningExecution, 'status' | 'error'> & {
   status: 'failed'
-  error: DurableExecutionError
+  error: DurableExecutionErrorStorageObject
   finishedAt: Date
 }
 
@@ -468,7 +463,7 @@ export type DurableTaskFailedExecution = Omit<DurableTaskRunningExecution, 'stat
  */
 export type DurableTaskTimedOutExecution = Omit<DurableTaskRunningExecution, 'status' | 'error'> & {
   status: 'timed_out'
-  error: DurableExecutionTimedOutError
+  error: DurableExecutionErrorStorageObject
   finishedAt: Date
 }
 
@@ -497,7 +492,7 @@ export type DurableTaskChildrenTasksFailedExecution = Omit<
   'status'
 > & {
   status: 'children_tasks_failed'
-  childrenTasksErrors: Array<DurableChildTaskExecutionError>
+  childrenTasksErrors: Array<DurableChildTaskExecutionErrorStorageObject>
   finishedAt: Date
 }
 
@@ -525,7 +520,7 @@ export type DurableTaskFinalizeTaskFailedExecution = Omit<
   'status'
 > & {
   status: 'finalize_task_failed'
-  finalizeTaskError: DurableExecutionError
+  finalizeTaskError: DurableExecutionErrorStorageObject
   finishedAt: Date
 }
 
@@ -559,7 +554,7 @@ export type DurableTaskCancelledExecution = Omit<
   'status' | 'error'
 > & {
   status: 'cancelled'
-  error: DurableExecutionCancelledError
+  error: DurableExecutionErrorStorageObject
   /**
    * The output of the task. This is only present for tasks whose run method completed
    * successfully.

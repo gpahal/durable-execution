@@ -82,26 +82,12 @@ export type DurableExecutionErrorStorageObject = {
   isRetryable: boolean
 }
 
-export function convertDurableExecutionErrorStorageObjectToError(
-  error: DurableExecutionErrorStorageObject,
-): DurableExecutionError {
-  if (error.errorType === 'timed_out') {
-    return new DurableExecutionTimedOutError(error.message, error.isRetryable)
-  }
-  if (error.errorType === 'cancelled') {
-    return new DurableExecutionCancelledError(error.message)
-  }
-  return new DurableExecutionError(error.message, error.isRetryable)
-}
-
 export function convertDurableExecutionErrorToStorageObject(
   error: DurableExecutionError,
 ): DurableExecutionErrorStorageObject {
-  if (error instanceof DurableExecutionTimedOutError) {
-    return { errorType: 'timed_out', message: error.message, isRetryable: error.isRetryable }
+  return {
+    errorType: error.getErrorType(),
+    message: error.message,
+    isRetryable: error.isRetryable,
   }
-  if (error instanceof DurableExecutionCancelledError) {
-    return { errorType: 'cancelled', message: error.message, isRetryable: false }
-  }
-  return { errorType: 'generic', message: error.message, isRetryable: error.isRetryable }
 }
