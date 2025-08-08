@@ -35,7 +35,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(taskA, { name: 'world' })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('a')
@@ -61,7 +61,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(taskA, { name: 'world' })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('a')
@@ -93,7 +93,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(taskA, { name: 'world' })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('a')
@@ -118,7 +118,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(taskA, { name: 'world' })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('a')
@@ -156,7 +156,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(taskA, { name: 'world' })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('a')
@@ -185,9 +185,9 @@ describe('examples', () => {
       },
     })
 
-    const handle = await executor.enqueueTask(taskA, undefined)
+    const handle = await executor.enqueueTask(taskA)
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('a')
@@ -242,7 +242,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(parentTask, { name: 'world' })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('parent')
@@ -311,7 +311,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(parentTask, { name: 'world' })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('parent')
@@ -365,7 +365,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(task, { name: 'world' })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toContain('st_')
@@ -455,7 +455,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(taskA, { name: 'world' })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('a')
@@ -563,7 +563,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(task, { name: 'world' })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toContain('st_')
@@ -708,7 +708,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(rootTask, { name: 'world' })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('root')
@@ -760,7 +760,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(recursiveTask, { index: 0 })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('recursive')
@@ -824,7 +824,7 @@ describe('examples', () => {
 
     const handle = await executor.enqueueTask(pollingTask, { prevCount: 0 })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('polling')

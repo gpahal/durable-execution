@@ -669,22 +669,12 @@ export function getDurableTaskExecutionStorageObjectParentError(
 }
 
 /**
- * Create a durable storage that stores the task executions in memory. This is useful for testing
- * and for simple use cases. Do not use this for production. It is not durable or resilient.
+ * A durable storage that stores the task executions in memory. This is useful for testing and for
+ * simple use cases. Do not use this for production. It is not durable or resilient.
  *
  * @category Storage
  */
-export function createInMemoryStorage({
-  enableDebug = false,
-}: { enableDebug?: boolean } = {}): DurableStorage & {
-  save: (saveFn: (s: string) => Promise<void>) => Promise<void>
-  load: (loadFn: () => Promise<string>) => Promise<void>
-  logAllTaskExecutions: () => void
-} {
-  return new InMemoryStorage({ enableDebug })
-}
-
-class InMemoryStorage implements DurableStorage {
+export class InMemoryStorage implements DurableStorage {
   private logger: Logger
   private taskExecutions: Map<string, DurableTaskExecutionStorageObject>
   private transactionMutex: TransactionMutex
@@ -741,7 +731,7 @@ class InMemoryStorage implements DurableStorage {
   }
 }
 
-class InMemoryStorageTx implements DurableStorageTx {
+export class InMemoryStorageTx implements DurableStorageTx {
   private logger: Logger
   readonly taskExecutions: Map<string, DurableTaskExecutionStorageObject>
 

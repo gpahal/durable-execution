@@ -54,18 +54,18 @@ describe('executor', () => {
     } as const
     const task = executor.task(taskOptions)
 
-    const handle = await executor.enqueueTask(task, undefined)
-    let execution = await handle.getTaskExecution()
+    const handle = await executor.enqueueTask(task)
+    let execution = await handle.getExecution()
     expect(['ready', 'running']).toContain(execution.status)
 
     await sleep(250)
 
-    execution = await handle.getTaskExecution()
+    execution = await handle.getExecution()
     expect(execution.status).toBe('running')
     expect(executed).toBe(1)
     await executor.shutdown()
 
-    execution = await handle.getTaskExecution()
+    execution = await handle.getExecution()
     expect(executed).toBe(1)
     expect(execution.status).toBe('completed')
     expect(execution.status).toBe('completed')
@@ -95,7 +95,7 @@ describe('executor', () => {
     })
     void executor.start()
 
-    await expect(executor.enqueueTask(task, undefined)).rejects.toThrow('Task test not found')
+    await expect(executor.enqueueTask(task)).rejects.toThrow('Task test not found')
   })
 
   it('should handle duplicate task ids', () => {
@@ -136,9 +136,7 @@ describe('executor', () => {
         },
       })
 
-      await expect(executor.enqueueTask(task, undefined)).rejects.toThrow(
-        'Mocked withTransaction error',
-      )
+      await expect(executor.enqueueTask(task)).rejects.toThrow('Mocked withTransaction error')
       expect(executed).toBeGreaterThanOrEqual(2)
     } finally {
       storage.withTransaction = originalWithTransaction
@@ -163,9 +161,7 @@ describe('executor', () => {
         },
       })
 
-      await expect(executor.enqueueTask(task, undefined)).rejects.toThrow(
-        'Mocked withTransaction error',
-      )
+      await expect(executor.enqueueTask(task)).rejects.toThrow('Mocked withTransaction error')
       expect(executed).toBe(1)
     } finally {
       storage.withTransaction = originalWithTransaction

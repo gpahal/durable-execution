@@ -8,6 +8,7 @@ import {
   convertDurableExecutionErrorToStorageObject,
   DurableExecutionCancelledError,
   DurableExecutionError,
+  DurableExecutionNotFoundError,
   DurableExecutionTimedOutError,
 } from './errors'
 import { createConsoleLogger, createLoggerDebugDisabled, type Logger } from './logger'
@@ -30,10 +31,12 @@ import {
   type DurableParentTaskOptions,
   type DurableTask,
   type DurableTaskEnqueueOptions,
+  type DurableTaskExecutionHandle,
   type DurableTaskFinishedExecution,
-  type DurableTaskHandle,
   type DurableTaskOptions,
   type DurableTaskRunContext,
+  type InferDurableTaskInput,
+  type InferDurableTaskOutput,
 } from './task'
 import { DurableTaskInternal, generateTaskExecutionId } from './task-internal'
 import { generateId, sleepWithJitter, summarizeStandardSchemaIssues } from './utils'
@@ -46,6 +49,7 @@ export {
 } from './cancel'
 export {
   DurableExecutionError,
+  DurableExecutionNotFoundError,
   DurableExecutionTimedOutError,
   DurableExecutionCancelledError,
   type DurableExecutionErrorStorageObject,
@@ -53,6 +57,8 @@ export {
 export { type Logger, createConsoleLogger } from './logger'
 export type {
   DurableTask,
+  InferDurableTaskInput,
+  InferDurableTaskOutput,
   DurableTaskCommonOptions,
   DurableTaskRetryOptions,
   DurableTaskOptions,
@@ -79,18 +85,19 @@ export type {
   DurableChildTaskExecutionErrorStorageObject,
   DurableTaskExecutionStatusStorageObject,
   DurableTaskEnqueueOptions,
-  DurableTaskHandle,
+  DurableTaskExecutionHandle,
 } from './task'
 export { type Serializer, createSuperjsonSerializer, WrappedSerializer } from './serializer'
 export {
-  createInMemoryStorage,
-  createTransactionMutex,
-  type TransactionMutex,
   type DurableStorage,
   type DurableStorageTx,
   type DurableTaskExecutionStorageObject,
   type DurableTaskExecutionStorageWhere,
   type DurableTaskExecutionStorageObjectUpdate,
+  type TransactionMutex,
+  createTransactionMutex,
+  InMemoryStorage,
+  InMemoryStorageTx,
 } from './storage'
 
 /**
@@ -373,7 +380,7 @@ export class DurableExecutor {
    *   task options.
    * @returns The durable task.
    */
-  task<TInput = unknown, TOutput = unknown>(
+  task<TInput = undefined, TOutput = unknown>(
     taskOptions: DurableTaskOptions<TInput, TOutput>,
   ): DurableTask<TInput, TOutput> {
     this.throwIfShutdown()
@@ -397,7 +404,7 @@ export class DurableExecutor {
    * @returns The durable parent task.
    */
   parentTask<
-    TInput = unknown,
+    TInput = undefined,
     TRunOutput = unknown,
     TOutput = {
       output: TRunOutput
@@ -592,7 +599,7 @@ export class DurableExecutor {
    */
   sequentialTasks<T extends ReadonlyArray<DurableTask<unknown, unknown>>>(
     ...tasks: SequentialDurableTasks<T>
-  ): DurableTask<ExtractDurableTaskInput<T[0]>, ExtractDurableTaskOutput<LastElement<T>>> {
+  ): DurableTask<InferDurableTaskInput<T[0]>, InferDurableTaskOutput<LastDurableTaskElement<T>>> {
     if (tasks.length === 0) {
       throw new DurableExecutionError('No tasks provided', false)
     }
@@ -628,8 +635,8 @@ export class DurableExecutor {
           id: `${taskId}_finalize_2`,
           timeoutMs: 1000,
           run: (_, { childrenTasksOutputs }) => {
-            const secondTaskOutput = childrenTasksOutputs[0]!.output as ExtractDurableTaskOutput<
-              LastElement<T>
+            const secondTaskOutput = childrenTasksOutputs[0]!.output as InferDurableTaskOutput<
+              LastDurableTaskElement<T>
             >
             return secondTaskOutput
           },
@@ -641,22 +648,23 @@ export class DurableExecutor {
   /**
    * Enqueue a task for execution.
    *
-   * @param task - The task to enqueue.
-   * @param input - The input to the task.
+   * @param rest - The task to enqueue, input, and options.
    * @returns A handle to the task execution.
    */
   async enqueueTask<TTask extends DurableTask<unknown, unknown>>(
-    task: TTask,
-    input: ExtractDurableTaskInput<TTask>,
-    options: DurableTaskEnqueueOptions = {},
-  ): Promise<DurableTaskHandle<ExtractDurableTaskOutput<TTask>>> {
+    ...rest: undefined extends InferDurableTaskInput<TTask>
+      ? [task: TTask, input?: InferDurableTaskInput<TTask>, options?: DurableTaskEnqueueOptions]
+      : [task: TTask, input: InferDurableTaskInput<TTask>, options?: DurableTaskEnqueueOptions]
+  ): Promise<DurableTaskExecutionHandle<InferDurableTaskOutput<TTask>>> {
     this.throwIfShutdown()
 
+    const task = rest[0]
+    const input = rest.length > 1 ? rest[1]! : undefined
+    const options = rest.length > 2 ? rest[2]! : undefined
     const taskInternal = this.taskInternalsMap.get(task.id)
     if (!taskInternal) {
-      throw new DurableExecutionError(
+      throw new DurableExecutionNotFoundError(
         `Task ${task.id} not found. Use DurableExecutor.task() to add it before enqueuing it.`,
-        false,
       )
     }
 
@@ -691,15 +699,14 @@ export class DurableExecutor {
    * @param executionId - The id of the execution to get the handle for.
    * @returns The handle to the task execution.
    */
-  async getTaskHandle<TInput = unknown, TOutput = unknown>(
-    task: DurableTask<TInput, TOutput>,
+  async getTaskHandle<TTask extends DurableTask<unknown, unknown>>(
+    task: TTask,
     executionId: string,
-  ): Promise<DurableTaskHandle<TOutput>> {
+  ): Promise<DurableTaskExecutionHandle<InferDurableTaskOutput<TTask>>> {
     const taskInternal = this.taskInternalsMap.get(task.id)
     if (!taskInternal) {
-      throw new DurableExecutionError(
+      throw new DurableExecutionNotFoundError(
         `Task ${task.id} not found. Use DurableExecutor.task() to add it before enqueuing it.`,
-        false,
       )
     }
 
@@ -711,7 +718,7 @@ export class DurableExecutor {
       return executions.length === 0 ? undefined : executions[0]
     })
     if (!execution) {
-      throw new DurableExecutionError(`Execution ${executionId} not found`, false)
+      throw new DurableExecutionNotFoundError(`Execution ${executionId} not found`)
     }
 
     return this.getTaskHandleInternal(task.id, executionId)
@@ -720,11 +727,11 @@ export class DurableExecutor {
   private getTaskHandleInternal<TOutput>(
     taskId: string,
     executionId: string,
-  ): DurableTaskHandle<TOutput> {
+  ): DurableTaskExecutionHandle<TOutput> {
     return {
       getTaskId: () => taskId,
-      getTaskExecutionId: () => executionId,
-      getTaskExecution: async () => {
+      getExecutionId: () => executionId,
+      getExecution: async () => {
         const execution = await this.withTransaction(async (tx) => {
           const executions = await tx.getTaskExecutions({
             type: 'by_execution_ids',
@@ -733,11 +740,11 @@ export class DurableExecutor {
           return executions.length === 0 ? undefined : executions[0]
         })
         if (!execution) {
-          throw new DurableExecutionError(`Execution ${executionId} not found`, false)
+          throw new DurableExecutionNotFoundError(`Execution ${executionId} not found`)
         }
         return convertTaskExecutionStorageObjectToTaskExecution(execution, this.serializer)
       },
-      waitAndGetTaskFinishedExecution: async ({
+      waitAndGetFinishedExecution: async ({
         signal,
         pollingIntervalMs,
       }: {
@@ -775,7 +782,7 @@ export class DurableExecutor {
             return executions.length === 0 ? undefined : executions[0]
           })
           if (!execution) {
-            throw new DurableExecutionError(`Execution ${executionId} not found`, false)
+            throw new DurableExecutionNotFoundError(`Execution ${executionId} not found`)
           }
 
           if (FINISHED_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS.includes(execution.status)) {
@@ -1019,10 +1026,10 @@ export class DurableExecutor {
             parentTaskInternal.finalizeTask.id,
           )
           if (!finalizeTaskTaskInternal) {
-            throw new DurableExecutionError(
+            this.logger.error(
               `Parent finalize task ${parentTaskInternal.finalizeTask.id} not found`,
-              false,
             )
+            return
           }
 
           const finalizeTaskInput = {
@@ -1302,7 +1309,7 @@ export class DurableExecutor {
             },
             {
               error: convertDurableExecutionErrorToStorageObject(
-                new DurableExecutionError('Task not found', false),
+                new DurableExecutionNotFoundError('Task not found'),
               ),
               status: 'failed',
               finishedAt: now,
@@ -1438,9 +1445,8 @@ export class DurableExecutor {
         if (taskInternal.finalizeTask) {
           const finalizeTaskTaskInternal = this.taskInternalsMap.get(taskInternal.finalizeTask.id)
           if (!finalizeTaskTaskInternal) {
-            throw new DurableExecutionError(
+            throw new DurableExecutionNotFoundError(
               `Finalize task ${taskInternal.finalizeTask.id} not found`,
-              false,
             )
           }
 
@@ -1528,7 +1534,7 @@ export class DurableExecutor {
         for (const child of childrenTasks) {
           const childTaskInternal = this.taskInternalsMap.get(child.task.id)
           if (!childTaskInternal) {
-            throw new DurableExecutionError(`Child task ${child.task.id} not found`, false)
+            throw new DurableExecutionNotFoundError(`Child task ${child.task.id} not found`)
           }
 
           const runInput = await childTaskInternal.validateInput(child.input)
@@ -1653,12 +1659,8 @@ export class DurableExecutor {
   }
 }
 
-type LastElement<T extends ReadonlyArray<unknown>> = T extends readonly [...Array<unknown>, infer L]
-  ? L
-  : never
-
-type ExtractDurableTaskInput<T> = T extends DurableTask<infer I, unknown> ? I : never
-type ExtractDurableTaskOutput<T> = T extends DurableTask<unknown, infer O> ? O : never
+type LastDurableTaskElement<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
+  T extends readonly [...Array<DurableTask<unknown, unknown>>, infer L] ? L : never
 
 /**
  * The type of a sequence of tasks. Disallows empty sequences and sequences with tasks that have

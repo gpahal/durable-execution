@@ -1,13 +1,13 @@
 {
   "name": "durable-execution-storage-drizzle",
-  "version": "0.9.0",
+  "version": "0.12.0",
   "description": "Drizzle ORM storage implementation for durable-execution",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gpahal/durable-execution.git",
-    "directory": "storage-drizzle"
+    "directory": "durable-execution-storage-drizzle"
   },
   "homepage": "https://gpahal.github.io/durable-execution",
   "bugs": {
@@ -52,8 +52,8 @@
     "lint-fix": "eslint . --fix"
   },
   "peerDependencies": {
-    "drizzle-orm": "^0.44.4",
-    "durable-execution": "^0.11.0"
+    "drizzle-orm": "catalog:dev",
+    "durable-execution": "workspace:*"
   },
   "devDependencies": {
     "@gpahal/std": "catalog:prod",

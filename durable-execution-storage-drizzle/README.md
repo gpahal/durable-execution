@@ -8,8 +8,16 @@ using [Drizzle ORM](https://orm.drizzle.team/).
 
 ## Installation
 
+- npm
+
 ```bash
 npm install durable-execution durable-execution-storage-drizzle drizzle-orm
+```
+
+- pnpm
+
+```bash
+pnpm add durable-execution durable-execution-storage-drizzle drizzle-orm
 ```
 
 ## Features
@@ -161,6 +169,11 @@ await executor.shutdown()
 
 Make sure the table is discoverable by Drizzle ORM. You can do this by exporting the table from
 your schema file. Once that is done, you can use Drizzle Kit to create the table in your database.
+
+## Links
+
+- Durable Execution docs: <https://gpahal.github.io/durable-execution>
+- Repository: <https://github.com/gpahal/durable-execution>
 
 ## License
 

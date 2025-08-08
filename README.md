@@ -12,8 +12,10 @@ The main package is [durable-execution](durable-execution). The documentation is
 
 ## Other packages
 
-- [storage-drizzle](storage-drizzle): A storage implementation for durable-execution using Drizzle
-  ORM
+- [durable-execution-orpc-utils](durable-execution-orpc-utils): oRPC utilities for durable
+  execution to create a separate server process for durable execution.
+- [durable-execution-storage-drizzle](durable-execution-storage-drizzle): A storage implementation for
+  durable-execution using Drizzle ORM
 
 ## License
 

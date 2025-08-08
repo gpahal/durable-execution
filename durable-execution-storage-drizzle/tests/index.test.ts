@@ -13,8 +13,8 @@ import { drizzle as drizzleLibsql } from 'drizzle-orm/libsql'
 import { drizzle as drizzleMySQL } from 'drizzle-orm/mysql2'
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite'
 import {
-  createInMemoryStorage,
   DurableExecutor,
+  InMemoryStorage,
   type DurableStorage,
   type DurableTask,
 } from 'durable-execution'
@@ -200,7 +200,7 @@ async function runExecutorTest(executor: DurableExecutor) {
     concurrentTasks.map((task) => executor.enqueueTask(task, 'world')),
   )
 
-  const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+  const finishedExecution = await handle.waitAndGetFinishedExecution()
   expect(finishedExecution.status).toBe('completed')
   assert(finishedExecution.status === 'completed')
   expect(finishedExecution.taskId).toBe('root')
@@ -220,7 +220,7 @@ async function runExecutorTest(executor: DurableExecutor) {
   )
 
   const concurrentFinishedExecutions = await Promise.all(
-    concurrentHandles.map((handle) => handle.waitAndGetTaskFinishedExecution()),
+    concurrentHandles.map((handle) => handle.waitAndGetFinishedExecution()),
   )
   for (const [i, execution] of concurrentFinishedExecutions.entries()) {
     expect(execution.status).toBe('completed')
@@ -248,8 +248,8 @@ async function runExecutorTest(executor: DurableExecutor) {
     },
   })
 
-  const retryTaskHandle = await executor.enqueueTask(retryTask, undefined)
-  const retryExecution = await retryTaskHandle.waitAndGetTaskFinishedExecution()
+  const retryTaskHandle = await executor.enqueueTask(retryTask)
+  const retryExecution = await retryTaskHandle.waitAndGetFinishedExecution()
   expect(retryExecution.status).toBe('completed')
   assert(retryExecution.status === 'completed')
   expect(retryExecution.taskId).toBe('retry')
@@ -270,8 +270,8 @@ async function runExecutorTest(executor: DurableExecutor) {
     },
   })
 
-  const failingTaskHandle = await executor.enqueueTask(failingTask, undefined)
-  const failingExecution = await failingTaskHandle.waitAndGetTaskFinishedExecution()
+  const failingTaskHandle = await executor.enqueueTask(failingTask)
+  const failingExecution = await failingTaskHandle.waitAndGetFinishedExecution()
   expect(failingExecution.status).toBe('failed')
   assert(failingExecution.status === 'failed')
   expect(failingExecution.taskId).toBe('failing')
@@ -300,7 +300,7 @@ async function runExecutorTest(executor: DurableExecutor) {
     undefined,
   )
   const parentTaskWithFailingChildExecution =
-    await parentTaskWithFailingChildHandle.waitAndGetTaskFinishedExecution()
+    await parentTaskWithFailingChildHandle.waitAndGetFinishedExecution()
   expect(parentTaskWithFailingChildExecution.status).toBe('children_tasks_failed')
   assert(parentTaskWithFailingChildExecution.status === 'children_tasks_failed')
   expect(parentTaskWithFailingChildExecution.taskId).toBe('parentWithFailingChild')
@@ -335,7 +335,7 @@ async function runExecutorTest(executor: DurableExecutor) {
     undefined,
   )
   const parentTaskWithFailingFinalizeTaskExecution =
-    await parentTaskWithFailingFinalizeTaskHandle.waitAndGetTaskFinishedExecution()
+    await parentTaskWithFailingFinalizeTaskHandle.waitAndGetFinishedExecution()
   expect(parentTaskWithFailingFinalizeTaskExecution.status).toBe('finalize_task_failed')
   assert(parentTaskWithFailingFinalizeTaskExecution.status === 'finalize_task_failed')
   expect(parentTaskWithFailingFinalizeTaskExecution.taskId).toBe('parentWithFailingFinalizeTask')
@@ -366,7 +366,7 @@ export async function withTemporaryFile(filename: string, fn: (file: string) => 
 
 describe('index', () => {
   it('should complete with in memory storage', { timeout: 60_000 }, async () => {
-    const storage = createInMemoryStorage({ enableDebug: false })
+    const storage = new InMemoryStorage({ enableDebug: false })
     await runStorageTest(storage)
   })
 

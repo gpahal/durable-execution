@@ -10,6 +10,12 @@ logic failures, process failures, network connectivity issues, and other transie
 tasks logic should be idempotent as they may be executed multiple times if there is a process
 failure or if the task is retried.
 
+A durable executor can also be started as it's own separate server process. Tasks can be enqueued
+with api calls to the durable executor process. Utilities to create a typesafe implementation of
+the durable executor server are provided in the
+[durable-execution-orpc-utils](https://github.com/gpahal/durable-execution/tree/main/durable-execution-orpc-utils)
+package using the [oRPC](https://orpc.unnoq.com/) library.
+
 ## Properties of durable tasks
 
 - Tasks should be idempotent as they may be executed multiple times if there is a process failure
@@ -37,18 +43,21 @@ pnpm add durable-execution
 
 ## Usage
 
-- Create a storage implementation that implements the
-  [DurableStorage](https://gpahal.github.io/durable-execution/types/DurableStorage.html)
-  type. The implementation should support async transactions that allow running multiple
-  transactions in parallel
-  - A storage implementation using Drizzle ORM is provided in the
-    [durable-execution-storage-drizzle](https://github.com/gpahal/durable-execution/tree/main/storage-drizzle)
-    package
-  - A very simple in-memory implementation is provided in the
-    [src/storage.ts](https://github.com/gpahal/durable-execution/blob/main/durable-execution/src/storage.ts)
-    file for testing and simple use cases
+### Create a storage implementation
 
-- Create a durable executor and manage its lifecycle
+Create a storage implementation that implements the
+[DurableStorage](https://gpahal.github.io/durable-execution/types/DurableStorage.html) type. The
+implementation should support async transactions that allow running multiple
+transactions in parallel.
+
+- A storage implementation using Drizzle ORM is provided in the
+  [durable-execution-storage-drizzle](https://github.com/gpahal/durable-execution/tree/main/durable-execution-storage-drizzle)
+  package
+- A very simple in-memory implementation is provided in the
+  [src/storage.ts](https://github.com/gpahal/durable-execution/blob/main/durable-execution/src/storage.ts)
+  file for testing and simple use cases
+
+### Create a durable executor and manage its lifecycle
 
 ```ts
 import { DurableExecutor } from 'durable-execution'
@@ -69,7 +78,7 @@ await Promise.all([
 await executor.shutdown()
 ```
 
-- Use the durable executor to enqueue tasks
+### Use the durable executor to enqueue tasks
 
 ```ts
 const extractFileTitle = executor
@@ -1052,6 +1061,11 @@ On shutdown, these happen in this order:
 - Stop background processes after the current iteration
 - Wait for active task executions to finish. Task execution context contains a shutdown signal that
   can be used to gracefully shutdown the task when executor is shutting down
+
+## Links
+
+- Durable Execution docs: <https://gpahal.github.io/durable-execution>
+- Repository: <https://github.com/gpahal/durable-execution>
 
 ## License
 

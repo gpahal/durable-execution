@@ -66,9 +66,9 @@ describe('parentTask', () => {
       },
     })
 
-    const handle = await executor.enqueueTask(task, undefined)
+    const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(executed).toBe(3)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -107,9 +107,9 @@ describe('parentTask', () => {
       },
     })
 
-    const handle = await executor.enqueueTask(task, undefined)
+    const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(executed).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -177,9 +177,9 @@ describe('parentTask', () => {
       },
     })
 
-    const handle = await executor.enqueueTask(task, undefined)
+    const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(executed).toBe(4)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -216,9 +216,9 @@ describe('parentTask', () => {
       },
     })
 
-    const handle = await executor.enqueueTask(task, undefined)
+    const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(executed).toBe(2)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -285,7 +285,7 @@ describe('parentTask', () => {
       name: 'test_output',
     })
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(executed).toBe(3)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -416,9 +416,9 @@ describe('parentTask', () => {
       },
     })
 
-    const handle = await executor.enqueueTask(task, undefined)
+    const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(executed).toBe(3)
     expect(finishedExecution.status).toBe('children_tasks_failed')
     assert(finishedExecution.status === 'children_tasks_failed')
@@ -491,9 +491,9 @@ describe('parentTask', () => {
       },
     })
 
-    const handle = await executor.enqueueTask(task, undefined)
+    const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(executed).toBe(3)
     expect(finishedExecution.status).toBe('children_tasks_failed')
     assert(finishedExecution.status === 'children_tasks_failed')
@@ -573,9 +573,9 @@ describe('parentTask', () => {
       },
     })
 
-    const handle = await executor.enqueueTask(task, undefined)
+    const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(executed).toBe(4)
     expect(finishedExecution.status).toBe('finalize_task_failed')
     assert(finishedExecution.status === 'finalize_task_failed')
@@ -678,9 +678,9 @@ describe('parentTask', () => {
       },
     })
 
-    const handle = await executor.enqueueTask(task, undefined)
+    const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(executed).toBe(7)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')

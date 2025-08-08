@@ -1,0 +1,25 @@
+---
+description: Guidance for the core durable-execution package
+globs: durable-execution/**
+---
+## Core package: durable-execution
+
+- Entry point and exports: [durable-execution/src/index.ts](mdc:durable-execution/src/index.ts)
+- Key modules:
+  - `task.ts`, `task-internal.ts`: task types and execution internals
+  - `storage.ts`: storage contract; use transactions; see `createTransactionMutex`
+  - `errors.ts`, `serializer.ts`, `logger.ts`, `cancel.ts`
+- Tests live in `durable-execution/tests/**` and include crash, parent-task, and integration cases.
+
+### Development
+
+- Build: `pnpm -F durable-execution build`
+- Test: `pnpm -F durable-execution test`
+- Docs: `pnpm -F durable-execution build-docs`
+
+### Storage implementations
+
+- Follow `DurableStorage` and `DurableStorageTx` contracts from [storage.ts](mdc:durable-execution/src/storage.ts).
+- Index recommendations (see `DurableTaskExecutionStorageWhere` comments):
+  - unique index on execution_id
+  - composite indexes for status/isClosed/expiresAt and for status/startAt

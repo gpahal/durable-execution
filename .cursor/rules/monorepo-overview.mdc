@@ -1,0 +1,34 @@
+---
+alwaysApply: true
+---
+## Monorepo overview
+
+- **Packages**:
+  - `durable-execution`
+  - `durable-execution-orpc-utils`
+  - `durable-execution-storage-drizzle`
+
+- **Tooling**:
+  - Node >= 20, pnpm (see [package.json](mdc:package.json))
+  - Turborepo task orchestration ([turbo.json](mdc:turbo.json))
+  - TypeScript, tsup bundling, Vitest, ESLint, Prettier
+
+- **Workspace config**: [pnpm-workspace.yaml](mdc:pnpm-workspace.yaml)
+
+## Common scripts (run at repo root)
+
+- Build all: `pnpm build`
+- Test all: `pnpm test`
+- Coverage: `pnpm test-coverage`
+- Type-check: `pnpm type-check`
+- Lint: `pnpm lint` | Fix: `pnpm lint-fix`
+- Format: `pnpm fmt` | Check: `pnpm fmt-check`
+- Clean: `pnpm clean`
+- Docs (core pkg): `pnpm build-docs`
+
+Pre-commit hooks run type-check, lint, format check, and build (see [package.json](mdc:package.json)).
+
+## Project docs
+
+- Root README: [README.md](mdc:README.md)
+- Core package docs: `durable-execution/scripts/build-docs.ts` ([build-docs.ts](mdc:durable-execution/scripts/build-docs.ts))

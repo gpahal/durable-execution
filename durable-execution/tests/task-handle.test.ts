@@ -42,14 +42,14 @@ describe('taskHandle', () => {
       },
     })
 
-    const originalHandle = await executor.enqueueTask(task, undefined)
-    const executionId = originalHandle.getTaskExecutionId()
+    const originalHandle = await executor.enqueueTask(task)
+    const executionId = originalHandle.getExecutionId()
     const handle = await executor.getTaskHandle(task, executionId)
     expect(handle.getTaskId()).toBe('test')
-    expect(handle.getTaskExecutionId()).toBeDefined()
+    expect(handle.getExecutionId()).toBeDefined()
 
     await sleep(250)
-    const execution = await handle.getTaskExecution()
+    const execution = await handle.getExecution()
     expect(executed).toBe(1)
     expect(execution.status).toBe('running')
     assert(execution.status === 'running')
@@ -99,15 +99,15 @@ describe('taskHandle', () => {
       },
     })
 
-    const originalHandle = await executor.enqueueTask(task, undefined)
-    const executionId = originalHandle.getTaskExecutionId()
+    const originalHandle = await executor.enqueueTask(task)
+    const executionId = originalHandle.getExecutionId()
     const handle = await executor.getTaskHandle(task, executionId)
     expect(handle.getTaskId()).toBe('test')
-    expect(handle.getTaskExecutionId()).toBeDefined()
+    expect(handle.getExecutionId()).toBeDefined()
 
     const [cancelSignal, cancel] = createCancelSignal()
     cancel()
-    await expect(handle.waitAndGetTaskFinishedExecution({ signal: cancelSignal })).rejects.toThrow(
+    await expect(handle.waitAndGetFinishedExecution({ signal: cancelSignal })).rejects.toThrow(
       'Task cancelled',
     )
   })
@@ -122,16 +122,16 @@ describe('taskHandle', () => {
       },
     })
 
-    const originalHandle = await executor.enqueueTask(task, undefined)
-    const executionId = originalHandle.getTaskExecutionId()
+    const originalHandle = await executor.enqueueTask(task)
+    const executionId = originalHandle.getExecutionId()
     const handle = await executor.getTaskHandle(task, executionId)
     expect(handle.getTaskId()).toBe('test')
-    expect(handle.getTaskExecutionId()).toBeDefined()
+    expect(handle.getExecutionId()).toBeDefined()
 
     const abortController = new AbortController()
     abortController.abort()
     await expect(
-      handle.waitAndGetTaskFinishedExecution({ signal: abortController.signal }),
+      handle.waitAndGetFinishedExecution({ signal: abortController.signal }),
     ).rejects.toThrow('Task cancelled')
   })
 
@@ -145,15 +145,15 @@ describe('taskHandle', () => {
       },
     })
 
-    const originalHandle = await executor.enqueueTask(task, undefined)
-    const executionId = originalHandle.getTaskExecutionId()
+    const originalHandle = await executor.enqueueTask(task)
+    const executionId = originalHandle.getExecutionId()
     const handle = await executor.getTaskHandle(task, executionId)
     expect(handle.getTaskId()).toBe('test')
-    expect(handle.getTaskExecutionId()).toBeDefined()
+    expect(handle.getExecutionId()).toBeDefined()
 
     const cancelSignal = createTimeoutCancelSignal(10_000)
     await expect(
-      handle.waitAndGetTaskFinishedExecution({ signal: cancelSignal }),
+      handle.waitAndGetFinishedExecution({ signal: cancelSignal }),
     ).resolves.toBeDefined()
   })
 
@@ -167,14 +167,14 @@ describe('taskHandle', () => {
       },
     })
 
-    const originalHandle = await executor.enqueueTask(task, undefined)
-    const executionId = originalHandle.getTaskExecutionId()
+    const originalHandle = await executor.enqueueTask(task)
+    const executionId = originalHandle.getExecutionId()
     const handle = await executor.getTaskHandle(task, executionId)
     expect(handle.getTaskId()).toBe('test')
-    expect(handle.getTaskExecutionId()).toBeDefined()
+    expect(handle.getExecutionId()).toBeDefined()
 
     const cancelSignal = createTimeoutCancelSignal(1000)
-    await expect(handle.waitAndGetTaskFinishedExecution({ signal: cancelSignal })).rejects.toThrow(
+    await expect(handle.waitAndGetFinishedExecution({ signal: cancelSignal })).rejects.toThrow(
       'Task cancelled',
     )
   })

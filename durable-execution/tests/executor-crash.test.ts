@@ -59,7 +59,7 @@ describe('executorCrash', () => {
 
         for (const executionId of runningTaskExecutionIds) {
           const handle = await executor.getTaskHandle(task, executionId)
-          const finishedExecution = await handle.waitAndGetTaskFinishedExecution()
+          const finishedExecution = await handle.waitAndGetFinishedExecution()
           console.log('Task finished', finishedExecution)
 
           expect(executed).toBe(1)

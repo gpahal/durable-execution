@@ -2,175 +2,109 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Common Development Commands
+## Development Commands
 
-### Building and Development
+### Root Level (Turborepo orchestration)
 
-```bash
-# Build the library
-pnpm build
+- `pnpm build` - Build all packages in dependency order using Turbo
+- `pnpm test` - Run tests across all packages
+- `pnpm test-coverage` - Run tests with coverage reporting
+- `pnpm type-check` - Type check all packages
+- `pnpm lint` - Lint all packages | `pnpm lint-fix` - Auto-fix linting issues
+- `pnpm fmt` - Format code | `pnpm fmt-check` - Check formatting
+- `pnpm clean` - Clean build artifacts
+- `pnpm build-docs` - Build TypeDoc documentation for core package
+- `pnpm pre-commit` - Run type-check, lint, format-check, and build (used in git hooks)
 
-# Clean build directory
-pnpm clean
+### Package Level Commands
 
-# Build documentation
-pnpm build-docs
-```
+Each package (`durable-execution`, `durable-execution-storage-drizzle`, `durable-execution-orpc-utils`) supports:
 
-### Testing
-
-```bash
-# Run all tests
-pnpm test
-
-# Run tests with coverage
-pnpm test-coverage
-
-# Run a specific test file
-npx vitest run tests/[test-file].test.ts
-```
-
-### Code Quality
-
-```bash
-# Type checking
-pnpm type-check
-
-# Lint code
-pnpm lint
-
-# Fix linting issues
-pnpm lint-fix
-```
+- `pnpm build` - Build using tsup
+- `pnpm test` - Run Vitest tests
+- `pnpm test-coverage` - Run tests with coverage
+- `pnpm type-check` - TypeScript type checking
+- `pnpm lint` / `pnpm lint-fix` - ESLint
 
 ## Architecture Overview
 
-This is a **durable execution engine** for TypeScript that provides resilient, fault-tolerant task processing. Tasks can be simple functions or complex workflows with parent-child relationships, retries, timeouts, and graceful cancellation.
+### Monorepo Structure
 
-### Core Components
+This is a pnpm workspace with three main packages:
 
-- **`DurableExecutor`** (`src/index.ts`): Central orchestrator managing task lifecycle and background processes
-- **Task System** (`src/task.ts`, `src/task-internal.ts`): Defines and manages task execution with state machine
-- **Storage Abstraction** (`src/storage.ts`): Pluggable persistence layer with transaction support
-- **Serialization** (`src/serializer.ts`): Pluggable serialization (defaults to superjson)
-- **Error Handling** (`src/errors.ts`): Durable error system with retry classification
-- **Cancellation** (`src/cancel.ts`): Hierarchical cancellation system with timeout support
-- **Logging** (`src/logger.ts`): Simple logging interface for observability
+- **`durable-execution`** - Core durable task execution engine
+- **`durable-execution-storage-drizzle`** - Drizzle ORM storage implementations (PostgreSQL, MySQL, SQLite)
+- **`durable-execution-orpc-utils`** - oRPC integration utilities for HTTP APIs
 
-### Key Architectural Patterns
+### Core Package Architecture (`durable-execution`)
 
-#### Task State Machine
+**Key Components:**
 
-Tasks follow: `ready` → `running` → `[completed|failed|timed_out|cancelled]`
-Parent tasks additionally: `waiting_for_children_tasks` → `waiting_for_finalize_task` → `completed`
+- `DurableExecutor` (src/index.ts) - Main orchestrator managing task lifecycle and background processing
+- Task System (src/task.ts, src/task-internal.ts) - Type-safe task definitions with parent-child relationships
+- Storage Interface (src/storage.ts) - Abstract persistence layer with in-memory implementation
+- Serialization (src/serializer.ts) - Pluggable serialization (defaults to SuperJSON)
+- Error System (src/errors.ts) - Custom error hierarchy for different failure modes
+- Cancellation (src/cancel.ts) - Promise cancellation with timeout and shutdown signals
 
-#### Background Processing
+**Execution Model:**
 
-The executor runs 4 continuous background processes:
+- State machine: Ready → Running → Completed/Failed/TimedOut
+- Parent tasks spawn children that execute in parallel
+- Sequential task chains where output feeds next input
+- Optional finalize tasks for cleanup/aggregation after children complete
+- Exponential backoff retry logic with configurable options
 
-- Close finished tasks and update parents
-- Retry expired running tasks (crash recovery)
-- Cancel tasks requiring promise cancellation
-- Process ready tasks for execution
+**Key Patterns:**
 
-#### Parent-Child Task Relationships
+- All tasks are idempotent and resilient to process failures
+- Storage operations use transactions for consistency
+- Background processes handle automatic task lifecycle management
+- Standard Schema support for input validation (Zod, etc.)
+- Task IDs must be unique within an executor instance
 
-- **Parent tasks** execute `runParent()` then spawn children in parallel
-- **Children execute independently** with their own retries/timeouts
-- **Optional `finalizeTask`** combines parent + children outputs
-- **Error propagation**: child failure → parent `children_tasks_failed`, parent failure → children cancelled
+### Storage Package (`durable-execution-storage-drizzle`)
 
-### Storage Requirements
+Provides persistent storage implementations using Drizzle ORM:
 
-Implementations must support:
+- PostgreSQL adapter (src/pg.ts) with `createPgDurableStorage()`
+- MySQL adapter (src/mysql.ts) with `createMySQLDurableStorage()`
+- SQLite adapter (src/sqlite.ts) with `createSQLiteDurableStorage()`
 
-- **Atomic transactions** for consistency
-- **Query patterns**: by execution IDs, statuses, timestamps
-- **Suggested indexes**: `execution_id` (unique), `(status, isClosed, expiresAt)`, `(status, startAt)`
+Each adapter includes optimized table schemas with proper indexes for performance on frequently queried columns like `(status, isClosed, expiresAt)` and `(status, startAt)`.
 
-The included `createInMemoryStorage()` is for testing only. Production needs persistent storage like the `durable-execution-storage-drizzle` package.
+### oRPC Utils Package (`durable-execution-orpc-utils`)
 
-### Durability Features
+Bridges durable execution with oRPC for type-safe HTTP APIs:
 
-- **Process crash recovery**: Running tasks have expiration times and are automatically retried
-- **Configurable retries**: Exponential backoff with jitter for transient failures
-- **Timeout handling**: Per-task timeouts with graceful cancellation signals
-- **Graceful shutdown**: Tasks receive shutdown signals and complete before executor stops
+- `createDurableTaskORPCRouter()` - Server-side procedures for task management
+- `createDurableTaskORPCHandles()` - Type-safe client handles
+- `procedureClientTask()` - Wraps oRPC calls as durable tasks
 
-## Development Guidelines
+## Build System and Tooling
 
-### Task Definition Patterns
+- **Turborepo** - Task orchestration with dependency-aware caching
+- **TypeScript** - Strict typing with dual tsconfig setup (dev + build)
+- **tsup** - Fast bundling with ESM output and TypeScript declarations
+- **Vitest** - Testing with v8 coverage provider
+- **ESLint** - Uses `@gpahal/eslint-config/base` configuration
+- **Prettier** - Code formatting with import sorting via `@ianvs/prettier-plugin-sort-imports`
+- **pnpm** - Package manager with workspace and catalog support
+- **Changesets** - Release management and versioning
 
-Tasks are defined on the executor instance:
+## Important Development Guidelines
 
-```typescript
-// Simple task
-const taskA = e_xecutor.task({
-  id: 'taskA',
-  timeoutMs: 5000,
-  run: async (ctx, input) => { /* ... */ }
-})
+- Multiple executors can share storage for load distribution
+- Process failures are handled via task expiration and retry mechanisms
+- Background processing runs continuously until executor shutdown
+- Register all tasks before enqueueing them
+- Each package has individual CLAUDE.md files with package-specific details
+- Pre-commit hooks ensure code quality (type-check, lint, format, build)
+- Use workspace references (`workspace:*`) for internal package dependencies
 
-// Parent task with children
-const parentTask = executor.parentTask({
-  id: 'parent',
-  timeoutMs: 10_000,
-  runParent: async (ctx, input) => ({
-    output: parentResult,
-    childrenTasks: [
-      { task: childTaskA, input: childInputA },
-      { task: childTaskB, input: childInputB }
-    ]
-  }),
-  finalizeTask: {
-    id: 'finalize',
-    run: async (ctx, { input, output, childrenTasksOutputs }) => {
-      // Combine results
-    }
-  }
-})
-```
+## Testing Strategy
 
-### Input Validation
-
-Use schema validation or custom validation:
-
-```typescript
-// With zod schema
-const task = executor
-  .inputSchema(z.object({ name: z.string() }))
-  .task({ /* task options */ })
-
-// With custom validation
-const task = executor
-  .validateInput(input => { /* validation logic */ })
-  .task({ /* task options */ })
-```
-
-### Error Handling
-
-- **Retryable errors**: Throw regular `Error` or `DurableExecutionError` with `isRetryable: true`
-- **Non-retryable errors**: Use `DurableExecutionError` with `isRetryable: false`
-- **Task context** provides `prevError` for retry scenarios
-
-### Testing Patterns
-
-Tests use the in-memory storage:
-
-```typescript
-const storage = createInMemoryStorage()
-const executor = new DurableExecutor(storage)
-// Define tasks and test execution
-```
-
-Most tests are integration tests that exercise the full executor lifecycle with task enqueuing, execution, and result verification.
-
-## Project Structure
-
-- **`src/`**: Main library source code
-- **`tests/`**: Integration and unit tests
-- **`build/`**: Compiled JavaScript output (generated)
-- **`docs/`**: Generated TypeDoc documentation (generated)
-- **`coverage/`**: Test coverage reports (generated)
-
-The library is published as an ESM-only package with TypeScript declarations included.
+- Unit tests in each package's `tests/` directory
+- Integration tests with real database backends (Testcontainers for MySQL, PGlite for PostgreSQL)
+- Coverage reporting available via `pnpm test-coverage`
+- Tests cover complex scenarios like parent-child hierarchies, concurrent execution, and failure modes

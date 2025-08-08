@@ -1,0 +1,10 @@
+{
+  "extends": "@gpahal/tsconfig/base.json",
+  "compilerOptions": {
+    "outDir": "build",
+    "baseUrl": ".",
+    "types": ["vitest/globals"]
+  },
+  "include": ["src", "tests", "scripts", "vitest.config.ts", "tsup.config.ts"],
+  "exclude": ["node_modules", "build"]
+}

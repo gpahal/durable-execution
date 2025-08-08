@@ -36,7 +36,7 @@ async function main() {
       },
     })
 
-    const handle = await executor.enqueueTask(task, undefined)
+    const handle = await executor.enqueueTask(task)
     console.log('Task enqueued', handle.executionId)
 
     await sleep(1000)

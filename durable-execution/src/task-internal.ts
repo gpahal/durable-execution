@@ -74,12 +74,17 @@ function convertDurableParentTaskOptionsOptionsInternal(
     finalizeTask: taskOptions.finalizeTask
       ? isDurableFinalizeTaskOptionsParentTaskOptions(taskOptions.finalizeTask)
         ? convertDurableParentTaskOptionsOptionsInternal(
-            taskOptions.finalizeTask as DurableParentTaskOptions,
+            taskOptions.finalizeTask as DurableParentTaskOptions<
+              unknown,
+              unknown,
+              unknown,
+              unknown
+            >,
             undefined,
           )
         : isDurableFinalizeTaskOptionsTaskOptions(taskOptions.finalizeTask)
           ? convertDurableTaskOptionsOptionsInternal(
-              taskOptions.finalizeTask as DurableTaskOptions,
+              taskOptions.finalizeTask as DurableTaskOptions<unknown, unknown>,
               undefined,
             )
           : undefined

@@ -15,6 +15,17 @@ export type DurableTask<TInput, TOutput> = {
 }
 
 /**
+ * Infer the input type of a durable task.
+ */
+export type InferDurableTaskInput<TTask extends DurableTask<unknown, unknown>> =
+  TTask extends DurableTask<infer I, unknown> ? I : never
+/**
+ * Infer the output type of a durable task.
+ */
+export type InferDurableTaskOutput<TTask extends DurableTask<unknown, unknown>> =
+  TTask extends DurableTask<unknown, infer O> ? O : never
+
+/**
  * Common options for a durable task. These options are used by both {@link DurableTaskOptions} and
  * {@link DurableParentTaskOptions}.
  *
@@ -73,7 +84,7 @@ export type DurableTaskRetryOptions = {
  * should be idempotent as it may be run multiple times if there is a process failure or if the
  * task is retried.
  *
- * When enqueued with an executor, a {@link DurableTaskHandle} is returned. It supports getting
+ * When enqueued with an executor, a {@link DurableTaskExecutionHandle} is returned. It supports getting
  * the execution status, waiting for the task to complete, and cancelling the task.
  *
  * The output of the {@link run} function is the output of the task.
@@ -110,7 +121,7 @@ export type DurableTaskRetryOptions = {
  *
  * @category Task
  */
-export type DurableTaskOptions<TInput = unknown, TOutput = unknown> = DurableTaskCommonOptions & {
+export type DurableTaskOptions<TInput = undefined, TOutput = unknown> = DurableTaskCommonOptions & {
   /**
    * The task run logic. It returns the output.
    *
@@ -234,7 +245,7 @@ export type DurableTaskOptions<TInput = unknown, TOutput = unknown> = DurableTas
  * @category Task
  */
 export type DurableParentTaskOptions<
-  TInput = unknown,
+  TInput = undefined,
   TRunOutput = unknown,
   TOutput = {
     output: TRunOutput
@@ -720,7 +731,7 @@ export type DurableTaskEnqueueOptions = {
  *
  * @category Task
  */
-export type DurableTaskHandle<TOutput = unknown> = {
+export type DurableTaskExecutionHandle<TOutput = unknown> = {
   /**
    * Get the task id of the durable task.
    *
@@ -732,20 +743,20 @@ export type DurableTaskHandle<TOutput = unknown> = {
    *
    * @returns The execution id of the durable task execution.
    */
-  getTaskExecutionId: () => string
+  getExecutionId: () => string
   /**
    * Get the durable task execution.
    *
    * @returns The durable task execution.
    */
-  getTaskExecution: () => Promise<DurableTaskExecution<TOutput>>
+  getExecution: () => Promise<DurableTaskExecution<TOutput>>
   /**
    * Wait for the durable task execution to be finished and get it.
    *
    * @param options - The options for waiting for the durable task execution.
    * @returns The durable task execution.
    */
-  waitAndGetTaskFinishedExecution: (options?: {
+  waitAndGetFinishedExecution: (options?: {
     signal?: CancelSignal | AbortSignal
     pollingIntervalMs?: number
   }) => Promise<DurableTaskFinishedExecution<TOutput>>

@@ -1,0 +1,28 @@
+---
+globs: *.ts,*.tsx
+description: TypeScript, linting, formatting, and testing conventions
+---
+## TypeScript
+
+- Use the package-local `tsconfig.json` and `tsconfig.build.json` for compiler settings.
+- Strict typing; avoid `any`. Exported APIs should have explicit types.
+- Tests can rely on `vitest/globals` (configured in `durable-execution/tsconfig.json`).
+
+## Linting
+
+- ESLint config comes from `@gpahal/eslint-config/base`:
+  - Core: [durable-execution/eslint.config.mjs](mdc:durable-execution/eslint.config.mjs)
+  - Other packages inherit similar config files.
+- Run `pnpm lint` and fix with `pnpm lint-fix`.
+
+## Formatting
+
+- Prettier with `@gpahal/prettier-config` and `@ianvs/prettier-plugin-sort-imports`.
+- Use `pnpm fmt` or `pnpm fmt-check` at repo root.
+
+## Testing
+
+- Vitest config is shared via re-export:
+  - Source: [durable-execution/vitest.config.ts](mdc:durable-execution/vitest.config.ts)
+  - Re-exports: `durable-execution-orpc-utils` and `durable-execution-storage-drizzle`.
+- Run tests with `pnpm test`; coverage with `pnpm test-coverage`.

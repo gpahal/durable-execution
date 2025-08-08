@@ -1,11 +1,11 @@
-import { CustomError } from 'ts-custom-error'
+import { CustomError } from '@gpahal/std/errors'
 
 /**
  * The type of a durable execution error.
  *
  * @category Errors
  */
-export type DurableExecutionErrorType = 'generic' | 'timed_out' | 'cancelled'
+export type DurableExecutionErrorType = 'generic' | 'not_found' | 'timed_out' | 'cancelled'
 
 /**
  * Base class for all errors thrown by {@link DurableExecutor} and {@link DurableTask}.
@@ -19,16 +19,41 @@ export class DurableExecutionError extends CustomError {
   readonly isRetryable: boolean
 
   /**
+   * Whether the error is internal.
+   */
+  readonly isInternal: boolean
+
+  /**
    * @param message - The error message.
    * @param isRetryable - Whether the error is retryable.
+   * @param isInternal - Whether the error is internal.
    */
-  constructor(message: string, isRetryable = true) {
+  constructor(message: string, isRetryable = true, isInternal = false) {
     super(message)
     this.isRetryable = isRetryable
+    this.isInternal = isInternal
   }
 
   getErrorType(): DurableExecutionErrorType {
     return 'generic'
+  }
+}
+
+/**
+ * Error thrown when a task or execution is not found.
+ *
+ * @category Errors
+ */
+export class DurableExecutionNotFoundError extends DurableExecutionError {
+  /**
+   * @param message - The error message.
+   */
+  constructor(message: string) {
+    super(message, false, false)
+  }
+
+  override getErrorType(): DurableExecutionErrorType {
+    return 'not_found'
   }
 }
 
@@ -44,7 +69,7 @@ export class DurableExecutionTimedOutError extends DurableExecutionError {
    * @param message - The error message.
    */
   constructor(message?: string, isRetryable = true) {
-    super(message ?? 'Task timed out', isRetryable)
+    super(message ?? 'Task timed out', isRetryable, false)
   }
 
   override getErrorType(): DurableExecutionErrorType {
@@ -63,7 +88,7 @@ export class DurableExecutionCancelledError extends DurableExecutionError {
    * @param message - The error message.
    */
   constructor(message?: string) {
-    super(message ?? 'Task cancelled', false)
+    super(message ?? 'Task cancelled', false, false)
   }
 
   override getErrorType(): DurableExecutionErrorType {
@@ -78,6 +103,7 @@ export class DurableExecutionCancelledError extends DurableExecutionError {
  */
 export type DurableExecutionErrorStorageObject = {
   errorType: DurableExecutionErrorType
+  isInternal: boolean
   message: string
   isRetryable: boolean
 }
@@ -87,6 +113,7 @@ export function convertDurableExecutionErrorToStorageObject(
 ): DurableExecutionErrorStorageObject {
   return {
     errorType: error.getErrorType(),
+    isInternal: error.isInternal,
     message: error.message,
     isRetryable: error.isRetryable,
   }

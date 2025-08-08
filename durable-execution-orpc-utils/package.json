@@ -1,13 +1,13 @@
 {
-  "name": "durable-execution",
+  "name": "durable-execution-orpc-utils",
   "version": "0.12.0",
-  "description": "A durable task engine for running tasks durably and resiliently",
+  "description": "oRPC utilities for durable-execution to create a separate server process for durable execution",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gpahal/durable-execution.git",
-    "directory": "durable-execution"
+    "directory": "durable-execution-orpc-utils"
   },
   "homepage": "https://gpahal.github.io/durable-execution",
   "bugs": {
@@ -41,7 +41,6 @@
   ],
   "scripts": {
     "build": "premove build && tsup",
-    "build-docs": "tsx scripts/build-docs.ts",
     "clean": "premove build",
     "test": "vitest run",
     "test-coverage": "vitest run --coverage",
@@ -49,20 +48,19 @@
     "lint": "eslint .",
     "lint-fix": "eslint . --fix"
   },
-  "simple-git-hooks": {
-    "pre-commit": "pnpm pre-commit",
-    "pre-push": "pnpm pre-commit"
+  "peerDependencies": {
+    "@orpc/client": "^catalog:dev",
+    "@orpc/contract": "^catalog:dev",
+    "@orpc/server": "^catalog:dev",
+    "durable-execution": "workspace:*"
   },
   "dependencies": {
-    "@gpahal/std": "catalog:prod",
-    "@standard-schema/spec": "catalog:prod",
-    "@standard-schema/utils": "catalog:prod",
-    "nanoid": "catalog:prod",
-    "superjson": "catalog:prod",
-    "zod": "catalog:prod"
+    "@gpahal/std": "catalog:prod"
   },
   "devDependencies": {
-    "typedoc": "catalog:dev",
-    "typedoc-plugin-mermaid": "catalog:dev"
+    "@orpc/client": "catalog:dev",
+    "@orpc/contract": "catalog:dev",
+    "@orpc/server": "catalog:dev",
+    "durable-execution": "workspace:*"
   }
 }
