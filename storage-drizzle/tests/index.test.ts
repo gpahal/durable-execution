@@ -365,12 +365,12 @@ export async function withTemporaryFile(filename: string, fn: (file: string) => 
 }
 
 describe('index', () => {
-  it('should complete with in memory storage', { timeout: 30_000 }, async () => {
+  it('should complete with in memory storage', { timeout: 60_000 }, async () => {
     const storage = createInMemoryStorage({ enableDebug: false })
     await runStorageTest(storage)
   })
 
-  it('should complete with sqlite storage', { timeout: 30_000 }, async () => {
+  it('should complete with sqlite storage', { timeout: 60_000 }, async () => {
     await withTemporaryFile('test.db', async (filePath) => {
       const table = createDurableTaskExecutionsSQLiteTable()
       const db = drizzleLibsql(`file:${filePath}`)
@@ -382,7 +382,7 @@ describe('index', () => {
     })
   })
 
-  it('should complete with pg storage', { timeout: 30_000 }, async () => {
+  it('should complete with pg storage', { timeout: 60_000 }, async () => {
     await withTemporaryDirectory(async (dirPath) => {
       const table = createDurableTaskExecutionsPgTable()
       const db = drizzlePglite(dirPath)

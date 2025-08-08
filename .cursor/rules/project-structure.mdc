@@ -1,0 +1,35 @@
+---
+alwaysApply: true
+---
+### Monorepo structure
+
+- **Packages**:
+  - `durable-execution`: core durable task engine
+  - `storage-drizzle`: Drizzle ORM storage implementation for the core package
+
+- **Key files**:
+  - Root workspace: [package.json](mdc:package.json)
+  - Core package: [durable-execution/package.json](mdc:durable-execution/package.json)
+  - Storage package: [storage-drizzle/package.json](mdc:storage-drizzle/package.json)
+
+- **Build/Test tooling**:
+  - Package manager: pnpm (workspace + turbo)
+  - Test runner: Vitest
+  - Coverage: v8 provider, output per package under `coverage/coverage-final.json`
+
+- **Conventions**:
+  - Source: `packages` live at repo root as `durable-execution/` and `storage-drizzle/` with `src/`
+  - Tests: `tests/**/*.test.ts` within each package
+  - Coverage: each package writes to its own `coverage/` directory
+
+### Useful commands
+
+- From the monorepo root (turbo): see [package.json](mdc:package.json)
+  - `pnpm test-coverage` runs coverage in all packages
+  - `pnpm test` runs tests in all packages
+  - `pnpm build` builds all packages
+
+- From a package directory:
+  - `pnpm test-coverage` → `vitest run --coverage`
+  - `pnpm test` → `vitest run`
+  - `pnpm build` → `tsup`

@@ -1,0 +1,20 @@
+---
+globs: package.json,**/package.json
+---
+### Scripts and commands
+
+- **Root scripts**: [package.json](mdc:package.json)
+  - Delegated via Turbo: `test`, `test-coverage`, `build`, `type-check`, `lint`
+  - Preferred entrypoints when operating across the monorepo
+
+- **Package scripts**:
+  - Core: [durable-execution/package.json](mdc:durable-execution/package.json)
+  - Storage: [storage-drizzle/package.json](mdc:storage-drizzle/package.json)
+  - Common:
+    - `test`: `vitest run`
+    - `test-coverage`: `vitest run --coverage`
+    - `build`: `tsup`
+
+- **Usage tips**:
+  - Use root scripts to run all packages; use `-F <pkg>` to scope to one package
+  - CI expects `pnpm test-coverage` at root to produce per-package coverage outputs

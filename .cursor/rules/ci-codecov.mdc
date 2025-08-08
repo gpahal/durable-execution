@@ -1,0 +1,15 @@
+---
+globs: .github/workflows/*.yml
+---
+### CI and Codecov
+
+- **Workflow**: [run-tests.yml](mdc:.github/workflows/run-tests.yml)
+  - Installs with pnpm, runs `pnpm test-coverage` at repo root
+  - Uploads two Codecov reports with flags:
+    - `durable-execution/coverage/coverage-final.json` → flag `durable-execution`
+    - `storage-drizzle/coverage/coverage-final.json` → flag `storage-drizzle`
+  - Uses `codecov/codecov-action@v5` with `fail_ci_if_error: true`
+
+- **Expectations**:
+  - Each package must emit `coverage/coverage-final.json` for CI to upload
+  - Flags enable per-package reporting/thresholds in Codecov UI

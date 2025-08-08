@@ -1,0 +1,19 @@
+---
+globs: **/vitest.config.ts,**/tests/**/*.test.ts
+---
+### Testing and coverage
+
+- **Vitest config**:
+  - Core: [durable-execution/vitest.config.ts](mdc:durable-execution/vitest.config.ts)
+    - `test.environment: 'node'`
+    - `test.include: ['tests/**/*.test.ts']`
+    - Coverage provider: `v8`, includes `src/**/*.ts`
+  - Storage: [storage-drizzle/vitest.config.ts](mdc:storage-drizzle/vitest.config.ts) re-exports the core config
+
+- **Coverage output**:
+  - Each package writes to `coverage/coverage-final.json`
+  - CI relies on these exact paths for Codecov upload
+
+- **Running locally**:
+  - Repo root: `pnpm test-coverage` (all packages)
+  - Package: `pnpm -F <pkg> test-coverage` or run inside subfolder
