@@ -36,6 +36,8 @@
     "tsup": "catalog:dev",
     "tsx": "catalog:dev",
     "turbo": "catalog:dev",
+    "typedoc": "catalog:dev",
+    "typedoc-plugin-mermaid": "catalog:dev",
     "typescript": "catalog:dev",
     "vitest": "catalog:dev"
   },

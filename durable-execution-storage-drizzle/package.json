@@ -1,6 +1,6 @@
 {
   "name": "durable-execution-storage-drizzle",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Drizzle ORM storage implementation for durable-execution",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
@@ -47,7 +47,7 @@
     "clean": "premove build",
     "test": "vitest run",
     "test-coverage": "vitest run --coverage",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/index.ts",
     "lint": "eslint .",
     "lint-fix": "eslint . --fix"
   },

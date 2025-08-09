@@ -1,6 +1,6 @@
 {
   "name": "durable-execution-orpc-utils",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "oRPC utilities for durable-execution to create a separate server process for durable execution",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
@@ -27,13 +27,17 @@
   "type": "module",
   "exports": {
     "./package.json": "./package.json",
-    ".": {
-      "import": "./build/index.js",
-      "types": "./build/index.d.ts"
+    "./server": {
+      "import": "./build/server.js",
+      "types": "./build/server.d.ts"
+    },
+    "./client": {
+      "import": "./build/client.js",
+      "types": "./build/client.d.ts"
     }
   },
-  "module": "./build/index.js",
-  "types": "./build/index.d.ts",
+  "module": "./build/server.js",
+  "types": "./build/server.d.ts",
   "files": [
     "package.json",
     "src",
@@ -44,7 +48,7 @@
     "clean": "premove build",
     "test": "vitest run",
     "test-coverage": "vitest run --coverage",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/server.ts --entryPoints src/client.ts",
     "lint": "eslint .",
     "lint-fix": "eslint . --fix"
   },

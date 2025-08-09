@@ -162,6 +162,12 @@ importers:
       turbo:
         specifier: catalog:dev
         version: 2.5.5
+      typedoc:
+        specifier: catalog:dev
+        version: 0.28.9(typescript@5.9.2)
+      typedoc-plugin-mermaid:
+        specifier: catalog:dev
+        version: 1.12.0(typedoc@0.28.9(typescript@5.9.2))
       typescript:
         specifier: catalog:dev
         version: 5.9.2
@@ -189,13 +195,6 @@ importers:
       zod:
         specifier: catalog:prod
         version: 4.0.15
-    devDependencies:
-      typedoc:
-        specifier: catalog:dev
-        version: 0.28.9(typescript@5.9.2)
-      typedoc-plugin-mermaid:
-        specifier: catalog:dev
-        version: 1.12.0(typedoc@0.28.9(typescript@5.9.2))
 
   durable-execution-orpc-utils:
     dependencies:

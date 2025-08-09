@@ -49,6 +49,7 @@ async function buildDocs() {
         includeCategories: true,
       },
       sort: ['kind', 'source-order'],
+      highlightLanguages: ['ts', 'js', 'bash', 'json', 'markdown'],
       validation: {
         notExported: true,
         invalidLink: true,
@@ -56,7 +57,6 @@ async function buildDocs() {
         notDocumented: false,
         unusedMergeModuleWith: true,
       },
-      highlightLanguages: ['ts', 'js', 'bash', 'json', 'markdown'],
       treatWarningsAsErrors: true,
       treatValidationWarningsAsErrors: true,
     })

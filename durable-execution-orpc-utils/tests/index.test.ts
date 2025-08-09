@@ -1,5 +1,4 @@
-import { ORPCError } from '@orpc/contract'
-import { createRouterClient, type as orpcType, os } from '@orpc/server'
+import { createRouterClient, ORPCError, os, type } from '@orpc/server'
 import {
   DurableExecutor,
   InMemoryStorage,
@@ -10,11 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { sleep } from '@gpahal/std/promises'
 
-import {
-  createDurableTaskORPCHandles,
-  createDurableTaskORPCRouter,
-  procedureClientTask,
-} from '../src'
+import { createDurableTaskClientHandles } from '../src/client'
+import { convertClientProcedureToDurableTask, createDurableTasksRouter } from '../src/server'
 
 async function waitAndGetFinishedExecution<TInput, TOutput>(
   executor: DurableExecutor,
@@ -25,7 +21,7 @@ async function waitAndGetFinishedExecution<TInput, TOutput>(
   return await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
 }
 
-describe('index', () => {
+describe('server', () => {
   let storage: InMemoryStorage
   let executor: DurableExecutor
 
@@ -42,7 +38,7 @@ describe('index', () => {
     await executor.shutdown()
   })
 
-  it('should enqueue and get execution with server-side client', async () => {
+  it('should enqueue and get execution', async () => {
     let executionCount = 0
     const add1 = executor.task({
       id: 'add1',
@@ -54,11 +50,11 @@ describe('index', () => {
       },
     })
 
+    const router = createDurableTasksRouter(os, executor)
     const tasks = { add1 }
 
-    const router = createDurableTaskORPCRouter(os, executor)
     const client = createRouterClient(router, { context: {} })
-    const handles = createDurableTaskORPCHandles(client, tasks)
+    const handles = createDurableTaskClientHandles(client, tasks)
 
     const executionId = await handles.add1.enqueue({ n: 0 })
     let execution = await handles.add1.getExecution(executionId)
@@ -74,7 +70,7 @@ describe('index', () => {
   })
 
   it('should handle invalid task id to enqueue', async () => {
-    const router = createDurableTaskORPCRouter(os, executor)
+    const router = createDurableTasksRouter(os, executor)
     const client = createRouterClient(router, { context: {} })
 
     await expect(client.enqueueTask({ taskId: 'invalid', input: { n: 0 } })).rejects.toThrow(
@@ -83,7 +79,7 @@ describe('index', () => {
   })
 
   it('should handle invalid task id to get execution', async () => {
-    const router = createDurableTaskORPCRouter(os, executor)
+    const router = createDurableTasksRouter(os, executor)
     const client = createRouterClient(router, { context: {} })
 
     await expect(
@@ -100,7 +96,7 @@ describe('index', () => {
       },
     })
 
-    const router = createDurableTaskORPCRouter(os, executor)
+    const router = createDurableTasksRouter(os, executor)
     const client = createRouterClient(router, { context: {} })
 
     await expect(
@@ -111,17 +107,21 @@ describe('index', () => {
   it('should complete procedureClientTask', async () => {
     let executionCount = 0
     const add1Proc = os
-      .input(orpcType<{ n: number }>())
-      .output(orpcType<{ n: number }>())
+      .input(type<{ n: number }>())
+      .output(type<{ n: number }>())
       .handler(({ input }: { input: { n: number } }) => {
         executionCount++
         return { n: input.n + 1 }
       })
 
     const router = { add1: add1Proc }
-    const client = createRouterClient(router, { context: {} })
 
-    const add1 = procedureClientTask(executor, { id: 'add1', timeoutMs: 1000 }, client.add1)
+    const client = createRouterClient(router, { context: {} })
+    const add1 = convertClientProcedureToDurableTask(
+      executor,
+      { id: 'add1', timeoutMs: 1000 },
+      client.add1,
+    )
 
     const handle = await executor.enqueueTask(add1, { n: 0 })
     const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
@@ -135,17 +135,21 @@ describe('index', () => {
   it('should handle procedureClientTask generic error', async () => {
     let executionCount = 0
     const add1Proc = os
-      .input(orpcType<{ n: number }>())
-      .output(orpcType<{ n: number }>())
+      .input(type<{ n: number }>())
+      .output(type<{ n: number }>())
       .handler(() => {
         executionCount++
         throw new ORPCError('BAD_REQUEST', { message: 'invalid' })
       })
 
     const router = { add1: add1Proc }
-    const client = createRouterClient(router, { context: {} })
 
-    const add1 = procedureClientTask(executor, { id: 'add1', timeoutMs: 1000 }, client.add1)
+    const client = createRouterClient(router, { context: {} })
+    const add1 = convertClientProcedureToDurableTask(
+      executor,
+      { id: 'add1', timeoutMs: 1000 },
+      client.add1,
+    )
 
     const handle = await executor.enqueueTask(add1, { n: 0 })
     const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
@@ -162,17 +166,21 @@ describe('index', () => {
   it('should handle procedureClientTask not found error', async () => {
     let executionCount = 0
     const add1Proc = os
-      .input(orpcType<{ n: number }>())
-      .output(orpcType<{ n: number }>())
+      .input(type<{ n: number }>())
+      .output(type<{ n: number }>())
       .handler(() => {
         executionCount++
         throw new ORPCError('NOT_FOUND', { message: 'missing' })
       })
 
     const router = { add1: add1Proc }
-    const client = createRouterClient(router, { context: {} })
 
-    const add1 = procedureClientTask(executor, { id: 'add1', timeoutMs: 1000 }, client.add1)
+    const client = createRouterClient(router, { context: {} })
+    const add1 = convertClientProcedureToDurableTask(
+      executor,
+      { id: 'add1', timeoutMs: 1000 },
+      client.add1,
+    )
 
     const handle = await executor.enqueueTask(add1, { n: 0 })
     const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
@@ -189,17 +197,21 @@ describe('index', () => {
   it('should handle procedureClientTask internal server error', async () => {
     let executionCount = 0
     const add1Proc = os
-      .input(orpcType<{ n: number }>())
-      .output(orpcType<{ n: number }>())
+      .input(type<{ n: number }>())
+      .output(type<{ n: number }>())
       .handler(() => {
         executionCount++
         throw new ORPCError('INTERNAL_SERVER_ERROR', { message: 'server down' })
       })
 
     const router = { add1: add1Proc }
-    const client = createRouterClient(router, { context: {} })
 
-    const add1 = procedureClientTask(executor, { id: 'add1', timeoutMs: 1000 }, client.add1)
+    const client = createRouterClient(router, { context: {} })
+    const add1 = convertClientProcedureToDurableTask(
+      executor,
+      { id: 'add1', timeoutMs: 1000 },
+      client.add1,
+    )
 
     const handle = await executor.enqueueTask(add1, { n: 0 })
     const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
@@ -216,17 +228,21 @@ describe('index', () => {
   it('should handle procedureClientTask custom error', async () => {
     let executionCount = 0
     const add1Proc = os
-      .input(orpcType<{ n: number }>())
-      .output(orpcType<{ n: number }>())
+      .input(type<{ n: number }>())
+      .output(type<{ n: number }>())
       .handler(() => {
         executionCount++
         throw new Error('boom')
       })
 
     const router = { add1: add1Proc }
-    const client = createRouterClient(router, { context: {} })
 
-    const add1 = procedureClientTask(executor, { id: 'add1', timeoutMs: 1000 }, client.add1)
+    const client = createRouterClient(router, { context: {} })
+    const add1 = convertClientProcedureToDurableTask(
+      executor,
+      { id: 'add1', timeoutMs: 1000 },
+      client.add1,
+    )
 
     const handle = await executor.enqueueTask(add1, { n: 0 })
     const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })

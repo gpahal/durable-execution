@@ -1,32 +1,17 @@
 ---
 description: Guidance for durable-execution-orpc-utils package
-globs: durable-execution-orpc-utils/**
 ---
 ## oRPC utils package
 
-- Purpose: Bridge oRPC with durable execution for server/client usage; supports a pattern where a long-running durable executor server manages state while a serverless web app executes task logic.
-- Key exports in [src/index.ts](mdc:durable-execution-orpc-utils/src/index.ts):
-  - `createDurableTaskORPCRouter`, `createDurableTaskORPCHandles`, `procedureClientTask`
-- Tests: [tests/index.test.ts](mdc:durable-execution-orpc-utils/tests/index.test.ts) cover router/handles/errors.
-- README: [durable-execution-orpc-utils/README.md](mdc:durable-execution-orpc-utils/README.md)
+- **Purpose**: Utilities to integrate durable execution with an oRPC-style client/server transport.
+- **Entry/Exports**:
+  - Client: [durable-execution-orpc-utils/src/client.ts](mdc:durable-execution-orpc-utils/src/client.ts)
+  - Server: [durable-execution-orpc-utils/src/server.ts](mdc:durable-execution-orpc-utils/src/server.ts)
+- **Docs**: [durable-execution-orpc-utils/README.md](mdc:durable-execution-orpc-utils/README.md)
 
 ### Dev commands
 
 - Build: `pnpm -F durable-execution-orpc-utils build`
 - Test: `pnpm -F durable-execution-orpc-utils test`
-- Type-check/Lint: use root scripts with filter `-F`.
-
-### Dependencies
-
-- Peer deps: `@orpc/*`, `durable-execution`. Ensure these are installed in consumers.
-
-### Typical flow
-
-1. In the durable executor server:
-   - Create `DurableExecutor` and register tasks.
-   - Expose oRPC procedures with `createDurableTaskORPCRouter(os, executor)`.
-   - Start executor and server concurrently; shut down executor on exit.
-2. In the web app:
-   - Create an oRPC client to the durable executor router.
-   - Use `createDurableTaskORPCHandles(client, tasks)` to enqueue tasks and query executions.
-3. Optionally wrap web app procedures as durable tasks using `procedureClientTask(executor, options, client.proc)`.
+- Type-check: `pnpm -F durable-execution-orpc-utils type-check`
+- Lint: `pnpm -F durable-execution-orpc-utils lint`

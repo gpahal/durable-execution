@@ -37,6 +37,8 @@ import {
   type DurableTaskRunContext,
   type InferDurableTaskInput,
   type InferDurableTaskOutput,
+  type LastDurableTaskElement,
+  type SequentialDurableTasks,
 } from './task'
 import { DurableTaskInternal, generateTaskExecutionId } from './task-internal'
 import { generateId, sleepWithJitter, summarizeStandardSchemaIssues } from './utils'
@@ -48,6 +50,7 @@ export {
   createCancellablePromise,
 } from './cancel'
 export {
+  type DurableExecutionErrorType,
   DurableExecutionError,
   DurableExecutionNotFoundError,
   DurableExecutionTimedOutError,
@@ -86,6 +89,9 @@ export type {
   DurableTaskExecutionStatusStorageObject,
   DurableTaskEnqueueOptions,
   DurableTaskExecutionHandle,
+  SequentialDurableTasks,
+  SequentialDurableTasksHelper,
+  LastDurableTaskElement,
 } from './task'
 export { type Serializer, createSuperjsonSerializer, WrappedSerializer } from './serializer'
 export {
@@ -635,9 +641,7 @@ export class DurableExecutor {
           id: `${taskId}_finalize_2`,
           timeoutMs: 1000,
           run: (_, { childrenTasksOutputs }) => {
-            const secondTaskOutput = childrenTasksOutputs[0]!.output as InferDurableTaskOutput<
-              LastDurableTaskElement<T>
-            >
+            const secondTaskOutput = childrenTasksOutputs[0]!.output
             return secondTaskOutput
           },
         },
@@ -1658,40 +1662,3 @@ export class DurableExecutor {
     return new Set(this.runningTaskExecutionsMap.keys())
   }
 }
-
-type LastDurableTaskElement<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
-  T extends readonly [...Array<DurableTask<unknown, unknown>>, infer L] ? L : never
-
-/**
- * The type of a sequence of tasks. Disallows empty sequences and sequences with tasks that have
- * different input and output types.
- *
- * @category Task
- */
-export type SequentialDurableTasks<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
-  T extends readonly [] ? never : SequentialDurableTasksHelper<T>
-
-/**
- * A helper type to create a sequence of tasks. See {@link SequentialDurableTasks} for more details.
- *
- * @category Task
- */
-export type SequentialDurableTasksHelper<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
-  T extends readonly []
-    ? T
-    : T extends readonly [DurableTask<infer _I1, infer _O1>]
-      ? T
-      : T extends readonly [
-            DurableTask<infer I1, infer O1>,
-            DurableTask<infer I2, infer O2>,
-            ...infer Rest,
-          ]
-        ? O1 extends I2
-          ? Rest extends ReadonlyArray<DurableTask<unknown, unknown>>
-            ? readonly [
-                DurableTask<I1, O1>,
-                ...SequentialDurableTasksHelper<readonly [DurableTask<I2, O2>, ...Rest]>,
-              ]
-            : never
-          : never
-        : T

@@ -731,6 +731,11 @@ export class InMemoryStorage implements DurableStorage {
   }
 }
 
+/**
+ * The transaction for the in-memory storage.
+ *
+ * @category Storage
+ */
 export class InMemoryStorageTx implements DurableStorageTx {
   private logger: Logger
   readonly taskExecutions: Map<string, DurableTaskExecutionStorageObject>

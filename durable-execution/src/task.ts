@@ -16,11 +16,16 @@ export type DurableTask<TInput, TOutput> = {
 
 /**
  * Infer the input type of a durable task.
+ *
+ * @category Task
  */
 export type InferDurableTaskInput<TTask extends DurableTask<unknown, unknown>> =
   TTask extends DurableTask<infer I, unknown> ? I : never
+
 /**
  * Infer the output type of a durable task.
+ *
+ * @category Task
  */
 export type InferDurableTaskOutput<TTask extends DurableTask<unknown, unknown>> =
   TTask extends DurableTask<unknown, infer O> ? O : never
@@ -87,7 +92,7 @@ export type DurableTaskRetryOptions = {
  * When enqueued with an executor, a {@link DurableTaskExecutionHandle} is returned. It supports getting
  * the execution status, waiting for the task to complete, and cancelling the task.
  *
- * The output of the {@link run} function is the output of the task.
+ * The output of the `run` function is the output of the task.
  *
  * The input and output are serialized and deserialized using the serializer passed to the durable
  * executor.
@@ -145,21 +150,21 @@ export type DurableTaskOptions<TInput = undefined, TOutput = unknown> = DurableT
  * {@link DurableTaskOptions} but it returns children tasks to be run in parallel after the run
  * function completes, along with the output of the parent task.
  *
- * The {@link runParent} function is similar to the `run` function in {@link DurableTaskOptions},
- * but the output is of the form `{ output: TRunOutput, childrenTasks: Array<DurableChildTask> }` where
- * the children are the tasks to be run in parallel after the run function completes.
+ * The `runParent` function is similar to the `run` function in {@link DurableTaskOptions}, but the
+ * output is of the form `{ output: TRunOutput, childrenTasks: Array<DurableChildTask> }` where the
+ * children are the tasks to be run in parallel after the run function completes.
  *
- * The {@link finalizeTask} task is run after the runParent function and all the children tasks
- * complete. It is useful for combining the output of the runParent function and children tasks.
- * It's input has the following properties:
+ * The `finalizeTask` task is run after the runParent function and all the children tasks complete.
+ * It is useful for combining the output of the runParent function and children tasks. It's input
+ * has the following properties:
  *
  * - `input`: The input of the `finalizeTask` task. Same as the input of runParent function
  * - `output`: The output of the runParent function
  * - `childrenTasksOutputs`: The outputs of the children tasks
  *
- * If {@link finalizeTask} is provided, the output of the whole task is the output of the
- * {@link finalizeTask} task. If it is not provided, the output of the whole task is the output of
- * the form `{ output: TRunOutput, childrenTasksOutputs: Array<DurableChildTaskExecutionOutput> }`.
+ * If `finalizeTask` is provided, the output of the whole task is the output of the `finalizeTask`
+ * task. If it is not provided, the output of the whole task is the output of the form
+ * `{ output: TRunOutput, childrenTasksOutputs: Array<DurableChildTaskExecutionOutput> }`.
  *
  * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
  * section for more details on creating tasks.
@@ -765,3 +770,45 @@ export type DurableTaskExecutionHandle<TOutput = unknown> = {
    */
   cancel: () => Promise<void>
 }
+
+/**
+ * The type of a sequence of tasks. Disallows empty sequences and sequences with tasks that have
+ * different input and output types.
+ *
+ * @category Task
+ */
+export type SequentialDurableTasks<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
+  T extends readonly [] ? never : SequentialDurableTasksHelper<T>
+
+/**
+ * A helper type to create a sequence of tasks. See {@link SequentialDurableTasks} for more details.
+ *
+ * @category Task
+ */
+export type SequentialDurableTasksHelper<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
+  T extends readonly []
+    ? T
+    : T extends readonly [DurableTask<infer _I1, infer _O1>]
+      ? T
+      : T extends readonly [
+            DurableTask<infer I1, infer O1>,
+            DurableTask<infer I2, infer O2>,
+            ...infer Rest,
+          ]
+        ? O1 extends I2
+          ? Rest extends ReadonlyArray<DurableTask<unknown, unknown>>
+            ? readonly [
+                DurableTask<I1, O1>,
+                ...SequentialDurableTasksHelper<readonly [DurableTask<I2, O2>, ...Rest]>,
+              ]
+            : never
+          : never
+        : T
+
+/**
+ * The type of the last element of a sequence of tasks.
+ *
+ * @category Task
+ */
+export type LastDurableTaskElement<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
+  T extends readonly [...Array<DurableTask<unknown, unknown>>, infer L] ? L : never

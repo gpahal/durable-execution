@@ -1,0 +1,79 @@
+---
+alwaysApply: true
+---
+## Architecture
+
+- **Orchestrator**: `DurableExecutor` ([durable-execution/src/index.ts](mdc:durable-execution/src/index.ts))
+- **Task system**: `task.ts`, `task-internal.ts` for task definitions and execution
+  - [durable-execution/src/task.ts](mdc:durable-execution/src/task.ts)
+  - [durable-execution/src/task-internal.ts](mdc:durable-execution/src/task-internal.ts)
+- **Storage contract and types**: `storage.ts` ([durable-execution/src/storage.ts](mdc:durable-execution/src/storage.ts))
+- **Serialization**: `serializer.ts` (SuperJSON by default) ([durable-execution/src/serializer.ts](mdc:durable-execution/src/serializer.ts))
+- **Errors**: `errors.ts` ([durable-execution/src/errors.ts](mdc:durable-execution/src/errors.ts))
+- **Cancellation**: `cancel.ts` ([durable-execution/src/cancel.ts](mdc:durable-execution/src/cancel.ts))
+- **Logging**: `logger.ts` ([durable-execution/src/logger.ts](mdc:durable-execution/src/logger.ts))
+
+## Execution model
+
+- **Status progression**: Ready → Running → Completed/Failed/Timed Out
+- **Hierarchy**: Parent tasks can spawn children in parallel; sequential chains supported
+- **Finalize**: Optional finalize task runs after children complete
+- **Retries**: Exponential backoff with configurable options
+
+## Storage expectations
+
+Implement `DurableStorage` with `withTransaction(fn)` that supports parallel transactions where possible.
+`DurableStorageTx` must provide:
+
+- `insertTaskExecutions`
+- `getTaskExecutionIds`
+- `getTaskExecutions`
+- `updateTaskExecutions`
+
+Indexing hints (see `DurableTaskExecutionStorageWhere` docs in [storage.ts](mdc:durable-execution/src/storage.ts)):
+
+- Unique index on `execution_id`
+- Composite indexes for `(status, isClosed, expiresAt)` and `(status, startAt)`
+
+## Development quickstart
+
+- Create tasks via `executor.task(...)`, `executor.parentTask(...)` and enqueue with `executor.enqueueTask`
+- Run background processing by `await executor.start()` and stop with `await executor.shutdown()`
+
+## Monorepo overview
+
+- **Packages**:
+  - `durable-execution` (core)
+  - `durable-execution-orpc-utils`
+  - `durable-execution-storage-drizzle`
+
+- **Tooling**:
+  - Node >= 20, pnpm (see [package.json](mdc:package.json))
+  - Turborepo task orchestration ([turbo.json](mdc:turbo.json))
+  - TypeScript, tsup bundling, Vitest, ESLint, Prettier
+
+- **Workspace config**: [pnpm-workspace.yaml](mdc:pnpm-workspace.yaml)
+
+## Common scripts (run at repo root)
+
+- Build all: `pnpm build`
+- Test all: `pnpm test`
+- Coverage: `pnpm test-coverage`
+- Type-check: `pnpm type-check`
+- Lint: `pnpm lint` | Fix: `pnpm lint-fix`
+- Format: `pnpm fmt` | Check: `pnpm fmt-check`
+- Clean: `pnpm clean`
+- Docs (core pkg): `pnpm build-docs`
+
+Pre-commit hooks run type-check, lint, format check, and build (see [package.json](mdc:package.json)).
+
+## Project docs
+
+- Root README: [README.md](mdc:README.md)
+- Core package docs generator: `durable-execution/scripts/build-docs.ts` ([build-docs.ts](mdc:durable-execution/scripts/build-docs.ts))
+
+## Package READMEs
+
+- Core: [durable-execution/README.md](mdc:durable-execution/README.md)
+- oRPC utils: [durable-execution-orpc-utils/README.md](mdc:durable-execution-orpc-utils/README.md)
+- Drizzle storage: [durable-execution-storage-drizzle/README.md](mdc:durable-execution-storage-drizzle/README.md)

@@ -1,0 +1,17 @@
+{
+  "plugin": ["typedoc-plugin-mermaid"],
+  "entryPointStrategy": "resolve",
+  "excludePrivate": true,
+  "excludeProtected": false,
+  "excludeInternal": true,
+  "highlightLanguages": ["ts", "js", "bash", "json", "markdown"],
+  "validation": {
+    "notExported": true,
+    "invalidLink": true,
+    "rewrittenLink": true,
+    "notDocumented": false,
+    "unusedMergeModuleWith": true
+  },
+  "treatWarningsAsErrors": true,
+  "treatValidationWarningsAsErrors": true
+}

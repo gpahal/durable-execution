@@ -1,12 +1,11 @@
 ---
 description: Guidance for durable-execution-storage-drizzle package
-globs: durable-execution-storage-drizzle/**
 ---
 ## Drizzle storage package
 
-- Purpose: Drizzle ORM-backed storage for `durable-execution`.
-- Entry: [src/index.ts](mdc:durable-execution-storage-drizzle/src/index.ts); drivers for PG/MySQL/SQLite in sibling files.
-- README has usage examples for all three databases: [README.md](mdc:durable-execution-storage-drizzle/README.md)
+- **Purpose**: Drizzle ORM-backed storage for `durable-execution`.
+- **Entry**: [durable-execution-storage-drizzle/src/index.ts](mdc:durable-execution-storage-drizzle/src/index.ts); drivers for PG/MySQL/SQLite in sibling files.
+- **README** has usage examples for all three databases: [README.md](mdc:durable-execution-storage-drizzle/README.md)
 
 ### Implementor tips
 

@@ -24,20 +24,25 @@ import {
   type DurableTaskCommonOptions,
   type DurableTaskEnqueueOptions,
   type DurableTaskExecution,
-  type InferDurableTaskInput,
-  type InferDurableTaskOutput,
 } from 'durable-execution'
 
 import { getErrorMessage } from '@gpahal/std/errors'
 
+/**
+ * A record of durable tasks. This type signals to the client which tasks are available to be
+ * enqueued.
+ *
+ * @example
+ * ```ts
+ * const tasks = {
+ *   task1: durableTask1,
+ *   task2: durableTask2,
+ * }
+ * ```
+ */
 export type AnyDurableTasks = Record<string, DurableTask<unknown, unknown>>
 
-export type DurableTaskEnqueueInput<TInput> = {
-  input: TInput
-  options?: DurableTaskEnqueueOptions
-}
-
-function createEnqueueTaskORPCProcedure<
+function createEnqueueTaskProcedure<
   TInitialContext extends Context,
   TCurrentContext extends Context,
   TErrorMap extends ErrorMap,
@@ -57,11 +62,15 @@ function createEnqueueTaskORPCProcedure<
   TInitialContext,
   TCurrentContext,
   Schema<
-    DurableTaskEnqueueInput<unknown> & {
+    {
       taskId: string
+      input: unknown
+      options?: DurableTaskEnqueueOptions
     },
-    DurableTaskEnqueueInput<unknown> & {
+    {
       taskId: string
+      input: unknown
+      options?: DurableTaskEnqueueOptions
     }
   >,
   Schema<string, string>,
@@ -70,11 +79,11 @@ function createEnqueueTaskORPCProcedure<
 > {
   return osBuilder
     .input(
-      type<
-        DurableTaskEnqueueInput<unknown> & {
-          taskId: string
-        }
-      >(),
+      type<{
+        taskId: string
+        input: unknown
+        options?: DurableTaskEnqueueOptions
+      }>(),
     )
     .output(type<string>())
     .handler(async ({ input }) => {
@@ -101,7 +110,7 @@ function createEnqueueTaskORPCProcedure<
     })
 }
 
-function createGetTaskExecutionORPCProcedure<
+function createGetTaskExecutionProcedure<
   TInitialContext extends Context,
   TCurrentContext extends Context,
   TErrorMap extends ErrorMap,
@@ -166,7 +175,16 @@ function createGetTaskExecutionORPCProcedure<
     })
 }
 
-export function createDurableTaskORPCRouter<
+/**
+ * Creates a router for durable task procedures. Two procedures are created:
+ * - `enqueueTask` - Enqueues a task
+ * - `getTaskExecution` - Gets the execution of a task
+ *
+ * @param osBuilder - The ORPC builder to use.
+ * @param executor - The durable executor to use.
+ * @returns A router for durable task procedures.
+ */
+export function createDurableTasksRouter<
   TInitialContext extends Context,
   TCurrentContext extends Context,
   TErrorMap extends ErrorMap,
@@ -187,8 +205,8 @@ export function createDurableTaskORPCRouter<
     TInitialContext,
     TCurrentContext,
     Schema<
-      DurableTaskEnqueueInput<unknown> & { taskId: string },
-      DurableTaskEnqueueInput<unknown> & { taskId: string }
+      { taskId: string; input: unknown; options?: DurableTaskEnqueueOptions },
+      { taskId: string; input: unknown; options?: DurableTaskEnqueueOptions }
     >,
     Schema<string, string>,
     TErrorMap,
@@ -204,105 +222,37 @@ export function createDurableTaskORPCRouter<
   >
 } {
   return {
-    enqueueTask: createEnqueueTaskORPCProcedure(osBuilder, executor),
-    getTaskExecution: createGetTaskExecutionORPCProcedure(osBuilder, executor),
+    enqueueTask: createEnqueueTaskProcedure(osBuilder, executor),
+    getTaskExecution: createGetTaskExecutionProcedure(osBuilder, executor),
   }
 }
 
-export type DurableTaskORPCRouterClient<
-  TClientContext extends ClientContext,
-  TErrorMap extends ErrorMap,
-  TTasks extends AnyDurableTasks,
-> = {
-  enqueueTask: ProcedureClient<
-    TClientContext,
-    Schema<
-      DurableTaskEnqueueInput<unknown> & { taskId: keyof TTasks & string },
-      DurableTaskEnqueueInput<unknown> & { taskId: keyof TTasks & string }
-    >,
-    Schema<string, string>,
-    TErrorMap
-  >
-  getTaskExecution: ProcedureClient<
-    TClientContext,
-    Schema<
-      { taskId: keyof TTasks & string; executionId: string },
-      { taskId: keyof TTasks & string; executionId: string }
-    >,
-    Schema<DurableTaskExecution, DurableTaskExecution>,
-    TErrorMap
-  >
-}
-
-export type DurableTaskORPCHandle<TInput, TOutput> = {
-  enqueue: (
-    ...rest: undefined extends TInput
-      ? [input?: TInput, options?: DurableTaskEnqueueOptions]
-      : [input: TInput, options?: DurableTaskEnqueueOptions]
-  ) => Promise<string>
-  getExecution: (executionId: string) => Promise<DurableTaskExecution<TOutput>>
-}
-
-export type InferDurableTaskORPCHandles<TTasks extends AnyDurableTasks> = {
-  [K in keyof TTasks]: DurableTaskORPCHandle<
-    InferDurableTaskInput<TTasks[K]>,
-    InferDurableTaskOutput<TTasks[K]>
-  >
-}
-
-export function createDurableTaskORPCHandles<
-  TClientContext extends ClientContext,
-  TErrorMap extends ErrorMap,
-  TTasks extends AnyDurableTasks,
->(
-  client: DurableTaskORPCRouterClient<TClientContext, TErrorMap, TTasks>,
-  tasks: TTasks,
-  ...rest: Record<never, never> extends TClientContext
-    ? [options?: FriendlyClientOptions<TClientContext>]
-    : [options: FriendlyClientOptions<TClientContext>]
-): InferDurableTaskORPCHandles<TTasks> {
-  const clientOptions = rest.length > 0 ? rest[0]! : undefined
-  return Object.fromEntries(
-    Object.keys(tasks).map((taskIdString) => {
-      const taskId = taskIdString as keyof TTasks & string
-      return [
-        taskId,
-        {
-          enqueue: async (input: unknown, options?: DurableTaskEnqueueOptions) => {
-            const enqueueRest = [{ taskId, input, options }, clientOptions] as ClientRest<
-              TClientContext,
-              DurableTaskEnqueueInput<unknown> & { taskId: keyof TTasks & string }
-            >
-            return await client.enqueueTask(...enqueueRest)
-          },
-          getExecution: async (executionId: string) => {
-            const getExecutionRest = [{ taskId, executionId }, clientOptions] as ClientRest<
-              TClientContext,
-              { taskId: keyof TTasks & string; executionId: string }
-            >
-            return await client.getTaskExecution(...getExecutionRest)
-          },
-        },
-      ]
-    }),
-  ) as InferDurableTaskORPCHandles<TTasks>
-}
-
-export function procedureClientTask<
+/**
+ * Converts a client procedure to a durable task. This is useful when you want to use a client
+ * procedure as a durable task on the server. The `run` function of the durable task will call the
+ * client procedure.
+ *
+ * @param executor - The durable executor to use.
+ * @param taskOptions - The options to use.
+ * @param procedure - The procedure to convert.
+ * @param rest - The client options.
+ * @returns A durable task.
+ */
+export function convertClientProcedureToDurableTask<
   TClientContext extends ClientContext,
   TInputSchema extends AnySchema,
   TOutputSchema extends AnySchema,
   TErrorMap extends ErrorMap,
 >(
   executor: DurableExecutor,
-  options: DurableTaskCommonOptions,
+  taskOptions: DurableTaskCommonOptions,
   procedure: ProcedureClient<TClientContext, TInputSchema, TOutputSchema, TErrorMap>,
   ...rest: Record<never, never> extends TClientContext
     ? [options?: FriendlyClientOptions<TClientContext>]
     : [options: FriendlyClientOptions<TClientContext>]
 ): DurableTask<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>> {
   return executor.task({
-    ...options,
+    ...taskOptions,
     run: async (_, input) => {
       const context = rest.length > 0 ? rest[0]! : undefined
       const procedureRest = [input, context] as ClientRest<
