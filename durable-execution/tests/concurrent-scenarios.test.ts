@@ -14,11 +14,11 @@ describe('concurrentScenarios', () => {
     storage = new InMemoryStorage({ enableDebug: false })
     executor1 = new DurableExecutor(storage, {
       enableDebug: false,
-      backgroundProcessIntraBatchSleepMs: 10,
+      backgroundProcessIntraBatchSleepMs: 50,
     })
     executor2 = new DurableExecutor(storage, {
       enableDebug: false,
-      backgroundProcessIntraBatchSleepMs: 10,
+      backgroundProcessIntraBatchSleepMs: 50,
     })
     void executor1.start()
     void executor2.start()

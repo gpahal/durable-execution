@@ -224,6 +224,8 @@ export class DurableExecutor {
   private readonly logger: Logger
   private readonly expireMs: number
   private readonly backgroundProcessIntraBatchSleepMs: number
+  private readonly maxConcurrentTaskExecutions: number
+  private readonly maxTasksPerBatch: number
   private readonly taskInternalsMap: Map<string, DurableTaskInternal>
   private readonly runningTaskExecutionsMap: Map<
     string,
@@ -247,6 +249,14 @@ export class DurableExecutor {
    *   logger will be used.
    * @param options.enableDebug - Whether to enable debug logging. If `true`, debug logging will
    *   be enabled.
+   * @param options.expireMs - The duration after which a task execution is considered expired.
+   *   If not provided, defaults to 300_000 (5 minutes).
+   * @param options.backgroundProcessIntraBatchSleepMs - The duration to sleep between batches of
+   *   background processes. If not provided, defaults to 500 (500ms).
+   * @param options.maxConcurrentTaskExecutions - The maximum number of tasks that can run concurrently.
+   *   If not provided, defaults to 100.
+   * @param options.maxTasksPerBatch - The maximum number of tasks to process in each batch.
+   *   If not provided, defaults to 3.
    */
   constructor(
     storage: DurableStorage,
@@ -256,12 +266,16 @@ export class DurableExecutor {
       enableDebug = false,
       expireMs,
       backgroundProcessIntraBatchSleepMs,
+      maxConcurrentTaskExecutions,
+      maxTasksPerBatch,
     }: {
       serializer?: Serializer
       logger?: Logger
       enableDebug?: boolean
       expireMs?: number
       backgroundProcessIntraBatchSleepMs?: number
+      maxConcurrentTaskExecutions?: number
+      maxTasksPerBatch?: number
     } = {},
   ) {
     this.storage = storage
@@ -275,6 +289,11 @@ export class DurableExecutor {
       backgroundProcessIntraBatchSleepMs && backgroundProcessIntraBatchSleepMs > 0
         ? backgroundProcessIntraBatchSleepMs
         : 500 // 500ms
+    this.maxConcurrentTaskExecutions =
+      maxConcurrentTaskExecutions && maxConcurrentTaskExecutions > 0
+        ? maxConcurrentTaskExecutions
+        : 100
+    this.maxTasksPerBatch = maxTasksPerBatch && maxTasksPerBatch > 0 ? maxTasksPerBatch : 3
 
     this.taskInternalsMap = new Map()
     this.runningTaskExecutionsMap = new Map()
@@ -1153,6 +1172,9 @@ export class DurableExecutor {
     }
 
     const childrenExecutionIds = execution.childrenTasks.map((child) => child.executionId)
+    if (execution.finalizeTask) {
+      childrenExecutionIds.push(execution.finalizeTask.executionId)
+    }
     await tx.updateTaskExecutions(
       {
         type: 'by_execution_ids',
@@ -1271,9 +1293,19 @@ export class DurableExecutor {
 
   /**
    * Process task executions that are ready to run based on status being ready and startAt
-   * being in the past.
+   * being in the past. Implements backpressure by respecting maxConcurrentTaskExecutions limit.
    */
   private async processReadyTaskExecutionsSingleBatch(): Promise<boolean> {
+    const currConcurrentTaskExecutions = this.runningTaskExecutionsMap.size
+    if (currConcurrentTaskExecutions >= this.maxConcurrentTaskExecutions) {
+      this.logger.debug(
+        `At max concurrent task execution limit (${currConcurrentTaskExecutions}/${this.maxConcurrentTaskExecutions}), skipping processing ready task executions`,
+      )
+      return false
+    }
+
+    const availableLimit = this.maxConcurrentTaskExecutions - currConcurrentTaskExecutions
+    const batchLimit = Math.min(this.maxTasksPerBatch, availableLimit)
     const toRunExecutions = [] as Array<[DurableTaskInternal, DurableTaskExecutionStorageObject]>
     const hasNonEmptyResult = await this.withTransaction(async (tx) => {
       const now = new Date()
@@ -1285,7 +1317,7 @@ export class DurableExecutor {
           startAtLessThan: now,
         },
         { status: 'running', startedAt: now, updatedAt: now },
-        1,
+        batchLimit,
       )
 
       this.logger.debug(`Processing ${executionIds.length} ready task executions`)
@@ -1664,5 +1696,30 @@ export class DurableExecutor {
    */
   getRunningTaskExecutionIds(): ReadonlySet<string> {
     return new Set(this.runningTaskExecutionsMap.keys())
+  }
+
+  /**
+   * Get executor statistics for monitoring and debugging.
+   *
+   * @returns The executor statistics.
+   */
+  getExecutorStats(): {
+    expireMs: number
+    backgroundProcessIntraBatchSleepMs: number
+    currConcurrentTaskExecutions: number
+    maxConcurrentTaskExecutions: number
+    maxTasksPerBatch: number
+    registeredTasksCount: number
+    isShutdown: boolean
+  } {
+    return {
+      expireMs: this.expireMs,
+      backgroundProcessIntraBatchSleepMs: this.backgroundProcessIntraBatchSleepMs,
+      currConcurrentTaskExecutions: this.runningTaskExecutionsMap.size,
+      maxConcurrentTaskExecutions: this.maxConcurrentTaskExecutions,
+      maxTasksPerBatch: this.maxTasksPerBatch,
+      registeredTasksCount: this.taskInternalsMap.size,
+      isShutdown: this.shutdownSignal.isCancelled(),
+    }
   }
 }
