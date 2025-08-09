@@ -22,7 +22,7 @@ pnpm add durable-execution durable-execution-storage-drizzle drizzle-orm
 
 ## Features
 
-- Full support for PostgreSQL, MySQL, and SQLite
+- Full support for PostgreSQL and SQLite
 - Transaction support for consistent state management
 - Type-safe schema definitions
 - Optimized indexes for performance
@@ -49,50 +49,6 @@ const taskExecutionsTable = createDurableTaskExecutionsPgTable()
 
 // Create the storage instance
 const storage = createPgDurableStorage(db, taskExecutionsTable)
-
-// Create and use the executor
-const executor = new DurableExecutor(storage)
-
-// Create a task
-const task = executor.task({
-  id: 'my-task',
-  timeoutMs: 30_000,
-  run: (ctx, input: { name: string }) => {
-    return `Hello, ${input.name}!`
-  },
-})
-
-// Use the executor
-async function main() {
-  const handle = await executor.enqueueTask(task, { name: 'World' })
-  const result = await handle.waitAndGetExecution()
-  console.log(result.output) // "Hello, World!"
-}
-
-await Promise.all([
-  executor.start(),
-  main(),
-])
-
-await executor.shutdown()
-```
-
-### MySQL
-
-```ts
-import { drizzle } from "drizzle-orm/mysql2"
-import { DurableExecutor } from 'durable-execution'
-import { createDurableTaskExecutionsMySQLTable, createMySQLDurableStorage } from 'durable-execution-storage-drizzle'
-
-// Create drizzle instance
-const db = drizzle(process.env.DATABASE_URL!)
-
-// Create the table - you can customize the table name by passing a string to the function
-const taskExecutionsTable = createDurableTaskExecutionsMySQLTable()
-// Export the table from your schema file
-
-// Create the storage instance
-const storage = createMySQLDurableStorage(db, taskExecutionsTable)
 
 // Create and use the executor
 const executor = new DurableExecutor(storage)

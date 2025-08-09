@@ -36,6 +36,7 @@ export type DurableTaskExecutionDbValue = {
   startedAt?: Date | null
   finishedAt?: Date | null
   expiresAt?: Date | null
+  version: number
   createdAt: Date
   updatedAt: Date
 }
@@ -57,6 +58,7 @@ export type DurableTaskExecutionDbUpdateValue = {
   startedAt?: Date
   finishedAt?: Date
   expiresAt?: Date | null
+  version?: number
   updatedAt?: Date
 }
 
@@ -91,6 +93,7 @@ export function storageObjectToInsertValue(
     startedAt: obj.startedAt,
     finishedAt: obj.finishedAt,
     expiresAt: obj.expiresAt,
+    version: obj.version,
     createdAt: obj.createdAt,
     updatedAt: obj.updatedAt,
   }
@@ -112,6 +115,7 @@ export function selectValueToStorageObject(
     needsPromiseCancellation: row.needsPromiseCancellation,
     retryAttempts: row.retryAttempts,
     startAt: row.startAt,
+    version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }

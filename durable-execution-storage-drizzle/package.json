@@ -59,11 +59,8 @@
     "@gpahal/std": "catalog:prod",
     "@electric-sql/pglite": "catalog:dev",
     "@libsql/client": "catalog:dev",
-    "@testcontainers/mysql": "catalog:dev",
     "drizzle-kit": "catalog:dev",
     "drizzle-orm": "catalog:dev",
-    "durable-execution": "workspace:*",
-    "mysql2": "catalog:dev",
-    "testcontainers": "catalog:dev"
+    "durable-execution": "workspace:*"
   }
 }

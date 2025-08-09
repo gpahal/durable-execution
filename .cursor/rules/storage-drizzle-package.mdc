@@ -4,13 +4,13 @@ description: Guidance for durable-execution-storage-drizzle package
 ## Drizzle storage package
 
 - **Purpose**: Drizzle ORM-backed storage for `durable-execution`.
-- **Entry**: [durable-execution-storage-drizzle/src/index.ts](mdc:durable-execution-storage-drizzle/src/index.ts); drivers for PG/MySQL/SQLite in sibling files.
+- **Entry**: [durable-execution-storage-drizzle/src/index.ts](mdc:durable-execution-storage-drizzle/src/index.ts); drivers for PG/SQLite in sibling files.
 - **README** has usage examples for all three databases: [README.md](mdc:durable-execution-storage-drizzle/README.md)
 
 ### Implementor tips
 
 - Export created tables (e.g., `createDurableTaskExecutionsPgTable`) so Drizzle can discover schema.
-- Create storage via helpers like `createPgDurableStorage`, `createMySQLDurableStorage`, `createSQLiteDurableStorage`.
+- Create storage via helpers like `createPgDurableStorage`, `createSQLiteDurableStorage`.
 - Ensure transactional semantics match `DurableStorageTx` expectations from core package.
 
 ### Dev commands

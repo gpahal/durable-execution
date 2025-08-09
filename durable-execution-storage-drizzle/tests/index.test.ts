@@ -2,15 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
-import { MySqlContainer, type StartedMySqlContainer } from '@testcontainers/mysql'
 import type {
-  generateMySQLDrizzleJson as generateMySQLDrizzleJsonType,
-  generateMySQLMigration as generateMySQLMigrationType,
   pushSchema as pushSchemaType,
   pushSQLiteSchema as pushSQLiteSchemaType,
 } from 'drizzle-kit/api'
 import { drizzle as drizzleLibsql } from 'drizzle-orm/libsql'
-import { drizzle as drizzleMySQL } from 'drizzle-orm/mysql2'
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite'
 import {
   DurableExecutor,
@@ -18,28 +14,22 @@ import {
   type DurableStorage,
   type DurableTask,
 } from 'durable-execution'
-import { createPool, type Pool } from 'mysql2/promise'
 import { describe, expect, it } from 'vitest'
 
 import { sleep } from '@gpahal/std/promises'
 
 import {
-  createDurableTaskExecutionsMySQLTable,
   createDurableTaskExecutionsPgTable,
   createDurableTaskExecutionsSQLiteTable,
-  createMySQLDurableStorage,
   createPgDurableStorage,
   createSQLiteDurableStorage,
 } from '../src'
 
 const require = createRequire(import.meta.url)
-const { pushSQLiteSchema, pushSchema, generateMySQLDrizzleJson, generateMySQLMigration } =
-  require('drizzle-kit/api') as {
-    pushSQLiteSchema: typeof pushSQLiteSchemaType
-    pushSchema: typeof pushSchemaType
-    generateMySQLDrizzleJson: typeof generateMySQLDrizzleJsonType
-    generateMySQLMigration: typeof generateMySQLMigrationType
-  }
+const { pushSQLiteSchema, pushSchema } = require('drizzle-kit/api') as {
+  pushSQLiteSchema: typeof pushSQLiteSchemaType
+  pushSchema: typeof pushSchemaType
+}
 
 async function runStorageTest(storage: DurableStorage, cleanup?: () => void | Promise<void>) {
   const executor = new DurableExecutor(storage, {
@@ -195,6 +185,30 @@ async function runExecutorTest(executor: DurableExecutor) {
     )
   }
 
+  const concurrentChildTask = executor.task({
+    id: 'concurrent_child',
+    timeoutMs: 1000,
+    run: async (_, index: number) => {
+      await sleep(1)
+      return index
+    },
+  })
+
+  const concurrentParentTask = executor.parentTask({
+    id: 'concurrent_parent',
+    timeoutMs: 1000,
+    runParent: async () => {
+      await sleep(10)
+      return {
+        output: undefined,
+        childrenTasks: Array.from({ length: 250 }, (_, index) => ({
+          task: concurrentChildTask,
+          input: index,
+        })),
+      }
+    },
+  })
+
   const handle = await executor.enqueueTask(rootTask, { name: 'world' })
   const concurrentHandles = await Promise.all(
     concurrentTasks.map((task) => executor.enqueueTask(task, 'world')),
@@ -346,6 +360,23 @@ async function runExecutorTest(executor: DurableExecutor) {
   expect(parentTaskWithFailingFinalizeTaskExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
     parentTaskWithFailingFinalizeTaskExecution.startedAt.getTime(),
   )
+
+  const concurrentParentTaskHandle = await executor.enqueueTask(concurrentParentTask)
+  const concurrentParentTaskExecution =
+    await concurrentParentTaskHandle.waitAndGetFinishedExecution()
+  expect(concurrentParentTaskExecution.status).toBe('completed')
+  assert(concurrentParentTaskExecution.status === 'completed')
+  expect(concurrentParentTaskExecution.taskId).toBe('concurrent_parent')
+  expect(concurrentParentTaskExecution.output).toBeDefined()
+  expect(concurrentParentTaskExecution.output.childrenTasksOutputs).toHaveLength(250)
+  for (const [
+    i,
+    childTaskOutput,
+  ] of concurrentParentTaskExecution.output.childrenTasksOutputs.entries()) {
+    expect(childTaskOutput.output).toBeDefined()
+    expect(childTaskOutput.output).toBe(i)
+  }
+  expect(concurrentParentTaskExecution.startedAt).toBeInstanceOf(Date)
 }
 
 export async function withTemporaryDirectory(fn: (dirPath: string) => Promise<void>) {
@@ -393,34 +424,4 @@ describe('index', () => {
       await runStorageTest(storage)
     })
   })
-
-  /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-  it('should complete with mysql storage', { timeout: 300_000 }, async () => {
-    const container: StartedMySqlContainer = await new MySqlContainer('mysql:8.4').start()
-
-    const pool: Pool = createPool({
-      host: container.getHost(),
-      port: container.getPort(),
-      user: container.getUsername(),
-      password: container.getUserPassword(),
-      database: container.getDatabase(),
-      connectionLimit: 10,
-    })
-
-    const table = createDurableTaskExecutionsMySQLTable()
-    const db = drizzleMySQL(pool)
-    const prev = await generateMySQLDrizzleJson({})
-    const cur = await generateMySQLDrizzleJson({ table })
-    const statements: Array<string> = await generateMySQLMigration(prev, cur)
-    for (const stmt of statements) {
-      await pool.query(stmt)
-    }
-
-    const storage = createMySQLDurableStorage(db, table)
-    await runStorageTest(storage, async () => {
-      await pool.end()
-      await container.stop()
-    })
-  })
-  /* eslint-enable @typescript-eslint/no-unsafe-assignment */
 })

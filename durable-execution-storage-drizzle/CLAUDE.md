@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Drizzle ORM storage implementation for the durable-execution library. It provides persistent storage backends for durable task executions using PostgreSQL, MySQL, and SQLite databases.
+This is a Drizzle ORM storage implementation for the durable-execution library. It provides persistent storage backends for durable task executions using PostgreSQL and SQLite databases.
 
 ## Development Commands
 
@@ -29,11 +29,11 @@ This is a Drizzle ORM storage implementation for the durable-execution library. 
 
 ### Core Components
 
-**Database Adapters** (`src/pg.ts`, `src/mysql.ts`, `src/sqlite.ts`):
+**Database Adapters** (`src/pg.ts`, `src/sqlite.ts`):
 
 - Each file provides database-specific table schemas and storage implementations
-- Exports table creation functions: `createDurableTaskExecutionsPgTable()`, `createDurableTaskExecutionsMySQLTable()`, `createDurableTaskExecutionsSQLiteTable()`
-- Exports storage factory functions: `createPgDurableStorage()`, `createMySQLDurableStorage()`, `createSQLiteDurableStorage()`
+- Exports table creation functions: `createDurableTaskExecutionsPgTable()`, `createDurableTaskExecutionsSQLiteTable()`
+- Exports storage factory functions: `createPgDurableStorage()`, `createSQLiteDurableStorage()`
 
 **Common Layer** (`src/common.ts`):
 
@@ -67,7 +67,6 @@ The test suite (`tests/index.test.ts`) runs comprehensive integration tests agai
 
 - **SQLite**: Uses file-based database with schema migration via drizzle-kit
 - **PostgreSQL**: Uses PGlite (in-memory Postgres) for fast testing
-- **MySQL**: Uses Testcontainers with real MySQL 8.4 instance
 
 Tests cover:
 
@@ -80,8 +79,7 @@ Tests cover:
 ## Dependencies
 
 - **Peer Dependencies**: Requires `drizzle-orm` and `durable-execution` to be installed
-- **Development Dependencies**: Various database drivers for testing (`@libsql/client`, `mysql2`, `@electric-sql/pglite`)
-- **Testing**: Uses Testcontainers for MySQL integration tests
+- **Development Dependencies**: Various database drivers for testing (`@libsql/client`, `@electric-sql/pglite`)
 
 ## Monorepo Context
 

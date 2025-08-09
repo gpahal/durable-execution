@@ -71,6 +71,7 @@ export function createDurableTaskExecutionsPgTable(tableName = 'durable_task_exe
       startedAt: timestamp('started_at', { withTimezone: true }),
       finishedAt: timestamp('finished_at', { withTimezone: true }),
       expiresAt: timestamp('expires_at', { withTimezone: true }),
+      version: integer('version').notNull(),
       createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
       updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
     },
@@ -163,35 +164,44 @@ class PgDurableStorageTx<
   async getTaskExecutionIds(
     where: DurableTaskExecutionStorageWhere,
     limit?: number,
+    skipLockedForUpdate?: boolean,
   ): Promise<Array<string>> {
-    let rows: Array<{ executionId: string }> = []
     const query = this.tx
       .select({ executionId: this.table.executionId })
       .from(this.table)
       .where(buildWhereCondition(this.table, where))
-    rows = await (limit != null && limit > 0 ? query.limit(limit) : query)
+    const queryWithLimit = limit != null && limit > 0 ? query.limit(limit) : query
+    const queryWithLimitAndSkipLocked = skipLockedForUpdate
+      ? queryWithLimit.for('update', { skipLocked: true })
+      : queryWithLimit
+    const rows = await queryWithLimitAndSkipLocked
     return rows.map((row) => row.executionId)
   }
 
   async getTaskExecutions(
     where: DurableTaskExecutionStorageWhere,
     limit?: number,
+    skipLockedForUpdate?: boolean,
   ): Promise<Array<DurableTaskExecutionStorageObject>> {
     const query = this.tx.select().from(this.table).where(buildWhereCondition(this.table, where))
-    const rows = await (limit != null && limit > 0 ? query.limit(limit) : query)
+    const queryWithLimit = limit != null && limit > 0 ? query.limit(limit) : query
+    const queryWithLimitAndSkipLocked = skipLockedForUpdate
+      ? queryWithLimit.for('update', { skipLocked: true })
+      : queryWithLimit
+    const rows = await queryWithLimitAndSkipLocked
     return rows.map((row) => selectValueToStorageObject(row))
   }
 
   async updateTaskExecutions(
     where: DurableTaskExecutionStorageWhere,
     update: DurableTaskExecutionStorageObjectUpdate,
-  ): Promise<Array<string>> {
+  ): Promise<number> {
     const rows = await this.tx
       .update(this.table)
       .set(storageUpdateToUpdateValue(update))
       .where(buildWhereCondition(this.table, where))
       .returning({ executionId: this.table.executionId })
-    return rows.map((row) => row.executionId)
+    return rows.length
   }
 }
 

@@ -49,6 +49,7 @@ export type DurableStorageTx = {
   getTaskExecutionIds: (
     where: DurableTaskExecutionStorageWhere,
     limit?: number,
+    skipLockedForUpdate?: boolean,
   ) => Array<string> | Promise<Array<string>>
   /**
    * Get durable task executions.
@@ -60,18 +61,86 @@ export type DurableStorageTx = {
   getTaskExecutions: (
     where: DurableTaskExecutionStorageWhere,
     limit?: number,
+    skipLockedForUpdate?: boolean,
   ) => Array<DurableTaskExecutionStorageObject> | Promise<Array<DurableTaskExecutionStorageObject>>
   /**
    * Update durable task executions.
    *
    * @param where - The where clause to filter the durable task executions.
    * @param update - The update object.
-   * @returns The ids of the durable task executions that were updated.
+   * @returns The count of the durable task executions that were updated.
    */
   updateTaskExecutions: (
     where: DurableTaskExecutionStorageWhere,
     update: DurableTaskExecutionStorageObjectUpdate,
-  ) => Array<string> | Promise<Array<string>>
+  ) => number | Promise<number>
+}
+
+export async function updateTaskExecutionsWithLimit(
+  tx: DurableStorageTx,
+  where: DurableTaskExecutionStorageWhere,
+  update: DurableTaskExecutionStorageObjectUpdate,
+  limit?: number,
+): Promise<Array<string>> {
+  const ids = await tx.getTaskExecutionIds(where, limit, true)
+  if (ids.length === 0) {
+    return []
+  }
+
+  await tx.updateTaskExecutions(
+    {
+      type: 'by_execution_ids',
+      executionIds: ids,
+    },
+    update,
+  )
+  return ids
+}
+
+/**
+ * Update a task execution with version checking and retries.
+ */
+export async function updateTaskExecutionWithOptimisticLocking(
+  tx: DurableStorageTx,
+  executionId: string,
+  updateFn: (
+    currentExecution: DurableTaskExecutionStorageObject,
+  ) => Omit<DurableTaskExecutionStorageObjectUpdate, 'version'>,
+  maxAttempts = 3,
+): Promise<void> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const executions = await tx.getTaskExecutions({
+      type: 'by_execution_ids',
+      executionIds: [executionId],
+    })
+    if (executions.length === 0) {
+      return
+    }
+
+    const execution = executions[0]!
+    const update = updateFn(execution)
+    const updatedCount = await tx.updateTaskExecutions(
+      {
+        type: 'by_execution_ids',
+        executionIds: [execution.executionId],
+        version: execution.version,
+      },
+      {
+        ...update,
+        version: execution.version + 1,
+      },
+    )
+    if (updatedCount > 0) {
+      break
+    }
+
+    if (attempt >= maxAttempts - 1) {
+      throw new DurableExecutionError(
+        `Failed to update task executions after ${maxAttempts} attempts due to version conflicts`,
+        false,
+      )
+    }
+  }
 }
 
 /**
@@ -134,27 +203,6 @@ export function createTransactionMutex(): TransactionMutex {
 export type TransactionMutex = {
   acquire: () => Promise<void>
   release: () => void
-}
-
-export async function updateTaskExecutionsWithLimit(
-  tx: DurableStorageTx,
-  where: DurableTaskExecutionStorageWhere,
-  update: DurableTaskExecutionStorageObjectUpdate,
-  limit?: number,
-): Promise<Array<string>> {
-  const ids = await tx.getTaskExecutionIds(where, limit)
-  if (ids.length === 0) {
-    return []
-  }
-
-  await tx.updateTaskExecutions(
-    {
-      type: 'by_execution_ids',
-      executionIds: ids,
-    },
-    update,
-  )
-  return ids
 }
 
 /**
@@ -272,6 +320,11 @@ export type DurableTaskExecutionStorageObject = {
    */
   expiresAt?: Date
   /**
+   * Version for optimistic locking. Incremented on operations that might conflict with other
+   * operations.
+   */
+  version: number
+  /**
    * The time the task execution was created.
    */
   createdAt: Date
@@ -324,6 +377,7 @@ export function createDurableTaskExecutionStorageObject({
     needsPromiseCancellation: false,
     retryAttempts: 0,
     startAt: new Date(now.getTime() + sleepMsBeforeRun),
+    version: 0,
     createdAt: now,
     updatedAt: now,
   }
@@ -347,6 +401,7 @@ export type DurableTaskExecutionStorageWhere =
       executionIds: Array<string>
       statuses?: Array<DurableTaskExecutionStatusStorageObject>
       needsPromiseCancellation?: boolean
+      version?: number
     }
   | {
       type: 'by_statuses'
@@ -386,6 +441,7 @@ export type DurableTaskExecutionStorageObjectUpdate = {
   expiresAt?: Date
   unsetExpiresAt?: boolean
   updatedAt: Date
+  version?: number
 }
 
 /**
@@ -760,14 +816,20 @@ export class InMemoryStorageTx implements DurableStorageTx {
     }
   }
 
-  getTaskExecutionIds(where: DurableTaskExecutionStorageWhere): Array<string> {
-    const executions = this.getTaskExecutions(where)
+  getTaskExecutionIds(
+    where: DurableTaskExecutionStorageWhere,
+    limit?: number,
+    skipLockedForUpdate?: boolean,
+  ): Array<string> {
+    const executions = this.getTaskExecutions(where, limit, skipLockedForUpdate)
     return executions.map((e) => e.executionId)
   }
 
   getTaskExecutions(
     where: DurableTaskExecutionStorageWhere,
     limit?: number,
+    // skipLockedForUpdate can be ignored as transactions run sequentially using the mutex
+    _skipLockedForUpdate?: boolean,
   ): Array<DurableTaskExecutionStorageObject> {
     let executions = [...this.taskExecutions.values()].filter((execution) => {
       if (
@@ -775,7 +837,8 @@ export class InMemoryStorageTx implements DurableStorageTx {
         where.executionIds.includes(execution.executionId) &&
         (!where.statuses || where.statuses.includes(execution.status)) &&
         (!where.needsPromiseCancellation ||
-          execution.needsPromiseCancellation === where.needsPromiseCancellation)
+          execution.needsPromiseCancellation === where.needsPromiseCancellation) &&
+        (where.version == null || execution.version === where.version)
       ) {
         return true
       }
@@ -809,7 +872,7 @@ export class InMemoryStorageTx implements DurableStorageTx {
   updateTaskExecutions(
     where: DurableTaskExecutionStorageWhere,
     update: DurableTaskExecutionStorageObjectUpdate,
-  ): Array<string> {
+  ): number {
     const executions = this.getTaskExecutions(where)
     for (const execution of executions) {
       for (const key in update) {
@@ -824,6 +887,6 @@ export class InMemoryStorageTx implements DurableStorageTx {
         }
       }
     }
-    return executions.map((execution) => execution.executionId)
+    return executions.length
   }
 }

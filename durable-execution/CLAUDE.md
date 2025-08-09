@@ -33,7 +33,7 @@ Each package (`durable-execution`, `durable-execution-storage-drizzle`, `durable
 This is a pnpm workspace with three main packages:
 
 - **`durable-execution`** - Core durable task execution engine
-- **`durable-execution-storage-drizzle`** - Drizzle ORM storage implementations (PostgreSQL, MySQL, SQLite)
+- **`durable-execution-storage-drizzle`** - Drizzle ORM storage implementations (PostgreSQL, SQLite)
 - **`durable-execution-orpc-utils`** - oRPC integration utilities for HTTP APIs
 
 ### Core Package Architecture (`durable-execution`)
@@ -68,7 +68,6 @@ This is a pnpm workspace with three main packages:
 Provides persistent storage implementations using Drizzle ORM:
 
 - PostgreSQL adapter (src/pg.ts) with `createPgDurableStorage()`
-- MySQL adapter (src/mysql.ts) with `createMySQLDurableStorage()`
 - SQLite adapter (src/sqlite.ts) with `createSQLiteDurableStorage()`
 
 Each adapter includes optimized table schemas with proper indexes for performance on frequently queried columns like `(status, isClosed, expiresAt)` and `(status, startAt)`.
@@ -105,6 +104,6 @@ Bridges durable execution with oRPC for type-safe HTTP APIs:
 ## Testing Strategy
 
 - Unit tests in each package's `tests/` directory
-- Integration tests with real database backends (Testcontainers for MySQL, PGlite for PostgreSQL)
+- Integration tests with real database backends (PGlite for PostgreSQL, libsql for SQLite)
 - Coverage reporting available via `pnpm test-coverage`
 - Tests cover complex scenarios like parent-child hierarchies, concurrent execution, and failure modes

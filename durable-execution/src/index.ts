@@ -18,6 +18,7 @@ import {
   createDurableTaskExecutionStorageObject,
   getDurableTaskExecutionStorageObjectParentError,
   updateTaskExecutionsWithLimit,
+  updateTaskExecutionWithOptimisticLocking,
   type DurableStorage,
   type DurableStorageTx,
   type DurableTaskExecutionStorageObject,
@@ -269,7 +270,7 @@ export class DurableExecutor {
     if (!enableDebug) {
       this.logger = createLoggerDebugDisabled(this.logger)
     }
-    this.expireMs = expireMs && expireMs > 0 ? expireMs : 60_000 // 1 minute
+    this.expireMs = expireMs && expireMs > 0 ? expireMs : 300_000 // 5 minutes
     this.backgroundProcessIntraBatchSleepMs =
       backgroundProcessIntraBatchSleepMs && backgroundProcessIntraBatchSleepMs > 0
         ? backgroundProcessIntraBatchSleepMs
@@ -1064,10 +1065,11 @@ export class DurableExecutor {
             }),
           ])
 
-          await tx.updateTaskExecutions(
-            { type: 'by_execution_ids', executionIds: [parentExecution.executionId] },
-            {
-              childrenTasksCompletedCount: parentExecution.childrenTasksCompletedCount + 1,
+          await updateTaskExecutionWithOptimisticLocking(
+            tx,
+            parentExecution.executionId,
+            (currentExecution) => ({
+              childrenTasksCompletedCount: currentExecution.childrenTasksCompletedCount + 1,
               finalizeTask: {
                 taskId: finalizeTaskTaskInternal.id,
                 executionId,
@@ -1075,38 +1077,37 @@ export class DurableExecutor {
               unsetError: true,
               status: 'waiting_for_finalize_task',
               updatedAt: now,
-            },
+            }),
           )
         } else {
-          await tx.updateTaskExecutions(
-            { type: 'by_execution_ids', executionIds: [parentExecution.executionId] },
-            {
+          await updateTaskExecutionWithOptimisticLocking(
+            tx,
+            parentExecution.executionId,
+            (currentExecution) => ({
               output: parentTaskInternal.disableChildrenTasksOutputsInOutput
-                ? parentExecution.runOutput!
+                ? currentExecution.runOutput!
                 : this.serializer.serialize({
-                    output: this.serializer.deserialize(parentExecution.runOutput!),
+                    output: this.serializer.deserialize(currentExecution.runOutput!),
                     childrenTasksOutputs,
                   }),
-              childrenTasksCompletedCount: parentExecution.childrenTasksCompletedCount + 1,
+              childrenTasksCompletedCount: currentExecution.childrenTasksCompletedCount + 1,
               unsetError: true,
               status: 'completed',
               finishedAt: now,
               updatedAt: now,
-            },
+            }),
           )
         }
       } else {
         // If the parent execution is finished or some children haven't finished yet, we can just
-        // update the children count and children.
-        await tx.updateTaskExecutions(
-          {
-            type: 'by_execution_ids',
-            executionIds: [parentExecution.executionId],
-          },
-          {
-            childrenTasksCompletedCount: parentExecution.childrenTasksCompletedCount + 1,
+        // update the children count and children using optimistic locking.
+        await updateTaskExecutionWithOptimisticLocking(
+          tx,
+          parentExecution.executionId,
+          (currentExecution) => ({
+            childrenTasksCompletedCount: currentExecution.childrenTasksCompletedCount + 1,
             updatedAt: now,
-          },
+          }),
         )
       }
     } else {
@@ -1273,7 +1274,8 @@ export class DurableExecutor {
    * being in the past.
    */
   private async processReadyTaskExecutionsSingleBatch(): Promise<boolean> {
-    return await this.withTransaction(async (tx) => {
+    const toRunExecutions = [] as Array<[DurableTaskInternal, DurableTaskExecutionStorageObject]>
+    const hasNonEmptyResult = await this.withTransaction(async (tx) => {
       const now = new Date()
       const executionIds = await updateTaskExecutionsWithLimit(
         tx,
@@ -1299,7 +1301,6 @@ export class DurableExecutor {
         throw new DurableExecutionError('Some task executions not found', true)
       }
 
-      const toRunExecutions = [] as Array<[DurableTaskInternal, DurableTaskExecutionStorageObject]>
       for (const execution of executions) {
         const taskInternal = this.taskInternalsMap.get(execution.taskId)
         if (!taskInternal) {
@@ -1333,11 +1334,14 @@ export class DurableExecutor {
         toRunExecutions.push([taskInternal, execution])
       }
 
-      for (const [taskInternal, execution] of toRunExecutions) {
-        this.runTaskExecutionWithCancelSignal(taskInternal, execution)
-      }
       return true
     })
+
+    for (const [taskInternal, execution] of toRunExecutions) {
+      this.runTaskExecutionWithCancelSignal(taskInternal, execution)
+    }
+
+    return hasNonEmptyResult
   }
 
   /**

@@ -81,6 +81,7 @@ export function createDurableTaskExecutionsSQLiteTable(tableName = 'durable_task
       startedAt: integer('started_at', { mode: 'timestamp' }),
       finishedAt: integer('finished_at', { mode: 'timestamp' }),
       expiresAt: integer('expires_at', { mode: 'timestamp' }),
+      version: integer('version').notNull(),
       createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
       updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
     },
@@ -181,6 +182,8 @@ class SQLiteDurableStorageTx<
   async getTaskExecutionIds(
     where: DurableTaskExecutionStorageWhere,
     limit?: number,
+    // skipLockedForUpdate can be ignored as transactions run sequentially using the mutex
+    _skipLockedForUpdate?: boolean,
   ): Promise<Array<string>> {
     const query = this.tx
       .select({ executionId: this.table.executionId })
@@ -193,6 +196,8 @@ class SQLiteDurableStorageTx<
   async getTaskExecutions(
     where: DurableTaskExecutionStorageWhere,
     limit?: number,
+    // skipLockedForUpdate can be ignored as transactions run sequentially using the mutex
+    _skipLockedForUpdate?: boolean,
   ): Promise<Array<DurableTaskExecutionStorageObject>> {
     const query = this.tx.select().from(this.table).where(buildWhereCondition(this.table, where))
     const rows = await (limit != null && limit > 0 ? query.limit(limit) : query)
@@ -202,13 +207,13 @@ class SQLiteDurableStorageTx<
   async updateTaskExecutions(
     where: DurableTaskExecutionStorageWhere,
     update: DurableTaskExecutionStorageObjectUpdate,
-  ): Promise<Array<string>> {
+  ): Promise<number> {
     const rows = await this.tx
       .update(this.table)
       .set(storageUpdateToUpdateValue(update))
       .where(buildWhereCondition(this.table, where))
       .returning({ executionId: this.table.executionId })
-    return rows.map((row) => row.executionId)
+    return rows.length
   }
 }
 
