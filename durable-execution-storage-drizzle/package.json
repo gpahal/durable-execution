@@ -1,6 +1,6 @@
 {
   "name": "durable-execution-storage-drizzle",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Drizzle ORM storage implementation for durable-execution",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
