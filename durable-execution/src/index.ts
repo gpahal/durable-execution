@@ -1163,18 +1163,23 @@ export class DurableExecutor {
     execution: DurableTaskExecutionStorageObject,
     now: Date,
   ): Promise<void> {
-    if (
-      !execution.childrenTasks ||
-      execution.childrenTasks.length === 0 ||
-      execution.status === 'completed'
-    ) {
+    if (execution.status === 'completed') {
       return
     }
 
-    const childrenExecutionIds = execution.childrenTasks.map((child) => child.executionId)
+    const childrenExecutionIds: Array<string> = []
+    if (execution.childrenTasks && execution.childrenTasks.length > 0) {
+      for (const child of execution.childrenTasks) {
+        childrenExecutionIds.push(child.executionId)
+      }
+    }
     if (execution.finalizeTask) {
       childrenExecutionIds.push(execution.finalizeTask.executionId)
     }
+    if (childrenExecutionIds.length === 0) {
+      return
+    }
+
     await tx.updateTaskExecutions(
       {
         type: 'by_execution_ids',
@@ -1461,9 +1466,13 @@ export class DurableExecutor {
         type: 'by_execution_ids',
         executionIds: [execution.executionId],
       })
-      if (existingExecutions.length === 0 || existingExecutions[0]?.status !== 'running') {
+      if (existingExecutions.length === 0) {
+        this.logger.error(`Task execution ${execution.executionId} not found`)
+        return
+      }
+      if (existingExecutions[0]?.status !== 'running') {
         this.logger.error(
-          `Task execution ${execution.executionId} is not running: ${existingExecutions[0]!.status}`,
+          `Task execution ${execution.executionId} is not running: ${existingExecutions[0]?.status}`,
         )
         return
       }
