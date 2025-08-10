@@ -76,15 +76,15 @@ describe('parentTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.output).toBe('test_output')
-    expect(finishedExecution.output.childrenTasksOutputs).toHaveLength(2)
-    expect(finishedExecution.output.childrenTasksOutputs[0]!.index).toBe(0)
-    expect(finishedExecution.output.childrenTasksOutputs[0]!.taskId).toBe('child1')
-    expect(finishedExecution.output.childrenTasksOutputs[0]!.executionId).toMatch(/^te_/)
-    expect(finishedExecution.output.childrenTasksOutputs[0]!.output).toBe('child1_output')
-    expect(finishedExecution.output.childrenTasksOutputs[1]!.index).toBe(1)
-    expect(finishedExecution.output.childrenTasksOutputs[1]!.taskId).toBe('child2')
-    expect(finishedExecution.output.childrenTasksOutputs[1]!.executionId).toMatch(/^te_/)
-    expect(finishedExecution.output.childrenTasksOutputs[1]!.output).toBe('child2_output')
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs).toHaveLength(2)
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[0]!.index).toBe(0)
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[0]!.taskId).toBe('child1')
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[0]!.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[0]!.output).toBe('child1_output')
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[1]!.index).toBe(1)
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[1]!.taskId).toBe('child2')
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[1]!.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[1]!.output).toBe('child2_output')
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -117,7 +117,7 @@ describe('parentTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.output).toBe('test_output')
-    expect(finishedExecution.output.childrenTasksOutputs).toHaveLength(0)
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs).toHaveLength(0)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -169,10 +169,10 @@ describe('parentTask', () => {
       finalizeTask: {
         id: 'finalizeTask',
         timeoutMs: 1000,
-        run: async (_, { output, childrenTasksOutputs }) => {
+        run: async (_, { output, childrenTaskExecutionsOutputs }) => {
           executed++
           await sleep(1)
-          return `${output}_${childrenTasksOutputs.map((c) => c.output).join('_')}`
+          return `${output}_${childrenTaskExecutionsOutputs.map((c) => c.output).join('_')}`
         },
       },
     })
@@ -208,10 +208,10 @@ describe('parentTask', () => {
       finalizeTask: {
         id: 'finalizeTask',
         timeoutMs: 1000,
-        run: async (_, { output, childrenTasksOutputs }) => {
+        run: async (_, { output, childrenTaskExecutionsOutputs }) => {
           executed++
           await sleep(1)
-          return `${output}_${childrenTasksOutputs.map((c) => c.output).join('_')}`
+          return `${output}_${childrenTaskExecutionsOutputs.map((c) => c.output).join('_')}`
         },
       },
     })
@@ -293,13 +293,13 @@ describe('parentTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.output).toBe('test_output')
-    expect(finishedExecution.output.childrenTasksOutputs).toHaveLength(2)
-    expect(finishedExecution.output.childrenTasksOutputs[0]!.taskId).toBe('child1')
-    expect(finishedExecution.output.childrenTasksOutputs[0]!.executionId).toMatch(/^te_/)
-    expect(finishedExecution.output.childrenTasksOutputs[0]!.output).toBe('child1_output')
-    expect(finishedExecution.output.childrenTasksOutputs[1]!.taskId).toBe('child2')
-    expect(finishedExecution.output.childrenTasksOutputs[1]!.executionId).toMatch(/^te_/)
-    expect(finishedExecution.output.childrenTasksOutputs[1]!.output).toBe('child2_output')
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs).toHaveLength(2)
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[0]!.taskId).toBe('child1')
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[0]!.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[0]!.output).toBe('child1_output')
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[1]!.taskId).toBe('child2')
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[1]!.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[1]!.output).toBe('child2_output')
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -408,10 +408,10 @@ describe('parentTask', () => {
       finalizeTask: {
         id: 'finalizeTask',
         timeoutMs: 1000,
-        run: async (_, { output, childrenTasksOutputs }) => {
+        run: async (_, { output, childrenTaskExecutionsOutputs }) => {
           executed++
           await sleep(1)
-          return `${output}_${childrenTasksOutputs.map((c) => c.output).join('_')}`
+          return `${output}_${childrenTaskExecutionsOutputs.map((c) => c.output).join('_')}`
         },
       },
     })
@@ -424,14 +424,14 @@ describe('parentTask', () => {
     assert(finishedExecution.status === 'children_tasks_failed')
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
-    expect(finishedExecution.childrenTasksErrors).toBeDefined()
-    expect(finishedExecution.childrenTasksErrors).toHaveLength(1)
-    expect(finishedExecution.childrenTasksErrors[0]!.index).toBe(0)
-    expect(finishedExecution.childrenTasksErrors[0]!.taskId).toBe('child1')
-    expect(finishedExecution.childrenTasksErrors[0]!.executionId).toMatch(/^te_/)
-    expect(finishedExecution.childrenTasksErrors[0]!.error?.message).toBe('child1 error')
-    expect(finishedExecution.childrenTasksErrors[0]!.error?.errorType).toBe('generic')
-    expect(finishedExecution.childrenTasksErrors[0]!.error?.isRetryable).toBe(true)
+    expect(finishedExecution.childrenTaskExecutionsErrors).toBeDefined()
+    expect(finishedExecution.childrenTaskExecutionsErrors).toHaveLength(1)
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.index).toBe(0)
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.taskId).toBe('child1')
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.executionId).toMatch(/^te_/)
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.error?.message).toBe('child1 error')
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.error?.errorType).toBe('generic')
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.error?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -483,10 +483,10 @@ describe('parentTask', () => {
       finalizeTask: {
         id: 'finalizeTask',
         timeoutMs: 1000,
-        run: async (_, { output, childrenTasksOutputs }) => {
+        run: async (_, { output, childrenTaskExecutionsOutputs }) => {
           executed++
           await sleep(1)
-          return `${output}_${childrenTasksOutputs.map((c) => c.output).join('_')}`
+          return `${output}_${childrenTaskExecutionsOutputs.map((c) => c.output).join('_')}`
         },
       },
     })
@@ -499,21 +499,21 @@ describe('parentTask', () => {
     assert(finishedExecution.status === 'children_tasks_failed')
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
-    expect(finishedExecution.childrenTasksErrors).toBeDefined()
-    expect(finishedExecution.childrenTasksErrors).toHaveLength(2)
-    finishedExecution.childrenTasksErrors.sort((a, b) => a.index - b.index)
-    expect(finishedExecution.childrenTasksErrors[0]!.index).toBe(0)
-    expect(finishedExecution.childrenTasksErrors[0]!.taskId).toBe('child1')
-    expect(finishedExecution.childrenTasksErrors[0]!.executionId).toMatch(/^te_/)
-    expect(finishedExecution.childrenTasksErrors[0]!.error?.message).toBe('child1 error')
-    expect(finishedExecution.childrenTasksErrors[0]!.error?.errorType).toBe('generic')
-    expect(finishedExecution.childrenTasksErrors[0]!.error?.isRetryable).toBe(true)
-    expect(finishedExecution.childrenTasksErrors[1]!.index).toBe(1)
-    expect(finishedExecution.childrenTasksErrors[1]!.taskId).toBe('child2')
-    expect(finishedExecution.childrenTasksErrors[1]!.executionId).toMatch(/^te_/)
-    expect(finishedExecution.childrenTasksErrors[1]!.error?.message).toBe('child2 error')
-    expect(finishedExecution.childrenTasksErrors[1]!.error?.errorType).toBe('generic')
-    expect(finishedExecution.childrenTasksErrors[1]!.error?.isRetryable).toBe(true)
+    expect(finishedExecution.childrenTaskExecutionsErrors).toBeDefined()
+    expect(finishedExecution.childrenTaskExecutionsErrors).toHaveLength(2)
+    finishedExecution.childrenTaskExecutionsErrors.sort((a, b) => a.index - b.index)
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.index).toBe(0)
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.taskId).toBe('child1')
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.executionId).toMatch(/^te_/)
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.error?.message).toBe('child1 error')
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.error?.errorType).toBe('generic')
+    expect(finishedExecution.childrenTaskExecutionsErrors[0]!.error?.isRetryable).toBe(true)
+    expect(finishedExecution.childrenTaskExecutionsErrors[1]!.index).toBe(1)
+    expect(finishedExecution.childrenTaskExecutionsErrors[1]!.taskId).toBe('child2')
+    expect(finishedExecution.childrenTaskExecutionsErrors[1]!.executionId).toMatch(/^te_/)
+    expect(finishedExecution.childrenTaskExecutionsErrors[1]!.error?.message).toBe('child2 error')
+    expect(finishedExecution.childrenTaskExecutionsErrors[1]!.error?.errorType).toBe('generic')
+    expect(finishedExecution.childrenTaskExecutionsErrors[1]!.error?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -581,10 +581,10 @@ describe('parentTask', () => {
     assert(finishedExecution.status === 'finalize_task_failed')
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
-    expect(finishedExecution.finalizeTaskError).toBeDefined()
-    expect(finishedExecution.finalizeTaskError?.message).toBe('finalizeTask error')
-    expect(finishedExecution.finalizeTaskError?.errorType).toBe('generic')
-    expect(finishedExecution.finalizeTaskError?.isRetryable).toBe(true)
+    expect(finishedExecution.finalizeTaskExecutionError).toBeDefined()
+    expect(finishedExecution.finalizeTaskExecutionError?.message).toBe('finalizeTask error')
+    expect(finishedExecution.finalizeTaskExecutionError?.errorType).toBe('generic')
+    expect(finishedExecution.finalizeTaskExecutionError?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -655,11 +655,11 @@ describe('parentTask', () => {
       finalizeTask: {
         id: 'finalizeTask',
         timeoutMs: 1000,
-        runParent: async (_, { output, childrenTasksOutputs }) => {
+        runParent: async (_, { output, childrenTaskExecutionsOutputs }) => {
           executed++
           await sleep(1)
           return {
-            output: `${output}_${childrenTasksOutputs.map((c) => c.output).join('_')}`,
+            output: `${output}_${childrenTaskExecutionsOutputs.map((c) => c.output).join('_')}`,
             childrenTasks: [
               { task: finalizeTaskChild1, input: undefined },
               { task: finalizeTaskChild2, input: undefined },
@@ -669,10 +669,10 @@ describe('parentTask', () => {
         finalizeTask: {
           id: 'finalizeTaskNested',
           timeoutMs: 1000,
-          run: async (_, { output, childrenTasksOutputs }) => {
+          run: async (_, { output, childrenTaskExecutionsOutputs }) => {
             executed++
             await sleep(1)
-            return `${output}_${childrenTasksOutputs.map((c) => c.output).join('_')}`
+            return `${output}_${childrenTaskExecutionsOutputs.map((c) => c.output).join('_')}`
           },
         },
       },

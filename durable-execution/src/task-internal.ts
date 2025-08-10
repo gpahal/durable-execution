@@ -3,45 +3,45 @@ import { z } from 'zod'
 import { createCancellablePromise, createTimeoutCancelSignal, type CancelSignal } from './cancel'
 import { DurableExecutionError, DurableExecutionTimedOutError } from './errors'
 import {
-  isDurableFinalizeTaskOptionsParentTaskOptions,
-  isDurableFinalizeTaskOptionsTaskOptions,
-  type DurableChildTask,
-  type DurableParentTaskOptions,
-  type DurableTaskEnqueueOptions,
-  type DurableTaskOptions,
-  type DurableTaskRetryOptions,
-  type DurableTaskRunContext,
+  isFinalizeTaskOptionsParentTaskOptions,
+  isFinalizeTaskOptionsTaskOptions,
+  type ChildTask,
+  type ParentTaskOptions,
+  type TaskEnqueueOptions,
+  type TaskOptions,
+  type TaskRetryOptions,
+  type TaskRunContext,
 } from './task'
 import { generateId } from './utils'
 
-export type DurableTaskOptionsInternal = {
+export type TaskOptionsInternal = {
   id: string
-  retryOptions: DurableTaskRetryOptions | undefined
+  retryOptions: TaskRetryOptions | undefined
   sleepMsBeforeRun: number | undefined
   timeoutMs: number
   validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
-  disableChildrenTasksOutputsInOutput: boolean
+  disableChildrenTaskExecutionsOutputsInOutput: boolean
   runParent: (
-    ctx: DurableTaskRunContext,
+    ctx: TaskRunContext,
     input: unknown,
   ) => Promise<{
     output: unknown
-    childrenTasks: Array<DurableChildTask>
+    childrenTasks: Array<ChildTask>
   }>
-  finalizeTask: DurableTaskOptionsInternal | undefined
+  finalizeTask: TaskOptionsInternal | undefined
 }
 
-function convertDurableTaskOptionsOptionsInternal(
-  taskOptions: DurableTaskOptions<unknown, unknown>,
+function convertTaskOptionsOptionsInternal(
+  taskOptions: TaskOptions<unknown, unknown>,
   validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
-): DurableTaskOptionsInternal {
+): TaskOptionsInternal {
   return {
     id: taskOptions.id,
     retryOptions: taskOptions.retryOptions,
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
     timeoutMs: taskOptions.timeoutMs,
     validateInputFn,
-    disableChildrenTasksOutputsInOutput: true,
+    disableChildrenTaskExecutionsOutputsInOutput: true,
     runParent: async (ctx, input) => {
       const output = await taskOptions.run(ctx, input)
       return {
@@ -53,17 +53,17 @@ function convertDurableTaskOptionsOptionsInternal(
   }
 }
 
-function convertDurableParentTaskOptionsOptionsInternal(
-  taskOptions: DurableParentTaskOptions<unknown, unknown, unknown, unknown>,
+function convertParentTaskOptionsOptionsInternal(
+  taskOptions: ParentTaskOptions<unknown, unknown, unknown, unknown>,
   validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
-): DurableTaskOptionsInternal {
+): TaskOptionsInternal {
   return {
     id: taskOptions.id,
     retryOptions: taskOptions.retryOptions,
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
     timeoutMs: taskOptions.timeoutMs,
     validateInputFn,
-    disableChildrenTasksOutputsInOutput: false,
+    disableChildrenTaskExecutionsOutputsInOutput: false,
     runParent: async (ctx, input) => {
       const runParentOutput = await taskOptions.runParent(ctx, input)
       return {
@@ -72,19 +72,14 @@ function convertDurableParentTaskOptionsOptionsInternal(
       }
     },
     finalizeTask: taskOptions.finalizeTask
-      ? isDurableFinalizeTaskOptionsParentTaskOptions(taskOptions.finalizeTask)
-        ? convertDurableParentTaskOptionsOptionsInternal(
-            taskOptions.finalizeTask as DurableParentTaskOptions<
-              unknown,
-              unknown,
-              unknown,
-              unknown
-            >,
+      ? isFinalizeTaskOptionsParentTaskOptions(taskOptions.finalizeTask)
+        ? convertParentTaskOptionsOptionsInternal(
+            taskOptions.finalizeTask as ParentTaskOptions<unknown, unknown, unknown, unknown>,
             undefined,
           )
-        : isDurableFinalizeTaskOptionsTaskOptions(taskOptions.finalizeTask)
-          ? convertDurableTaskOptionsOptionsInternal(
-              taskOptions.finalizeTask as DurableTaskOptions<unknown, unknown>,
+        : isFinalizeTaskOptionsTaskOptions(taskOptions.finalizeTask)
+          ? convertTaskOptionsOptionsInternal(
+              taskOptions.finalizeTask as TaskOptions<unknown, unknown>,
               undefined,
             )
           : undefined
@@ -151,56 +146,52 @@ const zSleepMsBeforeRun = z
 
 const zTimeoutMs = z.number().int().min(1)
 
-export class DurableTaskInternal {
-  private readonly taskInternalsMap: Map<string, DurableTaskInternal>
-
+export class TaskInternal {
   readonly id: string
-  readonly retryOptions: DurableTaskRetryOptions
+  readonly retryOptions: TaskRetryOptions
   private readonly sleepMsBeforeRun: number
   private readonly timeoutMs: number
   private readonly validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
-  readonly disableChildrenTasksOutputsInOutput: boolean
+  readonly disableChildrenTaskExecutionsOutputsInOutput: boolean
   private readonly runParent: (
-    ctx: DurableTaskRunContext,
+    ctx: TaskRunContext,
     input: unknown,
   ) => Promise<{
     output: unknown
-    childrenTasks: Array<DurableChildTask>
+    childrenTasks: Array<ChildTask>
   }>
-  readonly finalizeTask: DurableTaskInternal | undefined
+  readonly finalizeTask: TaskInternal | undefined
 
   constructor(
-    taskInternalsMap: Map<string, DurableTaskInternal>,
     id: string,
-    retryOptions: DurableTaskRetryOptions,
+    retryOptions: TaskRetryOptions,
     sleepMsBeforeRun: number,
     timeoutMs: number,
     validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
-    disableChildrenTasksOutputsInOutput: boolean,
+    disableChildrenTaskExecutionsOutputsInOutput: boolean,
     runParent: (
-      ctx: DurableTaskRunContext,
+      ctx: TaskRunContext,
       input: unknown,
     ) => Promise<{
       output: unknown
-      childrenTasks: Array<DurableChildTask>
+      childrenTasks: Array<ChildTask>
     }>,
-    finalizeTask: DurableTaskInternal | undefined,
+    finalizeTask: TaskInternal | undefined,
   ) {
-    this.taskInternalsMap = taskInternalsMap
     this.id = id
     this.retryOptions = retryOptions
     this.sleepMsBeforeRun = sleepMsBeforeRun
     this.timeoutMs = timeoutMs
     this.validateInputFn = validateInputFn
-    this.disableChildrenTasksOutputsInOutput = disableChildrenTasksOutputsInOutput
+    this.disableChildrenTaskExecutionsOutputsInOutput = disableChildrenTaskExecutionsOutputsInOutput
     this.runParent = runParent
     this.finalizeTask = finalizeTask
   }
 
-  static fromDurableTaskOptionsInternal(
-    taskInternalsMap: Map<string, DurableTaskInternal>,
-    taskOptions: DurableTaskOptionsInternal,
-  ): DurableTaskInternal {
+  static fromTaskOptionsInternal(
+    taskInternalsMap: Map<string, TaskInternal>,
+    taskOptions: TaskOptionsInternal,
+  ): TaskInternal {
     validateTaskId(taskOptions.id)
     if (taskInternalsMap.has(taskOptions.id)) {
       throw new DurableExecutionError(
@@ -234,20 +225,16 @@ export class DurableTaskInternal {
     }
 
     const finalizeTask = taskOptions.finalizeTask
-      ? DurableTaskInternal.fromDurableTaskOptionsInternal(
-          taskInternalsMap,
-          taskOptions.finalizeTask,
-        )
+      ? TaskInternal.fromTaskOptionsInternal(taskInternalsMap, taskOptions.finalizeTask)
       : undefined
 
-    const taskInternal = new DurableTaskInternal(
-      taskInternalsMap,
+    const taskInternal = new TaskInternal(
       taskOptions.id,
       parsedRetryOptions.data,
       parsedSleepMsBeforeRun.data,
       parsedTimeoutMs.data,
       taskOptions.validateInputFn,
-      taskOptions.disableChildrenTasksOutputsInOutput,
+      taskOptions.disableChildrenTaskExecutionsOutputsInOutput,
       taskOptions.runParent,
       finalizeTask,
     )
@@ -255,42 +242,42 @@ export class DurableTaskInternal {
     return taskInternal
   }
 
-  static fromDurableTaskOptions<TRunInput, TInput, TOutput>(
-    taskInternalsMap: Map<string, DurableTaskInternal>,
-    taskOptions: DurableTaskOptions<TRunInput, TOutput>,
+  static fromTaskOptions<TRunInput, TInput, TOutput>(
+    taskInternalsMap: Map<string, TaskInternal>,
+    taskOptions: TaskOptions<TRunInput, TOutput>,
     validateInputFn?: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
-  ): DurableTaskInternal {
-    return DurableTaskInternal.fromDurableTaskOptionsInternal(
+  ): TaskInternal {
+    return TaskInternal.fromTaskOptionsInternal(
       taskInternalsMap,
-      convertDurableTaskOptionsOptionsInternal(
-        taskOptions as DurableTaskOptions<unknown, unknown>,
+      convertTaskOptionsOptionsInternal(
+        taskOptions as TaskOptions<unknown, unknown>,
         validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
       ),
     )
   }
 
-  static fromDurableParentTaskOptions<
+  static fromParentTaskOptions<
     TRunInput,
     TInput = TRunInput,
     TRunOutput = unknown,
     TOutput = unknown,
     TFinalizeTaskRunOutput = unknown,
   >(
-    taskInternalsMap: Map<string, DurableTaskInternal>,
-    taskOptions: DurableParentTaskOptions<TRunInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
+    taskInternalsMap: Map<string, TaskInternal>,
+    taskOptions: ParentTaskOptions<TRunInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
     validateInputFn?: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
-  ): DurableTaskInternal {
-    return DurableTaskInternal.fromDurableTaskOptionsInternal(
+  ): TaskInternal {
+    return TaskInternal.fromTaskOptionsInternal(
       taskInternalsMap,
-      convertDurableParentTaskOptionsOptionsInternal(
-        taskOptions as DurableParentTaskOptions<unknown, unknown, unknown, unknown>,
+      convertParentTaskOptionsOptionsInternal(
+        taskOptions as ParentTaskOptions<unknown, unknown, unknown, unknown>,
         validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
       ),
     )
   }
 
-  validateEnqueueOptions(options?: DurableTaskEnqueueOptions): DurableTaskEnqueueOptions {
-    const validatedOptions: DurableTaskEnqueueOptions = {}
+  validateEnqueueOptions(options?: TaskEnqueueOptions): TaskEnqueueOptions {
+    const validatedOptions: TaskEnqueueOptions = {}
 
     if (options?.retryOptions) {
       const parsedRetryOptions = zRetryOptions.safeParse(options.retryOptions)
@@ -331,15 +318,15 @@ export class DurableTaskInternal {
     return validatedOptions
   }
 
-  getRetryOptions(options?: DurableTaskEnqueueOptions): DurableTaskRetryOptions {
+  getRetryOptions(options?: TaskEnqueueOptions): TaskRetryOptions {
     return options?.retryOptions != null ? options.retryOptions : this.retryOptions
   }
 
-  getSleepMsBeforeRun(options?: DurableTaskEnqueueOptions): number {
+  getSleepMsBeforeRun(options?: TaskEnqueueOptions): number {
     return options?.sleepMsBeforeRun != null ? options.sleepMsBeforeRun : this.sleepMsBeforeRun
   }
 
-  getTimeoutMs(options?: DurableTaskEnqueueOptions): number {
+  getTimeoutMs(options?: TaskEnqueueOptions): number {
     return options?.timeoutMs != null ? options.timeoutMs : this.timeoutMs
   }
 
@@ -351,13 +338,13 @@ export class DurableTaskInternal {
   }
 
   async runParentWithTimeoutAndCancellation(
-    ctx: DurableTaskRunContext,
+    ctx: TaskRunContext,
     input: unknown,
     timeoutMs: number,
     cancelSignal: CancelSignal,
   ): Promise<{
     output: unknown
-    childrenTasks: Array<DurableChildTask>
+    childrenTasks: Array<ChildTask>
   }> {
     const timeoutCancelSignal = createTimeoutCancelSignal(timeoutMs)
     return await createCancellablePromise(
@@ -406,14 +393,14 @@ const _TASK_ID_REGEX = /^\w+$/
  */
 export function validateTaskId(id: string): void {
   if (id.length === 0) {
-    throw new DurableExecutionError('Id cannot be empty', false)
+    throw new DurableExecutionError('Task id cannot be empty', false)
   }
   if (id.length > 255) {
-    throw new DurableExecutionError('Id cannot be longer than 255 characters', false)
+    throw new DurableExecutionError('Task id cannot be longer than 255 characters', false)
   }
   if (!_TASK_ID_REGEX.test(id)) {
     throw new DurableExecutionError(
-      'Id can only contain alphanumeric characters and underscores',
+      'Task id can only contain alphanumeric characters and underscores',
       false,
     )
   }

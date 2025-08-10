@@ -97,8 +97,8 @@ describe('concurrentScenarios', () => {
       const result = await handle.waitAndGetFinishedExecution()
       expect(result.status).toBe('completed')
       assert(result.status === 'completed')
-      expect(result.output.childrenTasksOutputs).toHaveLength(3)
-      const outputs = result.output.childrenTasksOutputs.map((c) => c.output)
+      expect(result.output.childrenTaskExecutionsOutputs).toHaveLength(3)
+      const outputs = result.output.childrenTaskExecutionsOutputs.map((c) => c.output)
       expect(outputs).toEqual(['child1_result', 'child2_result', 'child3_result'])
     },
   )
@@ -224,9 +224,9 @@ describe('concurrentScenarios', () => {
       const result = await handle.waitAndGetFinishedExecution()
       expect(result.status).toBe('completed')
       assert(result.status === 'completed')
-      expect(result.output.childrenTasksOutputs).toHaveLength(1000)
+      expect(result.output.childrenTaskExecutionsOutputs).toHaveLength(1000)
 
-      const outputs = result.output.childrenTasksOutputs.map((c) => c.output)
+      const outputs = result.output.childrenTaskExecutionsOutputs.map((c) => c.output)
       const uniqueOutputs = new Set(outputs)
       expect(uniqueOutputs.size).toBe(1000)
     },

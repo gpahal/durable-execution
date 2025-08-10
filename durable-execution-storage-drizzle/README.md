@@ -35,20 +35,17 @@ pnpm add durable-execution durable-execution-storage-drizzle drizzle-orm
 ```ts
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { DurableExecutor } from 'durable-execution'
-import {
-  createDurableTaskExecutionsPgTable,
-  createPgDurableStorage,
-} from 'durable-execution-storage-drizzle'
+import { createTaskExecutionsPgTable, createPgStorage } from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
 const db = drizzle(process.env.DATABASE_URL!)
 
 // Create the schema - you can customize the table name by passing a string to the function
-const taskExecutionsTable = createDurableTaskExecutionsPgTable()
+const taskExecutionsTable = createTaskExecutionsPgTable()
 // Export the table from your schema file
 
 // Create the storage instance
-const storage = createPgDurableStorage(db, taskExecutionsTable)
+const storage = createPgStorage(db, taskExecutionsTable)
 
 // Create and use the executor
 const executor = new DurableExecutor(storage)
@@ -82,17 +79,17 @@ await executor.shutdown()
 ```ts
 import { drizzle } from 'drizzle-orm/libsql'
 import { DurableExecutor } from 'durable-execution'
-import { createDurableTaskExecutionsSQLiteTable, createSQLiteDurableStorage } from 'durable-execution-storage-drizzle'
+import { createTaskExecutionsSQLiteTable, createSQLiteStorage } from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
 const db = drizzle(process.env.DATABASE_URL!)
 
 // Create the table - you can customize the table name by passing a string to the function
-const taskExecutionsTable = createDurableTaskExecutionsSQLiteTable()
+const taskExecutionsTable = createTaskExecutionsSQLiteTable()
 // Export the table from your schema file
 
 // Create the storage instance
-const storage = createSQLiteDurableStorage(db, taskExecutionsTable)
+const storage = createSQLiteStorage(db, taskExecutionsTable)
 
 // Create and use the executor
 const executor = new DurableExecutor(storage)

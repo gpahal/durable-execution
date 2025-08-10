@@ -1,34 +1,34 @@
 ---
 alwaysApply: true
 ---
-## Monorepo overview
+### Monorepo overview and commands
 
-- **Packages**:
-  - `durable-execution`
-  - `durable-execution-orpc-utils`
-  - `durable-execution-storage-drizzle`
+This repository is a pnpm workspace with three packages:
 
-- **Tooling**:
-  - Node >= 20, pnpm (see [package.json](mdc:package.json))
-  - Turborepo task orchestration ([turbo.json](mdc:turbo.json))
-  - TypeScript, tsup bundling, Vitest, ESLint, Prettier
+- `durable-execution` – core durable task execution engine
+- `durable-execution-storage-drizzle` – Drizzle ORM storage (PostgreSQL, SQLite)
+- `durable-execution-orpc-utils` – oRPC utilities to expose/use durable tasks over RPC
 
-- **Workspace config**: [pnpm-workspace.yaml](mdc:pnpm-workspace.yaml)
-
-## Common scripts (run at repo root)
-
-- Build all: `pnpm build`
-- Test all: `pnpm test`
-- Coverage: `pnpm test-coverage`
-- Type-check: `pnpm type-check`
-- Lint: `pnpm lint` | Fix: `pnpm lint-fix`
-- Format: `pnpm fmt` | Check: `pnpm fmt-check`
-- Clean: `pnpm clean`
-- Docs (core pkg): `pnpm build-docs`
-
-Pre-commit hooks run type-check, lint, format check, and build (see [package.json](mdc:package.json)).
-
-## Project docs
+Useful references:
 
 - Root README: [README.md](mdc:README.md)
-- Core package docs: `durable-execution/scripts/build-docs.ts` ([build-docs.ts](mdc:durable-execution/scripts/build-docs.ts))
+- Core package: [durable-execution/README.md](mdc:durable-execution/README.md)
+- Drizzle storage: [durable-execution-storage-drizzle/README.md](mdc:durable-execution-storage-drizzle/README.md)
+- oRPC utils: [durable-execution-orpc-utils/README.md](mdc:durable-execution-orpc-utils/README.md)
+
+Top-level scripts (Turbo orchestrated): defined in [package.json](mdc:package.json)
+
+- pnpm build – Build all packages
+- pnpm test – Run tests across packages
+- pnpm test-coverage – Run tests with coverage
+- pnpm type-check – Type-check all packages
+- pnpm lint / pnpm lint-fix – Lint all packages
+- pnpm fmt / pnpm fmt-check – Format or check formatting
+- pnpm clean – Clean build artifacts
+- pnpm build-docs – Build TypeDoc docs for core package
+
+Tooling:
+
+- Turbo tasks: [turbo.json](mdc:turbo.json)
+- Workspace setup: [pnpm-workspace.yaml](mdc:pnpm-workspace.yaml)
+- TypeDoc config: [typedoc.json](mdc:typedoc.json)

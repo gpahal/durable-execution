@@ -8,7 +8,7 @@ import { CustomError } from '@gpahal/std/errors'
 export type DurableExecutionErrorType = 'generic' | 'not_found' | 'timed_out' | 'cancelled'
 
 /**
- * Base class for all errors thrown by {@link DurableExecutor} and {@link DurableTask}.
+ * Base class for all errors thrown by {@link DurableExecutor} and {@link Task}.
  *
  * @category Errors
  */
@@ -97,20 +97,20 @@ export class DurableExecutionCancelledError extends DurableExecutionError {
 }
 
 /**
- * A storage object for a durable execution error.
+ * A storage value for a durable execution error.
  *
  * @category Errors
  */
-export type DurableExecutionErrorStorageObject = {
+export type DurableExecutionErrorStorageValue = {
   errorType: DurableExecutionErrorType
   isInternal: boolean
   message: string
   isRetryable: boolean
 }
 
-export function convertDurableExecutionErrorToStorageObject(
+export function convertDurableExecutionErrorToStorageValue(
   error: DurableExecutionError,
-): DurableExecutionErrorStorageObject {
+): DurableExecutionErrorStorageValue {
   return {
     errorType: error.getErrorType(),
     isInternal: error.isInternal,

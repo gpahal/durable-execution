@@ -1,8 +1,8 @@
 import type { CancelSignal } from './cancel'
-import type { DurableExecutionError, DurableExecutionErrorStorageObject } from './errors'
+import type { DurableExecutionError, DurableExecutionErrorStorageValue } from './errors'
 
 /**
- * A durable task that can be run using a durable executor. See the
+ * A task that can be run using a durable executor. See the
  * [usage](https://gpahal.github.io/durable-execution/index.html#usage) and
  * [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples) sections
  * for more details on creating and enqueuing tasks.
@@ -10,42 +10,42 @@ import type { DurableExecutionError, DurableExecutionErrorStorageObject } from '
  * @category Task
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export type DurableTask<TInput, TOutput> = {
+export type Task<TInput, TOutput> = {
   id: string
 }
 
 /**
- * Infer the input type of a durable task.
+ * Infer the input type of a task.
  *
  * @category Task
  */
-export type InferDurableTaskInput<TTask extends DurableTask<unknown, unknown>> =
-  TTask extends DurableTask<infer I, unknown> ? I : never
+export type InferTaskInput<TTask extends Task<unknown, unknown>> =
+  TTask extends Task<infer I, unknown> ? I : never
 
 /**
- * Infer the output type of a durable task.
+ * Infer the output type of a task.
  *
  * @category Task
  */
-export type InferDurableTaskOutput<TTask extends DurableTask<unknown, unknown>> =
-  TTask extends DurableTask<unknown, infer O> ? O : never
+export type InferTaskOutput<TTask extends Task<unknown, unknown>> =
+  TTask extends Task<unknown, infer O> ? O : never
 
 /**
- * Common options for a durable task. These options are used by both {@link DurableTaskOptions} and
- * {@link DurableParentTaskOptions}.
+ * Common options for a task. These options are used by both {@link TaskOptions} and
+ * {@link ParentTaskOptions}.
  *
  * @category Task
  */
-export type DurableTaskCommonOptions = {
+export type TaskCommonOptions = {
   /**
    * A unique identifier for the task. Can only contain alphanumeric characters and underscores.
-   * The identifier must be unique among all the durable tasks in the same durable executor.
+   * The identifier must be unique among all the tasks in the same executor.
    */
   id: string
   /**
    * The options for retrying the task.
    */
-  retryOptions?: DurableTaskRetryOptions
+  retryOptions?: TaskRetryOptions
   /**
    * The delay before running the task run function. If the value is < 0 or undefined, it will be
    * treated as 0.
@@ -59,12 +59,12 @@ export type DurableTaskCommonOptions = {
 }
 
 /**
- * The options for retrying a durable task. The delay after nth retry is calculated as:
+ * The options for retrying a task. The delay after nth retry is calculated as:
  * `baseDelayMs * (delayMultiplier ** n)`. The delay is capped at `maxDelayMs` if provided.
  *
  * @category Task
  */
-export type DurableTaskRetryOptions = {
+export type TaskRetryOptions = {
   /**
    * The maximum number of times the task can be retried.
    */
@@ -84,12 +84,12 @@ export type DurableTaskRetryOptions = {
 }
 
 /**
- * Options for a durable task that can be run using a durable executor. A task is resilient to task
+ * Options for a task that can be run using a durable executor. A task is resilient to task
  * failures, process failures, network connectivity issues, and other transient errors. The task
  * should be idempotent as it may be run multiple times if there is a process failure or if the
  * task is retried.
  *
- * When enqueued with an executor, a {@link DurableTaskExecutionHandle} is returned. It supports getting
+ * When enqueued with an executor, a {@link TaskExecutionHandle} is returned. It supports getting
  * the execution status, waiting for the task to complete, and cancelling the task.
  *
  * The output of the `run` function is the output of the task.
@@ -97,13 +97,13 @@ export type DurableTaskRetryOptions = {
  * The input and output are serialized and deserialized using the serializer passed to the durable
  * executor.
  *
- * Make sure the id is unique among all the durable tasks in the same durable executor. If two
- * tasks are registered with the same id, the second one will overwrite the first one, even if the
- * first one is enqueued.
+ * Make sure the id is unique among all the tasks in the same durable executor. If two tasks are
+ * registered with the same id, the second one will overwrite the first one, even if the first one
+ * is enqueued.
  *
- * The tasks can be added to an executor using the {@link DurableExecutor.task} method. If the input
- * to a task needs to be validated, it can be done using the {@link DurableExecutor.validateInput}
- * or {@link DurableExecutor.inputSchema} methods.
+ * The tasks can be added to an executor using the {@link DurableExecutor.task} method. If the
+ * input to a task needs to be validated, it can be done using the
+ * {@link DurableExecutor.validateInput} or {@link DurableExecutor.inputSchema} methods.
  *
  * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
  * section for more details on creating tasks.
@@ -126,12 +126,12 @@ export type DurableTaskRetryOptions = {
  *
  * @category Task
  */
-export type DurableTaskOptions<TInput = undefined, TOutput = unknown> = DurableTaskCommonOptions & {
+export type TaskOptions<TInput = undefined, TOutput = unknown> = TaskCommonOptions & {
   /**
    * The task run logic. It returns the output.
    *
    * Behavior on throwing errors:
-   * - If the task throws an error or a `{@link DurableExecutionError}`, the task will be marked as
+   * - If the task throws an error or a `{@link ExecutionError}`, the task will be marked as
    * failed
    * - If the task throws a `{@link DurableExecutionTimedOutError}`, it will be marked as timed out
    * - If the task throws a `{@link DurableExecutionCancelledError}`, it will be marked as cancelled
@@ -142,16 +142,16 @@ export type DurableTaskOptions<TInput = undefined, TOutput = unknown> = DurableT
    * @param input - The input to the task.
    * @returns The output of the task.
    */
-  run: (ctx: DurableTaskRunContext, input: TInput) => TOutput | Promise<TOutput>
+  run: (ctx: TaskRunContext, input: TInput) => TOutput | Promise<TOutput>
 }
 
 /**
- * Options for a durable parent task that can be run using a durable executor. It is similar to
- * {@link DurableTaskOptions} but it returns children tasks to be run in parallel after the run
+ * Options for a parent task that can be run using a durable executor. It is similar to
+ * {@link TaskOptions} but it returns children tasks to be run in parallel after the run
  * function completes, along with the output of the parent task.
  *
- * The `runParent` function is similar to the `run` function in {@link DurableTaskOptions}, but the
- * output is of the form `{ output: TRunOutput, childrenTasks: Array<DurableChildTask> }` where the
+ * The `runParent` function is similar to the `run` function in {@link TaskOptions}, but the
+ * output is of the form `{ output: TRunOutput, childrenTasks: Array<ChildTask> }` where the
  * children are the tasks to be run in parallel after the run function completes.
  *
  * The `finalizeTask` task is run after the runParent function and all the children tasks complete.
@@ -160,11 +160,11 @@ export type DurableTaskOptions<TInput = undefined, TOutput = unknown> = DurableT
  *
  * - `input`: The input of the `finalizeTask` task. Same as the input of runParent function
  * - `output`: The output of the runParent function
- * - `childrenTasksOutputs`: The outputs of the children tasks
+ * - `childrenTaskExecutionsOutputs`: The outputs of the children tasks
  *
  * If `finalizeTask` is provided, the output of the whole task is the output of the `finalizeTask`
  * task. If it is not provided, the output of the whole task is the output of the form
- * `{ output: TRunOutput, childrenTasksOutputs: Array<DurableChildTaskExecutionOutput> }`.
+ * `{ output: TRunOutput, childrenTaskExecutionsOutputs: Array<ChildTaskExecutionOutput> }`.
  *
  * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
  * section for more details on creating tasks.
@@ -233,7 +233,7 @@ export type DurableTaskOptions<TInput = undefined, TOutput = unknown> = DurableT
  *     finalizeTask: {
  *       id: 'onUploadFileAndChildrenComplete',
  *       timeoutMs: 60_000, // 1 minute
- *       run: async (ctx, { input, output, childrenTasksOutputs }) => {
+ *       run: async (ctx, { input, output, childrenTaskExecutionsOutputs }) => {
  *         // ... combine the output of the run function and children tasks
  *         return {
  *           filePath: input.filePath,
@@ -249,17 +249,17 @@ export type DurableTaskOptions<TInput = undefined, TOutput = unknown> = DurableT
  *
  * @category Task
  */
-export type DurableParentTaskOptions<
+export type ParentTaskOptions<
   TInput = undefined,
   TRunOutput = unknown,
   TOutput = {
     output: TRunOutput
-    childrenTasksOutputs: Array<DurableChildTaskExecutionOutput>
+    childrenTaskExecutionsOutputs: Array<ChildTaskExecutionOutput>
   },
   TFinalizeTaskRunOutput = unknown,
-> = DurableTaskCommonOptions & {
+> = TaskCommonOptions & {
   /**
-   * The task run logic. It is similar to the `run` function in {@link DurableTaskOptions} but it
+   * The task run logic. It is similar to the `run` function in {@link TaskOptions} but it
    * returns the output and children tasks to be run in parallel after the run function completes.
    *
    * @param ctx - The context object to the task.
@@ -268,33 +268,33 @@ export type DurableParentTaskOptions<
    * function completes.
    */
   runParent: (
-    ctx: DurableTaskRunContext,
+    ctx: TaskRunContext,
     input: TInput,
   ) =>
     | {
         output: TRunOutput
-        childrenTasks?: Array<DurableChildTask>
+        childrenTasks?: Array<ChildTask>
       }
     | Promise<{
         output: TRunOutput
-        childrenTasks?: Array<DurableChildTask>
+        childrenTasks?: Array<ChildTask>
       }>
   /**
    * Task to run after the runParent function and children tasks complete. This is useful for
    * combining the output of the run function and children tasks.
    */
-  finalizeTask?: DurableFinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>
+  finalizeTask?: FinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>
 }
 
 /**
- * Options for the `finalizeTask` property in {@link DurableParentTaskOptions}. It is similar to
- * {@link DurableTaskOptions} or {@link DurableParentTaskOptions} but the input is of the form:
+ * Options for the `finalizeTask` property in {@link ParentTaskOptions}. It is similar to
+ * {@link TaskOptions} or {@link ParentTaskOptions} but the input is of the form:
  *
  * ```ts
  * {
  *   input: TRunInput,
  *   output: TRunOutput,
- *   childrenTasksOutputs: Array<DurableChildTaskExecutionOutput>
+ *   childrenTaskExecutionsOutputs: Array<ChildTaskExecutionOutput>
  * }
  * ```
  *
@@ -303,39 +303,35 @@ export type DurableParentTaskOptions<
  *
  * @category Task
  */
-export type DurableFinalizeTaskOptions<
+export type FinalizeTaskOptions<
   TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
   TFinalizeTaskRunOutput = unknown,
 > =
-  | DurableTaskOptions<DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>, TOutput>
-  | DurableParentTaskOptions<
-      DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>,
-      TFinalizeTaskRunOutput,
-      TOutput
-    >
+  | TaskOptions<FinalizeTaskInput<TInput, TRunOutput>, TOutput>
+  | ParentTaskOptions<FinalizeTaskInput<TInput, TRunOutput>, TFinalizeTaskRunOutput, TOutput>
 
-export function isDurableFinalizeTaskOptionsTaskOptions<
+export function isFinalizeTaskOptionsTaskOptions<
   TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
   TFinalizeTaskRunOutput = unknown,
 >(
-  options: DurableFinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
-): options is DurableTaskOptions<DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>, TOutput> {
+  options: FinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
+): options is TaskOptions<FinalizeTaskInput<TInput, TRunOutput>, TOutput> {
   return 'run' in options && !('runParent' in options)
 }
 
-export function isDurableFinalizeTaskOptionsParentTaskOptions<
+export function isFinalizeTaskOptionsParentTaskOptions<
   TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
   TFinalizeTaskRunOutput = unknown,
 >(
-  options: DurableFinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
-): options is DurableParentTaskOptions<
-  DurableTaskOnChildrenCompleteInput<TInput, TRunOutput>,
+  options: FinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
+): options is ParentTaskOptions<
+  FinalizeTaskInput<TInput, TRunOutput>,
   TFinalizeTaskRunOutput,
   TOutput
 > {
@@ -343,22 +339,22 @@ export function isDurableFinalizeTaskOptionsParentTaskOptions<
 }
 
 /**
- * The input type for the on children complete task.
+ * The input type for the finalize task.
  *
  * @category Task
  */
-export type DurableTaskOnChildrenCompleteInput<TInput = unknown, TRunOutput = unknown> = {
+export type FinalizeTaskInput<TInput = unknown, TRunOutput = unknown> = {
   input: TInput
   output: TRunOutput
-  childrenTasksOutputs: Array<DurableChildTaskExecutionOutput>
+  childrenTaskExecutionsOutputs: Array<ChildTaskExecutionOutput>
 }
 
 /**
- * The context object passed to a durable task when it is run.
+ * The context object passed to a task when it is run.
  *
  * @category Task
  */
-export type DurableTaskRunContext = {
+export type TaskRunContext = {
   /**
    * The task id.
    */
@@ -384,66 +380,66 @@ export type DurableTaskRunContext = {
   /**
    * The error of the previous attempt.
    */
-  prevError?: DurableExecutionErrorStorageObject
+  prevError?: DurableExecutionErrorStorageValue
 }
 
 /**
- * An execution of a durable task. See
- * [Durable task execution](https://gpahal.github.io/durable-execution/index.html#durable-task-execution)
- * docs for more details on how task executions work.
+ * An execution of a task. See
+ * [Task execution](https://gpahal.github.io/durable-execution/index.html#task-execution) docs for
+ * more details on how task executions work.
  *
  * @category Task
  */
-export type DurableTaskExecution<TOutput = unknown> =
-  | DurableTaskReadyExecution
-  | DurableTaskRunningExecution
-  | DurableTaskFailedExecution
-  | DurableTaskTimedOutExecution
-  | DurableTaskWaitingForChildrenTasksExecution
-  | DurableTaskChildrenTasksFailedExecution
-  | DurableTaskWaitingForFinalizeTaskExecution
-  | DurableTaskFinalizeTaskFailedExecution
-  | DurableTaskCompletedExecution<TOutput>
-  | DurableTaskCancelledExecution
+export type TaskExecution<TOutput = unknown> =
+  | TaskReadyExecution
+  | TaskRunningExecution
+  | TaskFailedExecution
+  | TaskTimedOutExecution
+  | TaskWaitingForChildrenTasksExecution
+  | TaskChildrenTasksFailedExecution
+  | TaskWaitingForFinalizeTaskExecution
+  | TaskFinalizeTaskFailedExecution
+  | TaskCompletedExecution<TOutput>
+  | TaskCancelledExecution
 
 /**
- * A finished execution of a durable task. See
- * [Durable task execution](https://gpahal.github.io/durable-execution/index.html#durable-task-execution)
- * docs for more details on how task executions work.
+ * A finished execution of a task. See
+ * [Task execution](https://gpahal.github.io/durable-execution/index.html#task-execution) docs for
+ * more details on how task executions work.
  *
  * @category Task
  */
-export type DurableTaskFinishedExecution<TOutput = unknown> =
-  | DurableTaskFailedExecution
-  | DurableTaskTimedOutExecution
-  | DurableTaskChildrenTasksFailedExecution
-  | DurableTaskFinalizeTaskFailedExecution
-  | DurableTaskCompletedExecution<TOutput>
-  | DurableTaskCancelledExecution
+export type TaskFinishedExecution<TOutput = unknown> =
+  | TaskFailedExecution
+  | TaskTimedOutExecution
+  | TaskChildrenTasksFailedExecution
+  | TaskFinalizeTaskFailedExecution
+  | TaskCompletedExecution<TOutput>
+  | TaskCancelledExecution
 
 /**
- * A durable task execution that is ready to be run.
+ * A task execution that is ready to be run.
  *
  * @category Task
  */
-export type DurableTaskReadyExecution = {
-  rootTask?: {
+export type TaskReadyExecution = {
+  rootTaskExecution?: {
     taskId: string
     executionId: string
   }
 
-  parentTask?: {
+  parentTaskExecution?: {
     taskId: string
     executionId: string
   }
 
   taskId: string
   executionId: string
-  retryOptions: DurableTaskRetryOptions
+  retryOptions: TaskRetryOptions
   sleepMsBeforeRun: number
   timeoutMs: number
   runInput: unknown
-  error?: DurableExecutionErrorStorageObject
+  error?: DurableExecutionErrorStorageValue
   status: 'ready'
   retryAttempts: number
   createdAt: Date
@@ -451,102 +447,103 @@ export type DurableTaskReadyExecution = {
 }
 
 /**
- * A durable task execution that is running.
+ * A task execution that is running.
  *
  * @category Task
  */
-export type DurableTaskRunningExecution = Omit<DurableTaskReadyExecution, 'status'> & {
+export type TaskRunningExecution = Omit<TaskReadyExecution, 'status'> & {
   status: 'running'
   startedAt: Date
   expiresAt: Date
 }
 
 /**
- * A durable task execution that failed while running.
+ * A task execution that failed while running.
  *
  * @category Task
  */
-export type DurableTaskFailedExecution = Omit<DurableTaskRunningExecution, 'status' | 'error'> & {
+export type TaskFailedExecution = Omit<TaskRunningExecution, 'status' | 'error'> & {
   status: 'failed'
-  error: DurableExecutionErrorStorageObject
+  error: DurableExecutionErrorStorageValue
   finishedAt: Date
 }
 
 /**
- * A durable task execution that timed out while running.
+ * A task execution that timed out while running.
  *
  * @category Task
  */
-export type DurableTaskTimedOutExecution = Omit<DurableTaskRunningExecution, 'status' | 'error'> & {
+export type TaskTimedOutExecution = Omit<TaskRunningExecution, 'status' | 'error'> & {
   status: 'timed_out'
-  error: DurableExecutionErrorStorageObject
+  error: DurableExecutionErrorStorageValue
   finishedAt: Date
 }
 
 /**
- * A durable task execution that is waiting for children tasks to complete.
+ * A task execution that is waiting for children tasks to complete.
  *
  * @category Task
  */
-export type DurableTaskWaitingForChildrenTasksExecution = Omit<
-  DurableTaskRunningExecution,
+export type TaskWaitingForChildrenTasksExecution = Omit<
+  TaskRunningExecution,
   'status' | 'error'
 > & {
   status: 'waiting_for_children_tasks'
   runOutput: unknown
-  childrenTasks: Array<DurableChildTaskExecution>
+  childrenTaskExecutionsCompletedCount: number
+  childrenTaskExecutions: Array<ChildTaskExecution>
 }
 
 /**
- * A durable task execution that failed while waiting for children tasks to complete because of one
- * or more child task executions failed.
+ * A task execution that failed while waiting for children tasks to complete because of one or more
+ * child task executions failed.
  *
  * @category Task
  */
-export type DurableTaskChildrenTasksFailedExecution = Omit<
-  DurableTaskWaitingForChildrenTasksExecution,
+export type TaskChildrenTasksFailedExecution = Omit<
+  TaskWaitingForChildrenTasksExecution,
   'status'
 > & {
   status: 'children_tasks_failed'
-  childrenTasksErrors: Array<DurableChildTaskExecutionErrorStorageObject>
+  childrenTaskExecutionsErrors: Array<ChildTaskExecutionErrorStorageValue>
   finishedAt: Date
 }
 
 /**
- * A durable task execution that is waiting for the finalize task to complete.
+ * A task execution that is waiting for the finalize task to complete.
  *
  * @category Task
  */
-export type DurableTaskWaitingForFinalizeTaskExecution = Omit<
-  DurableTaskWaitingForChildrenTasksExecution,
+export type TaskWaitingForFinalizeTaskExecution = Omit<
+  TaskWaitingForChildrenTasksExecution,
   'status' | 'error'
 > & {
   status: 'waiting_for_finalize_task'
-  finalizeTask: DurableChildTaskExecution
+  finalizeTaskExecution: ChildTaskExecution
 }
 
 /**
- * A durable task execution that failed while waiting for the finalize task to complete because the
+ * A task execution that failed while waiting for the finalize task to complete because the
  * finalize task execution failed.
  *
  * @category Task
  */
-export type DurableTaskFinalizeTaskFailedExecution = Omit<
-  DurableTaskWaitingForFinalizeTaskExecution,
+export type TaskFinalizeTaskFailedExecution = Omit<
+  TaskWaitingForFinalizeTaskExecution,
   'status'
 > & {
   status: 'finalize_task_failed'
-  finalizeTaskError: DurableExecutionErrorStorageObject
+  finalizeTaskExecutionError: DurableExecutionErrorStorageValue
   finishedAt: Date
 }
 
 /**
- * A durable task execution that completed successfully.
+ * A task execution that completed successfully.
  *
  * @category Task
  */
-export type DurableTaskCompletedExecution<TOutput = unknown> = Omit<
-  DurableTaskWaitingForChildrenTasksExecution,
+export type TaskCompletedExecution<TOutput = unknown> = Omit<
+  TaskWaitingForChildrenTasksExecution,
   'status' | 'output'
 > & {
   status: 'completed'
@@ -554,68 +551,69 @@ export type DurableTaskCompletedExecution<TOutput = unknown> = Omit<
   /**
    * The finalize task execution. This is only present for tasks which have a finalize task.
    */
-  finalizeTask?: DurableChildTaskExecution
+  finalizeTaskExecution?: ChildTaskExecution
   finishedAt: Date
 }
 
 /**
- * A durable task execution that was cancelled. This can happen when a task is cancelled by using
+ * A task execution that was cancelled. This can happen when a task is cancelled by using
  * the cancel method of the task handle or when the task is cancelled because it's parent task
  * failed.
  *
  * @category Task
  */
-export type DurableTaskCancelledExecution = Omit<
-  DurableTaskRunningExecution,
-  'status' | 'error'
-> & {
+export type TaskCancelledExecution = Omit<TaskRunningExecution, 'status' | 'error'> & {
   status: 'cancelled'
-  error: DurableExecutionErrorStorageObject
+  error: DurableExecutionErrorStorageValue
   /**
    * The output of the task. This is only present for tasks whose run method completed
    * successfully.
    */
   runOutput?: unknown
   /**
-   * The children tasks that were running when the task was cancelled. This is only present for
+   * The number of children task executions that have been completed.
+   */
+  childrenTaskExecutionsCompletedCount: number
+  /**
+   * The children task executions that were running when the task was cancelled. This is only present for
    * tasks whose run method completed successfully.
    */
-  childrenTasks?: Array<DurableChildTaskExecution>
+  childrenTaskExecutions?: Array<ChildTaskExecution>
   /**
    * The finalize task execution. This is only present for tasks which have a finalize task and
    * whose run method completed successfully.
    */
-  finalizeTask?: DurableChildTaskExecution
+  finalizeTaskExecution?: ChildTaskExecution
   finishedAt: Date
 }
 
 /**
- * A child task of a durable task.
+ * A child task of a task.
  *
  * @category Task
  */
-export type DurableChildTask<TInput = unknown, TOutput = unknown> = {
-  task: DurableTask<TInput, TOutput>
+export type ChildTask<TInput = unknown, TOutput = unknown> = {
+  task: Task<TInput, TOutput>
   input: TInput
-  options?: DurableTaskEnqueueOptions
+  options?: TaskEnqueueOptions
 }
 
 /**
- * An execution of a child task of a durable task.
+ * An execution of a child task.
  *
  * @category Task
  */
-export type DurableChildTaskExecution = {
+export type ChildTaskExecution = {
   taskId: string
   executionId: string
 }
 
 /**
- * A child task output of a durable task.
+ * A child task execution output.
  *
  * @category Task
  */
-export type DurableChildTaskExecutionOutput<TOutput = unknown> = {
+export type ChildTaskExecutionOutput<TOutput = unknown> = {
   index: number
   taskId: string
   executionId: string
@@ -623,11 +621,11 @@ export type DurableChildTaskExecutionOutput<TOutput = unknown> = {
 }
 
 /**
- * A child task error of a durable task.
+ * A child task execution error.
  *
  * @category Task
  */
-export type DurableChildTaskExecutionError = {
+export type ChildTaskExecutionError = {
   index: number
   taskId: string
   executionId: string
@@ -635,23 +633,23 @@ export type DurableChildTaskExecutionError = {
 }
 
 /**
- * A storage object for a child task execution error of a durable task execution.
+ * A storage value for a child task execution error.
  *
  * @category Task
  */
-export type DurableChildTaskExecutionErrorStorageObject = {
+export type ChildTaskExecutionErrorStorageValue = {
   index: number
   taskId: string
   executionId: string
-  error: DurableExecutionErrorStorageObject
+  error: DurableExecutionErrorStorageValue
 }
 
 /**
- * A storage object for the status of a durable task execution.
+ * A storage value for the status of a task.
  *
  * @category Storage
  */
-export type DurableTaskExecutionStatusStorageObject =
+export type TaskExecutionStatusStorageValue =
   | 'ready'
   | 'running'
   | 'failed'
@@ -663,7 +661,7 @@ export type DurableTaskExecutionStatusStorageObject =
   | 'completed'
   | 'cancelled'
 
-export const ALL_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS = [
+export const ALL_TASK_EXECUTION_STATUSES_STORAGE_VALUES = [
   'ready',
   'running',
   'failed',
@@ -674,21 +672,21 @@ export const ALL_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS = [
   'finalize_task_failed',
   'completed',
   'cancelled',
-] as Array<DurableTaskExecutionStatusStorageObject>
-export const ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS = [
+] as Array<TaskExecutionStatusStorageValue>
+export const ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_VALUES = [
   'ready',
   'running',
   'waiting_for_children_tasks',
   'waiting_for_finalize_task',
-] as Array<DurableTaskExecutionStatusStorageObject>
-export const FINISHED_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS = [
+] as Array<TaskExecutionStatusStorageValue>
+export const FINISHED_TASK_EXECUTION_STATUSES_STORAGE_VALUES = [
   'failed',
   'timed_out',
   'children_tasks_failed',
   'finalize_task_failed',
   'completed',
   'cancelled',
-] as Array<DurableTaskExecutionStatusStorageObject>
+] as Array<TaskExecutionStatusStorageValue>
 
 /**
  * The options for enqueuing a task. If provided, the task will be enqueued with the given
@@ -697,16 +695,16 @@ export const FINISHED_TASK_EXECUTION_STATUSES_STORAGE_OBJECTS = [
  *
  * @category Task
  */
-export type DurableTaskEnqueueOptions = {
-  retryOptions?: DurableTaskRetryOptions
+export type TaskEnqueueOptions = {
+  retryOptions?: TaskRetryOptions
   sleepMsBeforeRun?: number
   timeoutMs?: number
 }
 
 /**
- * A handle to a durable task execution. See
- * [Durable task execution](https://gpahal.github.io/durable-execution/index.html#durable-task-execution)
- * docs for more details on how task executions work.
+ * A handle to a task execution. See
+ * [Task execution](https://gpahal.github.io/durable-execution/index.html#task-execution) docs for
+ * more details on how task executions work.
  *
  * @example
  * ```ts
@@ -736,37 +734,37 @@ export type DurableTaskEnqueueOptions = {
  *
  * @category Task
  */
-export type DurableTaskExecutionHandle<TOutput = unknown> = {
+export type TaskExecutionHandle<TOutput = unknown> = {
   /**
-   * Get the task id of the durable task.
+   * Get the task id of the task.
    *
-   * @returns The task id of the durable task.
+   * @returns The task id of the task.
    */
   getTaskId: () => string
   /**
-   * Get the execution id of the durable task execution.
+   * Get the execution id of the task execution.
    *
-   * @returns The execution id of the durable task execution.
+   * @returns The execution id of the task execution.
    */
   getExecutionId: () => string
   /**
-   * Get the durable task execution.
+   * Get the task execution.
    *
-   * @returns The durable task execution.
+   * @returns The task execution.
    */
-  getExecution: () => Promise<DurableTaskExecution<TOutput>>
+  getExecution: () => Promise<TaskExecution<TOutput>>
   /**
-   * Wait for the durable task execution to be finished and get it.
+   * Wait for the task execution to be finished and get it.
    *
-   * @param options - The options for waiting for the durable task execution.
-   * @returns The durable task execution.
+   * @param options - The options for waiting for the task execution.
+   * @returns The task execution.
    */
   waitAndGetFinishedExecution: (options?: {
     signal?: CancelSignal | AbortSignal
     pollingIntervalMs?: number
-  }) => Promise<DurableTaskFinishedExecution<TOutput>>
+  }) => Promise<TaskFinishedExecution<TOutput>>
   /**
-   * Cancel the durable task execution.
+   * Cancel the task execution.
    */
   cancel: () => Promise<void>
 }
@@ -777,38 +775,32 @@ export type DurableTaskExecutionHandle<TOutput = unknown> = {
  *
  * @category Task
  */
-export type SequentialDurableTasks<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
-  T extends readonly [] ? never : SequentialDurableTasksHelper<T>
+export type SequentialTasks<T extends ReadonlyArray<Task<unknown, unknown>>> = T extends readonly []
+  ? never
+  : SequentialTasksHelper<T>
 
 /**
- * A helper type to create a sequence of tasks. See {@link SequentialDurableTasks} for more details.
+ * A helper type to create a sequence of tasks. See {@link SequentialTasks} for more details.
  *
  * @category Task
  */
-export type SequentialDurableTasksHelper<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
+export type SequentialTasksHelper<T extends ReadonlyArray<Task<unknown, unknown>>> =
   T extends readonly []
     ? T
-    : T extends readonly [DurableTask<infer _I1, infer _O1>]
+    : T extends readonly [Task<infer _I1, infer _O1>]
       ? T
-      : T extends readonly [
-            DurableTask<infer I1, infer O1>,
-            DurableTask<infer I2, infer O2>,
-            ...infer Rest,
-          ]
+      : T extends readonly [Task<infer I1, infer O1>, Task<infer I2, infer O2>, ...infer Rest]
         ? O1 extends I2
-          ? Rest extends ReadonlyArray<DurableTask<unknown, unknown>>
-            ? readonly [
-                DurableTask<I1, O1>,
-                ...SequentialDurableTasksHelper<readonly [DurableTask<I2, O2>, ...Rest]>,
-              ]
+          ? Rest extends ReadonlyArray<Task<unknown, unknown>>
+            ? readonly [Task<I1, O1>, ...SequentialTasksHelper<readonly [Task<I2, O2>, ...Rest]>]
             : never
           : never
         : T
 
 /**
- * The type of the last element of a sequence of tasks.
+ * The type of the last element of an array of tasks.
  *
  * @category Task
  */
-export type LastDurableTaskElement<T extends ReadonlyArray<DurableTask<unknown, unknown>>> =
-  T extends readonly [...Array<DurableTask<unknown, unknown>>, infer L] ? L : never
+export type LastTaskElementInArray<T extends ReadonlyArray<Task<unknown, unknown>>> =
+  T extends readonly [...Array<Task<unknown, unknown>>, infer L] ? L : never

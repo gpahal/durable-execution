@@ -1,20 +1,24 @@
 ---
-description: Guidance for durable-execution-storage-drizzle package
+globs: durable-execution-storage-drizzle/**
+description: Drizzle storage adapters (PostgreSQL, SQLite)
 ---
-## Drizzle storage package
+### Drizzle storage (`durable-execution-storage-drizzle`)
 
-- **Purpose**: Drizzle ORM-backed storage for `durable-execution`.
-- **Entry**: [durable-execution-storage-drizzle/src/index.ts](mdc:durable-execution-storage-drizzle/src/index.ts); drivers for PG/SQLite in sibling files.
-- **README** has usage examples for all three databases: [README.md](mdc:durable-execution-storage-drizzle/README.md)
+PostgreSQL: [src/pg.ts](mdc:durable-execution-storage-drizzle/src/pg.ts)
 
-### Implementor tips
+- `createTaskExecutionsPgTable(name?)`
+- `createPgStorage(db, table)`
 
-- Export created tables (e.g., `createDurableTaskExecutionsPgTable`) so Drizzle can discover schema.
-- Create storage via helpers like `createPgDurableStorage`, `createSQLiteDurableStorage`.
-- Ensure transactional semantics match `DurableStorageTx` expectations from core package.
+SQLite: [src/sqlite.ts](mdc:durable-execution-storage-drizzle/src/sqlite.ts)
 
-### Dev commands
+- `createTaskExecutionsSQLiteTable(name?)`
+- `createSQLiteStorage(db, table)`
 
-- Build: `pnpm -F durable-execution-storage-drizzle build`
-- Test: `pnpm -F durable-execution-storage-drizzle test`
-- Use root scripts for lint/type-check with `-F` as needed.
+Shared transforms: [src/common.ts](mdc:durable-execution-storage-drizzle/src/common.ts)
+
+Indexes to ensure performance:
+
+- unique on `execution_id`
+- `(status, isClosed, expiresAt)`, `(status, startAt)`
+
+See examples in [README.md](mdc:durable-execution-storage-drizzle/README.md)

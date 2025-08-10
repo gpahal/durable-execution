@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutor, type DurableTask } from '../src'
+import { DurableExecutor, type Task } from '../src'
 import { InMemoryStorage } from './in-memory-storage'
 
 describe('examples', () => {
@@ -249,10 +249,10 @@ describe('examples', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.output).toBe('Hello from parent task, world!')
-    expect(finishedExecution.output.childrenTasksOutputs[0]!.output).toBe(
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[0]!.output).toBe(
       'Hello from task A, world!',
     )
-    expect(finishedExecution.output.childrenTasksOutputs[1]!.output).toBe(
+    expect(finishedExecution.output.childrenTaskExecutionsOutputs[1]!.output).toBe(
       'Hello from task B, world!',
     )
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
@@ -299,11 +299,11 @@ describe('examples', () => {
       finalizeTask: {
         id: 'onParentRunAndChildrenComplete',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenTasksOutputs }) => {
+        run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
           return {
             parentOutput: output,
-            taskAOutput: childrenTasksOutputs[0]!.output as string,
-            taskBOutput: childrenTasksOutputs[1]!.output as string,
+            taskAOutput: childrenTaskExecutionsOutputs[0]!.output as string,
+            taskBOutput: childrenTaskExecutionsOutputs[1]!.output as string,
           }
         },
       },
@@ -409,10 +409,10 @@ describe('examples', () => {
         finalizeTask: {
           id: 'taskBFinalizeNested',
           timeoutMs: 1000,
-          run: (ctx, { output, childrenTasksOutputs }) => {
+          run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
             return {
               taskBOutput: output,
-              taskCOutput: childrenTasksOutputs[0]!.output as string,
+              taskCOutput: childrenTaskExecutionsOutputs[0]!.output as string,
             }
           },
         },
@@ -438,8 +438,8 @@ describe('examples', () => {
         finalizeTask: {
           id: 'taskAFinalizeNested',
           timeoutMs: 1000,
-          run: (ctx, { output, childrenTasksOutputs }) => {
-            const taskBOutput = childrenTasksOutputs[0]!.output as {
+          run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+            const taskBOutput = childrenTaskExecutionsOutputs[0]!.output as {
               taskBOutput: string
               taskCOutput: string
             }
@@ -516,12 +516,12 @@ describe('examples', () => {
       finalizeTask: {
         id: 'taskAFinalize',
         timeoutMs: 1000,
-        run: (ctx, { input, output, childrenTasksOutputs }) => {
+        run: (ctx, { input, output, childrenTaskExecutionsOutputs }) => {
           return {
             name: input.name,
             taskAOutput: output,
-            taskA1Output: childrenTasksOutputs[0]!.output as string,
-            taskA2Output: childrenTasksOutputs[1]!.output as string,
+            taskA1Output: childrenTaskExecutionsOutputs[0]!.output as string,
+            taskA2Output: childrenTaskExecutionsOutputs[1]!.output as string,
           }
         },
       },
@@ -549,11 +549,11 @@ describe('examples', () => {
       finalizeTask: {
         id: 'taskBFinalize',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenTasksOutputs }) => {
+        run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
           return {
             ...output,
-            taskB1Output: childrenTasksOutputs[0]!.output as string,
-            taskB2Output: childrenTasksOutputs[1]!.output as string,
+            taskB1Output: childrenTaskExecutionsOutputs[0]!.output as string,
+            taskB2Output: childrenTaskExecutionsOutputs[1]!.output as string,
           }
         },
       },
@@ -654,12 +654,12 @@ describe('examples', () => {
       finalizeTask: {
         id: 'taskAFinalize',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenTasksOutputs }) => {
+        run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
           return {
             taskAOutput: output,
-            taskA1Output: childrenTasksOutputs[0]!.output as string,
-            taskA2Output: childrenTasksOutputs[1]!.output as string,
-            taskA3Output: childrenTasksOutputs[2]!.output as string,
+            taskA1Output: childrenTaskExecutionsOutputs[0]!.output as string,
+            taskA2Output: childrenTaskExecutionsOutputs[1]!.output as string,
+            taskA3Output: childrenTaskExecutionsOutputs[2]!.output as string,
           }
         },
       },
@@ -680,14 +680,14 @@ describe('examples', () => {
       finalizeTask: {
         id: 'rootFinalize',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenTasksOutputs }) => {
-          const taskAOutput = childrenTasksOutputs[0]!.output as {
+        run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+          const taskAOutput = childrenTaskExecutionsOutputs[0]!.output as {
             taskAOutput: string
             taskA1Output: string
             taskA2Output: string
             taskA3Output: string
           }
-          const taskBOutput = childrenTasksOutputs[1]!.output as {
+          const taskBOutput = childrenTaskExecutionsOutputs[1]!.output as {
             taskB1Output: string
             taskB2Output: string
             taskB3Output: string
@@ -729,7 +729,7 @@ describe('examples', () => {
   })
 
   it('should complete recursive task', async () => {
-    const recursiveTask: DurableTask<{ index: number }, { count: number }> = executor
+    const recursiveTask: Task<{ index: number }, { count: number }> = executor
       .inputSchema(z.object({ index: z.number().int().min(0) }))
       .parentTask({
         id: 'recursive',
@@ -745,11 +745,11 @@ describe('examples', () => {
         finalizeTask: {
           id: 'recursiveFinalize',
           timeoutMs: 1000,
-          run: (ctx, { childrenTasksOutputs }) => {
+          run: (ctx, { childrenTaskExecutionsOutputs }) => {
             return {
               count:
                 1 +
-                childrenTasksOutputs.reduce(
+                childrenTaskExecutionsOutputs.reduce(
                   (acc, childOutput) => acc + (childOutput.output as { count: number }).count,
                   0,
                 ),
@@ -780,8 +780,9 @@ describe('examples', () => {
       value = 10
     }, 2000)
 
-    const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: number }> =
-      executor.inputSchema(z.object({ prevCount: z.number().int().min(0) })).parentTask({
+    const pollingTask: Task<{ prevCount: number }, { count: number; value: number }> = executor
+      .inputSchema(z.object({ prevCount: z.number().int().min(0) }))
+      .parentTask({
         id: 'polling',
         sleepMsBeforeRun: 100,
         timeoutMs: 1000,
@@ -806,7 +807,7 @@ describe('examples', () => {
         finalizeTask: {
           id: 'pollingFinalize',
           timeoutMs: 1000,
-          run: (ctx, { input, output, childrenTasksOutputs }) => {
+          run: (ctx, { input, output, childrenTaskExecutionsOutputs }) => {
             if (output.isDone) {
               return {
                 count: input.prevCount + 1,
@@ -814,7 +815,7 @@ describe('examples', () => {
               }
             }
 
-            return childrenTasksOutputs[0]!.output as {
+            return childrenTaskExecutionsOutputs[0]!.output as {
               count: number
               value: number
             }

@@ -1,14 +1,14 @@
 import type {
-  DurableChildTaskExecution,
-  DurableChildTaskExecutionErrorStorageObject,
-  DurableExecutionErrorStorageObject,
-  DurableTaskExecutionStatusStorageObject,
-  DurableTaskExecutionStorageObject,
-  DurableTaskExecutionStorageObjectUpdate,
-  DurableTaskRetryOptions,
+  ChildTaskExecution,
+  ChildTaskExecutionErrorStorageValue,
+  DurableExecutionErrorStorageValue,
+  TaskExecutionStatusStorageValue,
+  TaskExecutionStorageUpdate,
+  TaskExecutionStorageValue,
+  TaskRetryOptions,
 } from 'durable-execution'
 
-export type DurableTaskExecutionDbValue = {
+export type TaskExecutionDBValue = {
   rootTaskId?: string | null
   rootExecutionId?: string | null
   parentTaskId?: string | null
@@ -16,19 +16,19 @@ export type DurableTaskExecutionDbValue = {
   isFinalizeTask?: boolean | null
   taskId: string
   executionId: string
-  retryOptions: DurableTaskRetryOptions
+  retryOptions: TaskRetryOptions
   timeoutMs: number
   sleepMsBeforeRun: number
   runInput: string
   runOutput?: string | null
   output?: string | null
-  childrenTasksCompletedCount: number
-  childrenTasks?: Array<DurableChildTaskExecution> | null
-  childrenTasksErrors?: Array<DurableChildTaskExecutionErrorStorageObject> | null
-  finalizeTask?: DurableChildTaskExecution | null
-  finalizeTaskError?: DurableExecutionErrorStorageObject | null
-  error?: DurableExecutionErrorStorageObject | null
-  status: DurableTaskExecutionStatusStorageObject
+  childrenTaskExecutionsCompletedCount: number
+  childrenTaskExecutions?: Array<ChildTaskExecution> | null
+  childrenTaskExecutionsErrors?: Array<ChildTaskExecutionErrorStorageValue> | null
+  finalizeTaskExecution?: ChildTaskExecution | null
+  finalizeTaskExecutionError?: DurableExecutionErrorStorageValue | null
+  error?: DurableExecutionErrorStorageValue | null
+  status: TaskExecutionStatusStorageValue
   isClosed: boolean
   needsPromiseCancellation: boolean
   retryAttempts: number
@@ -41,16 +41,16 @@ export type DurableTaskExecutionDbValue = {
   updatedAt: Date
 }
 
-export type DurableTaskExecutionDbUpdateValue = {
+export type TaskExecutionDBUpdateValue = {
   runOutput?: string
   output?: string
-  childrenTasksCompletedCount?: number
-  childrenTasks?: Array<DurableChildTaskExecution>
-  childrenTasksErrors?: Array<DurableChildTaskExecutionErrorStorageObject>
-  finalizeTask?: DurableChildTaskExecution
-  finalizeTaskError?: DurableExecutionErrorStorageObject
-  error?: DurableExecutionErrorStorageObject | null
-  status?: DurableTaskExecutionStatusStorageObject
+  childrenTaskExecutionsCompletedCount?: number
+  childrenTaskExecutions?: Array<ChildTaskExecution>
+  childrenTaskExecutionsErrors?: Array<ChildTaskExecutionErrorStorageValue>
+  finalizeTaskExecution?: ChildTaskExecution
+  finalizeTaskExecutionError?: DurableExecutionErrorStorageValue
+  error?: DurableExecutionErrorStorageValue | null
+  status?: TaskExecutionStatusStorageValue
   isClosed?: boolean
   needsPromiseCancellation?: boolean
   retryAttempts?: number
@@ -62,54 +62,50 @@ export type DurableTaskExecutionDbUpdateValue = {
   updatedAt?: Date
 }
 
-export function storageObjectToInsertValue(
-  obj: DurableTaskExecutionStorageObject,
-): DurableTaskExecutionDbValue {
+export function storageValueToInsertValue(value: TaskExecutionStorageValue): TaskExecutionDBValue {
   return {
-    rootTaskId: obj.rootTask?.taskId,
-    rootExecutionId: obj.rootTask?.executionId,
-    parentTaskId: obj.parentTask?.taskId,
-    parentExecutionId: obj.parentTask?.executionId,
-    isFinalizeTask: obj.parentTask?.isFinalizeTask,
-    taskId: obj.taskId,
-    executionId: obj.executionId,
-    retryOptions: obj.retryOptions,
-    timeoutMs: obj.timeoutMs,
-    sleepMsBeforeRun: obj.sleepMsBeforeRun,
-    runInput: obj.runInput,
-    runOutput: obj.runOutput,
-    output: obj.output,
-    childrenTasksCompletedCount: obj.childrenTasksCompletedCount,
-    childrenTasks: obj.childrenTasks,
-    childrenTasksErrors: obj.childrenTasksErrors,
-    finalizeTask: obj.finalizeTask,
-    finalizeTaskError: obj.finalizeTaskError,
-    error: obj.error,
-    status: obj.status,
-    isClosed: obj.isClosed,
-    needsPromiseCancellation: obj.needsPromiseCancellation,
-    retryAttempts: obj.retryAttempts,
-    startAt: obj.startAt,
-    startedAt: obj.startedAt,
-    finishedAt: obj.finishedAt,
-    expiresAt: obj.expiresAt,
-    version: obj.version,
-    createdAt: obj.createdAt,
-    updatedAt: obj.updatedAt,
+    rootTaskId: value.rootTaskExecution?.taskId,
+    rootExecutionId: value.rootTaskExecution?.executionId,
+    parentTaskId: value.parentTaskExecution?.taskId,
+    parentExecutionId: value.parentTaskExecution?.executionId,
+    isFinalizeTask: value.parentTaskExecution?.isFinalizeTask,
+    taskId: value.taskId,
+    executionId: value.executionId,
+    retryOptions: value.retryOptions,
+    timeoutMs: value.timeoutMs,
+    sleepMsBeforeRun: value.sleepMsBeforeRun,
+    runInput: value.runInput,
+    runOutput: value.runOutput,
+    output: value.output,
+    childrenTaskExecutionsCompletedCount: value.childrenTaskExecutionsCompletedCount,
+    childrenTaskExecutions: value.childrenTaskExecutions,
+    childrenTaskExecutionsErrors: value.childrenTaskExecutionsErrors,
+    finalizeTaskExecution: value.finalizeTaskExecution,
+    finalizeTaskExecutionError: value.finalizeTaskExecutionError,
+    error: value.error,
+    status: value.status,
+    isClosed: value.isClosed,
+    needsPromiseCancellation: value.needsPromiseCancellation,
+    retryAttempts: value.retryAttempts,
+    startAt: value.startAt,
+    startedAt: value.startedAt,
+    finishedAt: value.finishedAt,
+    expiresAt: value.expiresAt,
+    version: value.version,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
   }
 }
 
-export function selectValueToStorageObject(
-  row: DurableTaskExecutionDbValue,
-): DurableTaskExecutionStorageObject {
-  const obj: DurableTaskExecutionStorageObject = {
+export function selectValueToStorageValue(row: TaskExecutionDBValue): TaskExecutionStorageValue {
+  const obj: TaskExecutionStorageValue = {
     taskId: row.taskId,
     executionId: row.executionId,
     retryOptions: row.retryOptions,
     timeoutMs: row.timeoutMs,
     sleepMsBeforeRun: row.sleepMsBeforeRun,
     runInput: row.runInput,
-    childrenTasksCompletedCount: row.childrenTasksCompletedCount,
+    childrenTaskExecutionsCompletedCount: row.childrenTaskExecutionsCompletedCount,
     status: row.status,
     isClosed: row.isClosed,
     needsPromiseCancellation: row.needsPromiseCancellation,
@@ -121,14 +117,14 @@ export function selectValueToStorageObject(
   }
 
   if (row.rootTaskId && row.rootExecutionId) {
-    obj.rootTask = {
+    obj.rootTaskExecution = {
       taskId: row.rootTaskId,
       executionId: row.rootExecutionId,
     }
   }
 
   if (row.parentTaskId && row.parentExecutionId) {
-    obj.parentTask = {
+    obj.parentTaskExecution = {
       taskId: row.parentTaskId,
       executionId: row.parentExecutionId,
       isFinalizeTask: row.isFinalizeTask ?? false,
@@ -143,20 +139,20 @@ export function selectValueToStorageObject(
     obj.output = row.output
   }
 
-  if (row.childrenTasks) {
-    obj.childrenTasks = row.childrenTasks
+  if (row.childrenTaskExecutions) {
+    obj.childrenTaskExecutions = row.childrenTaskExecutions
   }
 
-  if (row.childrenTasksErrors) {
-    obj.childrenTasksErrors = row.childrenTasksErrors
+  if (row.childrenTaskExecutionsErrors) {
+    obj.childrenTaskExecutionsErrors = row.childrenTaskExecutionsErrors
   }
 
-  if (row.finalizeTask) {
-    obj.finalizeTask = row.finalizeTask
+  if (row.finalizeTaskExecution) {
+    obj.finalizeTaskExecution = row.finalizeTaskExecution
   }
 
-  if (row.finalizeTaskError) {
-    obj.finalizeTaskError = row.finalizeTaskError
+  if (row.finalizeTaskExecutionError) {
+    obj.finalizeTaskExecutionError = row.finalizeTaskExecutionError
   }
 
   if (row.error) {
@@ -178,10 +174,10 @@ export function selectValueToStorageObject(
   return obj
 }
 
-export function storageUpdateToUpdateValue(
-  update: DurableTaskExecutionStorageObjectUpdate,
-): DurableTaskExecutionDbUpdateValue {
-  const row: DurableTaskExecutionDbUpdateValue = {}
+export function storageValueToUpdateValue(
+  update: TaskExecutionStorageUpdate,
+): TaskExecutionDBUpdateValue {
+  const row: TaskExecutionDBUpdateValue = {}
   if (update.runOutput !== undefined) {
     row.runOutput = update.runOutput
   }
@@ -190,24 +186,24 @@ export function storageUpdateToUpdateValue(
     row.output = update.output
   }
 
-  if (update.childrenTasksCompletedCount !== undefined) {
-    row.childrenTasksCompletedCount = update.childrenTasksCompletedCount
+  if (update.childrenTaskExecutionsCompletedCount !== undefined) {
+    row.childrenTaskExecutionsCompletedCount = update.childrenTaskExecutionsCompletedCount
   }
 
-  if (update.childrenTasks !== undefined) {
-    row.childrenTasks = update.childrenTasks
+  if (update.childrenTaskExecutions !== undefined) {
+    row.childrenTaskExecutions = update.childrenTaskExecutions
   }
 
-  if (update.childrenTasksErrors !== undefined) {
-    row.childrenTasksErrors = update.childrenTasksErrors
+  if (update.childrenTaskExecutionsErrors !== undefined) {
+    row.childrenTaskExecutionsErrors = update.childrenTaskExecutionsErrors
   }
 
-  if (update.finalizeTask !== undefined) {
-    row.finalizeTask = update.finalizeTask
+  if (update.finalizeTaskExecution !== undefined) {
+    row.finalizeTaskExecution = update.finalizeTaskExecution
   }
 
-  if (update.finalizeTaskError !== undefined) {
-    row.finalizeTaskError = update.finalizeTaskError
+  if (update.finalizeTaskExecutionError !== undefined) {
+    row.finalizeTaskExecutionError = update.finalizeTaskExecutionError
   }
 
   if (update.error !== undefined) {

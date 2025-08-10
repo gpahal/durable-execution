@@ -14,31 +14,31 @@ import {
   type PgTransaction,
 } from 'drizzle-orm/pg-core'
 import type {
-  DurableChildTaskExecution,
-  DurableChildTaskExecutionErrorStorageObject,
-  DurableExecutionErrorStorageObject,
-  DurableStorage,
-  DurableStorageTx,
-  DurableTaskExecutionStatusStorageObject,
-  DurableTaskExecutionStorageObject,
-  DurableTaskExecutionStorageObjectUpdate,
-  DurableTaskExecutionStorageWhere,
-  DurableTaskRetryOptions,
+  ChildTaskExecution,
+  ChildTaskExecutionErrorStorageValue,
+  DurableExecutionErrorStorageValue,
+  Storage,
+  StorageTx,
+  TaskExecutionStatusStorageValue,
+  TaskExecutionStorageUpdate,
+  TaskExecutionStorageValue,
+  TaskExecutionStorageWhere,
+  TaskRetryOptions,
 } from 'durable-execution'
 
 import {
-  selectValueToStorageObject,
-  storageObjectToInsertValue,
-  storageUpdateToUpdateValue,
+  selectValueToStorageValue,
+  storageValueToInsertValue,
+  storageValueToUpdateValue,
 } from './common'
 
 /**
- * Create a pg table for durable task executions.
+ * Create a pg table for task executions.
  *
  * @param tableName - The name of the table.
  * @returns The pg table.
  */
-export function createDurableTaskExecutionsPgTable(tableName = 'durable_task_executions') {
+export function createTaskExecutionsPgTable(tableName = 'task_executions') {
   return pgTable(
     tableName,
     {
@@ -50,20 +50,25 @@ export function createDurableTaskExecutionsPgTable(tableName = 'durable_task_exe
       isFinalizeTask: boolean('is_finalize_task'),
       taskId: text('task_id').notNull(),
       executionId: text('execution_id').notNull(),
-      retryOptions: json('retry_options').$type<DurableTaskRetryOptions>().notNull(),
+      retryOptions: json('retry_options').$type<TaskRetryOptions>().notNull(),
       timeoutMs: integer('timeout_ms').notNull(),
       sleepMsBeforeRun: integer('sleep_ms_before_run').notNull(),
       runInput: text('run_input').notNull(),
       runOutput: text('run_output'),
       output: text('output'),
-      childrenTasksCompletedCount: integer('children_tasks_completed_count').notNull(),
-      childrenTasks: json('children_tasks').$type<Array<DurableChildTaskExecution>>(),
-      childrenTasksErrors:
-        json('children_tasks_errors').$type<Array<DurableChildTaskExecutionErrorStorageObject>>(),
-      finalizeTask: json('finalize_task').$type<DurableChildTaskExecution>(),
-      finalizeTaskError: json('finalize_task_error').$type<DurableExecutionErrorStorageObject>(),
-      error: json('error').$type<DurableExecutionErrorStorageObject>(),
-      status: text('status').$type<DurableTaskExecutionStatusStorageObject>().notNull(),
+      childrenTaskExecutionsCompletedCount: integer(
+        'children_task_executions_completed_count',
+      ).notNull(),
+      childrenTaskExecutions: json('children_task_executions').$type<Array<ChildTaskExecution>>(),
+      childrenTaskExecutionsErrors: json('children_task_executions_errors').$type<
+        Array<ChildTaskExecutionErrorStorageValue>
+      >(),
+      finalizeTaskExecution: json('finalize_task_execution').$type<ChildTaskExecution>(),
+      finalizeTaskExecutionError: json(
+        'finalize_task_execution_error',
+      ).$type<DurableExecutionErrorStorageValue>(),
+      error: json('error').$type<DurableExecutionErrorStorageValue>(),
+      status: text('status').$type<TaskExecutionStatusStorageValue>().notNull(),
       isClosed: boolean('is_closed').notNull(),
       needsPromiseCancellation: boolean('needs_promise_cancellation').notNull(),
       retryAttempts: integer('retry_attempts').notNull(),
@@ -88,81 +93,72 @@ export function createDurableTaskExecutionsPgTable(tableName = 'durable_task_exe
 }
 
 /**
- * The type of the pg table for durable task executions.
+ * The type of the pg table for task executions.
  */
-export type DurableTaskExecutionsPgTable = ReturnType<typeof createDurableTaskExecutionsPgTable>
+export type TaskExecutionsPgTable = ReturnType<typeof createTaskExecutionsPgTable>
 
 /**
- * Create a pg durable storage.
+ * Create a pg storage.
  *
  * @param db - The pg database.
  * @param table - The pg task executions table.
- * @returns The pg durable storage.
+ * @returns The pg storage.
  */
-export function createPgDurableStorage<
+export function createPgStorage<
   TQueryResult extends PgQueryResultHKT,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
->(
-  db: PgDatabase<TQueryResult, TFullSchema, TSchema>,
-  table: DurableTaskExecutionsPgTable,
-): DurableStorage {
-  return new PgDurableStorage(db, table)
+>(db: PgDatabase<TQueryResult, TFullSchema, TSchema>, table: TaskExecutionsPgTable): Storage {
+  return new PgStorage(db, table)
 }
 
-class PgDurableStorage<
+class PgStorage<
   TQueryResult extends PgQueryResultHKT,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
-> implements DurableStorage
+> implements Storage
 {
   private db: PgDatabase<TQueryResult, TFullSchema, TSchema>
-  private table: DurableTaskExecutionsPgTable
+  private table: TaskExecutionsPgTable
 
-  constructor(
-    db: PgDatabase<TQueryResult, TFullSchema, TSchema>,
-    table: DurableTaskExecutionsPgTable,
-  ) {
+  constructor(db: PgDatabase<TQueryResult, TFullSchema, TSchema>, table: TaskExecutionsPgTable) {
     this.db = db
     this.table = table
   }
 
-  async withTransaction<T>(fn: (tx: DurableStorageTx) => Promise<T>): Promise<T> {
+  async withTransaction<T>(fn: (tx: StorageTx) => Promise<T>): Promise<T> {
     return await this.db.transaction(async (tx) => {
-      const durableTx = new PgDurableStorageTx(tx, this.table)
-      return await fn(durableTx)
+      const storageTx = new PgStorageTx(tx, this.table)
+      return await fn(storageTx)
     })
   }
 }
 
-class PgDurableStorageTx<
+class PgStorageTx<
   TQueryResult extends PgQueryResultHKT,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
-> implements DurableStorageTx
+> implements StorageTx
 {
   private tx: PgTransaction<TQueryResult, TFullSchema, TSchema>
-  private table: DurableTaskExecutionsPgTable
+  private table: TaskExecutionsPgTable
 
-  constructor(
-    tx: PgTransaction<TQueryResult, TFullSchema, TSchema>,
-    table: DurableTaskExecutionsPgTable,
-  ) {
+  constructor(tx: PgTransaction<TQueryResult, TFullSchema, TSchema>, table: TaskExecutionsPgTable) {
     this.tx = tx
     this.table = table
   }
 
-  async insertTaskExecutions(executions: Array<DurableTaskExecutionStorageObject>): Promise<void> {
+  async insertTaskExecutions(executions: Array<TaskExecutionStorageValue>): Promise<void> {
     if (executions.length === 0) {
       return
     }
 
-    const rows = executions.map((execution) => storageObjectToInsertValue(execution))
+    const rows = executions.map((execution) => storageValueToInsertValue(execution))
     await this.tx.insert(this.table).values(rows)
   }
 
   async getTaskExecutionIds(
-    where: DurableTaskExecutionStorageWhere,
+    where: TaskExecutionStorageWhere,
     limit?: number,
     skipLockedForUpdate?: boolean,
   ): Promise<Array<string>> {
@@ -179,26 +175,26 @@ class PgDurableStorageTx<
   }
 
   async getTaskExecutions(
-    where: DurableTaskExecutionStorageWhere,
+    where: TaskExecutionStorageWhere,
     limit?: number,
     skipLockedForUpdate?: boolean,
-  ): Promise<Array<DurableTaskExecutionStorageObject>> {
+  ): Promise<Array<TaskExecutionStorageValue>> {
     const query = this.tx.select().from(this.table).where(buildWhereCondition(this.table, where))
     const queryWithLimit = limit != null && limit > 0 ? query.limit(limit) : query
     const queryWithLimitAndSkipLocked = skipLockedForUpdate
       ? queryWithLimit.for('update', { skipLocked: true })
       : queryWithLimit
     const rows = await queryWithLimitAndSkipLocked
-    return rows.map((row) => selectValueToStorageObject(row))
+    return rows.map((row) => selectValueToStorageValue(row))
   }
 
   async updateTaskExecutions(
-    where: DurableTaskExecutionStorageWhere,
-    update: DurableTaskExecutionStorageObjectUpdate,
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
   ): Promise<number> {
     const rows = await this.tx
       .update(this.table)
-      .set(storageUpdateToUpdateValue(update))
+      .set(storageValueToUpdateValue(update))
       .where(buildWhereCondition(this.table, where))
       .returning({ executionId: this.table.executionId })
     return rows.length
@@ -206,8 +202,8 @@ class PgDurableStorageTx<
 }
 
 function buildWhereCondition(
-  table: DurableTaskExecutionsPgTable,
-  where: DurableTaskExecutionStorageWhere,
+  table: TaskExecutionsPgTable,
+  where: TaskExecutionStorageWhere,
 ): SQL | undefined {
   const conditions: Array<SQL> = []
   switch (where.type) {

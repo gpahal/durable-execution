@@ -10,32 +10,32 @@ import {
 } from 'drizzle-orm/sqlite-core'
 import {
   createTransactionMutex,
-  type DurableChildTaskExecution,
-  type DurableChildTaskExecutionErrorStorageObject,
-  type DurableExecutionErrorStorageObject,
-  type DurableStorage,
-  type DurableStorageTx,
-  type DurableTaskExecutionStatusStorageObject,
-  type DurableTaskExecutionStorageObject,
-  type DurableTaskExecutionStorageObjectUpdate,
-  type DurableTaskExecutionStorageWhere,
-  type DurableTaskRetryOptions,
+  type ChildTaskExecution,
+  type ChildTaskExecutionErrorStorageValue,
+  type DurableExecutionErrorStorageValue,
+  type Storage,
+  type StorageTx,
+  type TaskExecutionStatusStorageValue,
+  type TaskExecutionStorageUpdate,
+  type TaskExecutionStorageValue,
+  type TaskExecutionStorageWhere,
+  type TaskRetryOptions,
   type TransactionMutex,
 } from 'durable-execution'
 
 import {
-  selectValueToStorageObject,
-  storageObjectToInsertValue,
-  storageUpdateToUpdateValue,
+  selectValueToStorageValue,
+  storageValueToInsertValue,
+  storageValueToUpdateValue,
 } from './common'
 
 /**
- * Create a sqlite table for durable task executions.
+ * Create a sqlite table for task executions.
  *
  * @param tableName - The name of the table.
  * @returns The sqlite table.
  */
-export function createDurableTaskExecutionsSQLiteTable(tableName = 'durable_task_executions') {
+export function createTaskExecutionsSQLiteTable(tableName = 'task_executions') {
   return sqliteTable(
     tableName,
     {
@@ -49,29 +49,29 @@ export function createDurableTaskExecutionsSQLiteTable(tableName = 'durable_task
       }),
       taskId: text('task_id').notNull(),
       executionId: text('execution_id').notNull(),
-      retryOptions: text('retry_options', { mode: 'json' })
-        .$type<DurableTaskRetryOptions>()
-        .notNull(),
+      retryOptions: text('retry_options', { mode: 'json' }).$type<TaskRetryOptions>().notNull(),
       timeoutMs: integer('timeout_ms').notNull(),
       sleepMsBeforeRun: integer('sleep_ms_before_run').notNull(),
       runInput: text('run_input').notNull(),
       runOutput: text('run_output'),
       output: text('output'),
-      childrenTasksCompletedCount: integer('children_tasks_completed_count').notNull(),
-      childrenTasks: text('children_tasks', { mode: 'json' }).$type<
-        Array<DurableChildTaskExecution>
+      childrenTaskExecutionsCompletedCount: integer(
+        'children_task_executions_completed_count',
+      ).notNull(),
+      childrenTaskExecutions: text('children_task_executions', { mode: 'json' }).$type<
+        Array<ChildTaskExecution>
       >(),
-      childrenTasksErrors: text('children_tasks_errors', { mode: 'json' }).$type<
-        Array<DurableChildTaskExecutionErrorStorageObject>
+      childrenTaskExecutionsErrors: text('children_task_executions_errors', { mode: 'json' }).$type<
+        Array<ChildTaskExecutionErrorStorageValue>
       >(),
-      finalizeTask: text('finalize_task', {
+      finalizeTaskExecution: text('finalize_task_execution', {
         mode: 'json',
-      }).$type<DurableChildTaskExecution>(),
-      finalizeTaskError: text('finalize_task_error', {
+      }).$type<ChildTaskExecution>(),
+      finalizeTaskExecutionError: text('finalize_task_execution_error', {
         mode: 'json',
-      }).$type<DurableExecutionErrorStorageObject>(),
-      error: text('error', { mode: 'json' }).$type<DurableExecutionErrorStorageObject>(),
-      status: text('status').$type<DurableTaskExecutionStatusStorageObject>().notNull(),
+      }).$type<DurableExecutionErrorStorageValue>(),
+      error: text('error', { mode: 'json' }).$type<DurableExecutionErrorStorageValue>(),
+      status: text('status').$type<TaskExecutionStatusStorageValue>().notNull(),
       isClosed: integer('is_closed', { mode: 'boolean' }).notNull(),
       needsPromiseCancellation: integer('needs_promise_cancellation', {
         mode: 'boolean',
@@ -98,55 +98,53 @@ export function createDurableTaskExecutionsSQLiteTable(tableName = 'durable_task
 }
 
 /**
- * The type of the sqlite table for durable task executions.
+ * The type of the sqlite table for task executions.
  */
-export type DurableTaskExecutionsSQLiteTable = ReturnType<
-  typeof createDurableTaskExecutionsSQLiteTable
->
+export type TaskExecutionsSQLiteTable = ReturnType<typeof createTaskExecutionsSQLiteTable>
 
 /**
- * Create a sqlite durable storage.
+ * Create a sqlite storage.
  *
  * @param db - The sqlite database.
  * @param table - The sqlite task executions table.
- * @returns The sqlite durable storage.
+ * @returns The sqlite storage.
  */
-export function createSQLiteDurableStorage<
+export function createSQLiteStorage<
   TRunResult,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
 >(
   db: BaseSQLiteDatabase<'async', TRunResult, TFullSchema, TSchema>,
-  table: DurableTaskExecutionsSQLiteTable,
-): DurableStorage {
-  return new SQLiteDurableStorage(db, table)
+  table: TaskExecutionsSQLiteTable,
+): Storage {
+  return new SQLiteStorage(db, table)
 }
 
-class SQLiteDurableStorage<
+class SQLiteStorage<
   TRunResult,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
-> implements DurableStorage
+> implements Storage
 {
   private readonly db: BaseSQLiteDatabase<'async', TRunResult, TFullSchema, TSchema>
-  private readonly table: DurableTaskExecutionsSQLiteTable
+  private readonly table: TaskExecutionsSQLiteTable
   private readonly transactionMutex: TransactionMutex
 
   constructor(
     db: BaseSQLiteDatabase<'async', TRunResult, TFullSchema, TSchema>,
-    table: DurableTaskExecutionsSQLiteTable,
+    table: TaskExecutionsSQLiteTable,
   ) {
     this.db = db
     this.table = table
     this.transactionMutex = createTransactionMutex()
   }
 
-  async withTransaction<T>(fn: (tx: DurableStorageTx) => Promise<T>): Promise<T> {
+  async withTransaction<T>(fn: (tx: StorageTx) => Promise<T>): Promise<T> {
     await this.transactionMutex.acquire()
     try {
       return await this.db.transaction(async (tx) => {
-        const durableTx = new SQLiteDurableStorageTx(tx, this.table)
-        return await fn(durableTx)
+        const storageTx = new SQLiteStorageTx(tx, this.table)
+        return await fn(storageTx)
       })
     } finally {
       this.transactionMutex.release()
@@ -154,33 +152,33 @@ class SQLiteDurableStorage<
   }
 }
 
-class SQLiteDurableStorageTx<
+class SQLiteStorageTx<
   TRunResult,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
-> implements DurableStorageTx
+> implements StorageTx
 {
   private readonly tx: SQLiteTransaction<'async', TRunResult, TFullSchema, TSchema>
-  private readonly table: DurableTaskExecutionsSQLiteTable
+  private readonly table: TaskExecutionsSQLiteTable
 
   constructor(
     tx: SQLiteTransaction<'async', TRunResult, TFullSchema, TSchema>,
-    table: DurableTaskExecutionsSQLiteTable,
+    table: TaskExecutionsSQLiteTable,
   ) {
     this.tx = tx
     this.table = table
   }
 
-  async insertTaskExecutions(executions: Array<DurableTaskExecutionStorageObject>): Promise<void> {
+  async insertTaskExecutions(executions: Array<TaskExecutionStorageValue>): Promise<void> {
     if (executions.length === 0) {
       return
     }
-    const rows = executions.map((execution) => storageObjectToInsertValue(execution))
+    const rows = executions.map((execution) => storageValueToInsertValue(execution))
     await this.tx.insert(this.table).values(rows)
   }
 
   async getTaskExecutionIds(
-    where: DurableTaskExecutionStorageWhere,
+    where: TaskExecutionStorageWhere,
     limit?: number,
     // skipLockedForUpdate can be ignored as transactions run sequentially using the mutex
     _skipLockedForUpdate?: boolean,
@@ -194,23 +192,23 @@ class SQLiteDurableStorageTx<
   }
 
   async getTaskExecutions(
-    where: DurableTaskExecutionStorageWhere,
+    where: TaskExecutionStorageWhere,
     limit?: number,
     // skipLockedForUpdate can be ignored as transactions run sequentially using the mutex
     _skipLockedForUpdate?: boolean,
-  ): Promise<Array<DurableTaskExecutionStorageObject>> {
+  ): Promise<Array<TaskExecutionStorageValue>> {
     const query = this.tx.select().from(this.table).where(buildWhereCondition(this.table, where))
     const rows = await (limit != null && limit > 0 ? query.limit(limit) : query)
-    return rows.map((row) => selectValueToStorageObject(row))
+    return rows.map((row) => selectValueToStorageValue(row))
   }
 
   async updateTaskExecutions(
-    where: DurableTaskExecutionStorageWhere,
-    update: DurableTaskExecutionStorageObjectUpdate,
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
   ): Promise<number> {
     const rows = await this.tx
       .update(this.table)
-      .set(storageUpdateToUpdateValue(update))
+      .set(storageValueToUpdateValue(update))
       .where(buildWhereCondition(this.table, where))
       .returning({ executionId: this.table.executionId })
     return rows.length
@@ -218,8 +216,8 @@ class SQLiteDurableStorageTx<
 }
 
 function buildWhereCondition(
-  table: DurableTaskExecutionsSQLiteTable,
-  where: DurableTaskExecutionStorageWhere,
+  table: TaskExecutionsSQLiteTable,
+  where: TaskExecutionStorageWhere,
 ): SQL | undefined {
   const conditions: Array<SQL> = []
   switch (where.type) {

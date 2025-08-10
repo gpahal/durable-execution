@@ -43,7 +43,7 @@ function noop(): void {
  *
  * @category Logger
  */
-export function createLoggerDebugDisabled(logger: Logger): Logger {
+export function createLoggerWithDebugDisabled(logger: Logger): Logger {
   return {
     debug: noop,
     info: logger.info,

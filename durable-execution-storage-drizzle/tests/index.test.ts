@@ -8,21 +8,16 @@ import type {
 } from 'drizzle-kit/api'
 import { drizzle as drizzleLibsql } from 'drizzle-orm/libsql'
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite'
-import {
-  DurableExecutor,
-  InMemoryStorage,
-  type DurableStorage,
-  type DurableTask,
-} from 'durable-execution'
+import { DurableExecutor, InMemoryStorage, type Storage, type Task } from 'durable-execution'
 import { describe, expect, it } from 'vitest'
 
 import { sleep } from '@gpahal/std/promises'
 
 import {
-  createDurableTaskExecutionsPgTable,
-  createDurableTaskExecutionsSQLiteTable,
-  createPgDurableStorage,
-  createSQLiteDurableStorage,
+  createPgStorage,
+  createSQLiteStorage,
+  createTaskExecutionsPgTable,
+  createTaskExecutionsSQLiteTable,
 } from '../src'
 
 const require = createRequire(import.meta.url)
@@ -31,7 +26,7 @@ const { pushSQLiteSchema, pushSchema } = require('drizzle-kit/api') as {
   pushSchema: typeof pushSchemaType
 }
 
-async function runStorageTest(storage: DurableStorage, cleanup?: () => void | Promise<void>) {
+async function runStorageTest(storage: Storage, cleanup?: () => void | Promise<void>) {
   const executor = new DurableExecutor(storage, {
     enableDebug: false,
   })
@@ -119,12 +114,12 @@ async function runExecutorTest(executor: DurableExecutor) {
     finalizeTask: {
       id: 'taskAFinalize',
       timeoutMs: 1000,
-      run: (ctx, { output, childrenTasksOutputs }) => {
+      run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
         return {
           taskAOutput: output,
-          taskA1Output: childrenTasksOutputs[0]!.output as string,
-          taskA2Output: childrenTasksOutputs[1]!.output as string,
-          taskA3Output: childrenTasksOutputs[2]!.output as string,
+          taskA1Output: childrenTaskExecutionsOutputs[0]!.output as string,
+          taskA2Output: childrenTaskExecutionsOutputs[1]!.output as string,
+          taskA3Output: childrenTaskExecutionsOutputs[2]!.output as string,
         }
       },
     },
@@ -145,14 +140,14 @@ async function runExecutorTest(executor: DurableExecutor) {
     finalizeTask: {
       id: 'rootFinalize',
       timeoutMs: 1000,
-      run: (ctx, { output, childrenTasksOutputs }) => {
-        const taskAOutput = childrenTasksOutputs[0]!.output as {
+      run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+        const taskAOutput = childrenTaskExecutionsOutputs[0]!.output as {
           taskAOutput: string
           taskA1Output: string
           taskA2Output: string
           taskA3Output: string
         }
-        const taskBOutput = childrenTasksOutputs[1]!.output as {
+        const taskBOutput = childrenTaskExecutionsOutputs[1]!.output as {
           taskB1Output: string
           taskB2Output: string
           taskB3Output: string
@@ -171,7 +166,7 @@ async function runExecutorTest(executor: DurableExecutor) {
     },
   })
 
-  const concurrentTasks: Array<DurableTask<string, string>> = []
+  const concurrentTasks: Array<Task<string, string>> = []
   for (let i = 0; i < 100; i++) {
     concurrentTasks.push(
       executor.task({
@@ -318,8 +313,10 @@ async function runExecutorTest(executor: DurableExecutor) {
   expect(parentTaskWithFailingChildExecution.status).toBe('children_tasks_failed')
   assert(parentTaskWithFailingChildExecution.status === 'children_tasks_failed')
   expect(parentTaskWithFailingChildExecution.taskId).toBe('parentWithFailingChild')
-  expect(parentTaskWithFailingChildExecution.childrenTasksErrors).toBeDefined()
-  expect(parentTaskWithFailingChildExecution.childrenTasksErrors[0]!.error.message).toBe('Failed')
+  expect(parentTaskWithFailingChildExecution.childrenTaskExecutionsErrors).toBeDefined()
+  expect(parentTaskWithFailingChildExecution.childrenTaskExecutionsErrors[0]!.error.message).toBe(
+    'Failed',
+  )
   expect(parentTaskWithFailingChildExecution.startedAt).toBeInstanceOf(Date)
   expect(parentTaskWithFailingChildExecution.finishedAt).toBeInstanceOf(Date)
   expect(parentTaskWithFailingChildExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -353,8 +350,10 @@ async function runExecutorTest(executor: DurableExecutor) {
   expect(parentTaskWithFailingFinalizeTaskExecution.status).toBe('finalize_task_failed')
   assert(parentTaskWithFailingFinalizeTaskExecution.status === 'finalize_task_failed')
   expect(parentTaskWithFailingFinalizeTaskExecution.taskId).toBe('parentWithFailingFinalizeTask')
-  expect(parentTaskWithFailingFinalizeTaskExecution.finalizeTaskError).toBeDefined()
-  expect(parentTaskWithFailingFinalizeTaskExecution.finalizeTaskError.message).toBe('Failed')
+  expect(parentTaskWithFailingFinalizeTaskExecution.finalizeTaskExecutionError).toBeDefined()
+  expect(parentTaskWithFailingFinalizeTaskExecution.finalizeTaskExecutionError.message).toBe(
+    'Failed',
+  )
   expect(parentTaskWithFailingFinalizeTaskExecution.startedAt).toBeInstanceOf(Date)
   expect(parentTaskWithFailingFinalizeTaskExecution.finishedAt).toBeInstanceOf(Date)
   expect(parentTaskWithFailingFinalizeTaskExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -368,11 +367,11 @@ async function runExecutorTest(executor: DurableExecutor) {
   assert(concurrentParentTaskExecution.status === 'completed')
   expect(concurrentParentTaskExecution.taskId).toBe('concurrent_parent')
   expect(concurrentParentTaskExecution.output).toBeDefined()
-  expect(concurrentParentTaskExecution.output.childrenTasksOutputs).toHaveLength(250)
+  expect(concurrentParentTaskExecution.output.childrenTaskExecutionsOutputs).toHaveLength(250)
   for (const [
     i,
     childTaskOutput,
-  ] of concurrentParentTaskExecution.output.childrenTasksOutputs.entries()) {
+  ] of concurrentParentTaskExecution.output.childrenTaskExecutionsOutputs.entries()) {
     expect(childTaskOutput.output).toBeDefined()
     expect(childTaskOutput.output).toBe(i)
   }
@@ -401,26 +400,26 @@ describe('index', () => {
     await runStorageTest(storage)
   })
 
-  it('should complete with sqlite storage', { timeout: 60_000 }, async () => {
-    await withTemporaryFile('test.db', async (filePath) => {
-      const table = createDurableTaskExecutionsSQLiteTable()
-      const db = drizzleLibsql(`file:${filePath}`)
-      const { apply } = await pushSQLiteSchema({ table }, db)
-      await apply()
-
-      const storage = createSQLiteDurableStorage(db, table)
-      await runStorageTest(storage)
-    })
-  })
-
   it('should complete with pg storage', { timeout: 60_000 }, async () => {
     await withTemporaryDirectory(async (dirPath) => {
-      const table = createDurableTaskExecutionsPgTable()
+      const table = createTaskExecutionsPgTable()
       const db = drizzlePglite(dirPath)
       const { apply } = await pushSchema({ table }, db)
       await apply()
 
-      const storage = createPgDurableStorage(db, table)
+      const storage = createPgStorage(db, table)
+      await runStorageTest(storage)
+    })
+  })
+
+  it('should complete with sqlite storage', { timeout: 60_000 }, async () => {
+    await withTemporaryFile('test.db', async (filePath) => {
+      const table = createTaskExecutionsSQLiteTable()
+      const db = drizzleLibsql(`file:${filePath}`)
+      const { apply } = await pushSQLiteSchema({ table }, db)
+      await apply()
+
+      const storage = createSQLiteStorage(db, table)
       await runStorageTest(storage)
     })
   })

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutionError, DurableExecutor, type DurableTaskRunContext } from '../src'
+import { DurableExecutionError, DurableExecutor, type TaskRunContext } from '../src'
 import { InMemoryStorage } from './in-memory-storage'
 
 describe('executor', () => {
@@ -42,7 +42,7 @@ describe('executor', () => {
     const taskOptions = {
       id: 'test',
       timeoutMs: 10_000,
-      run: async (ctx: DurableTaskRunContext) => {
+      run: async (ctx: TaskRunContext) => {
         executed++
         await sleep(1000)
         if (ctx.shutdownSignal.isCancelled()) {

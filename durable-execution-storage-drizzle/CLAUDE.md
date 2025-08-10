@@ -2,85 +2,119 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
-
-This is a Drizzle ORM storage implementation for the durable-execution library. It provides persistent storage backends for durable task executions using PostgreSQL and SQLite databases.
-
 ## Development Commands
 
-### Build and Development
+### Core Commands
 
-- `pnpm build` - Build the TypeScript source code using tsup
-- `pnpm clean` - Remove build artifacts
+- `pnpm build` - Build the package using tsup
+- `pnpm test` - Run all tests with Vitest
+- `pnpm test-coverage` - Run tests with coverage reporting
+- `pnpm type-check` - Type check with TypeScript and generate TypeDoc
+- `pnpm lint` - Lint code with ESLint
+- `pnpm lint-fix` - Fix linting issues automatically
 
-### Testing
+### Testing Specific Components
 
-- `pnpm test` - Run all tests using Vitest
-- `pnpm test-coverage` - Run tests with coverage report
-- Tests are located in `tests/index.test.ts` and include comprehensive integration tests for all database backends
+- `pnpm test -- --reporter=verbose` - Run tests with detailed output
+- Test timeout is set to 60 seconds for integration tests
 
-### Code Quality
+### Monorepo Commands (from root)
 
-- `pnpm type-check` - Run TypeScript type checking without emitting files
-- `pnpm lint` - Run ESLint on all files
-- `pnpm lint-fix` - Run ESLint with automatic fixes
+- `turbo build` - Build all packages in the monorepo
+- `turbo test` - Test all packages in the monorepo
 
-## Architecture
+## Architecture Overview
+
+This package provides Drizzle ORM storage implementations for the durable-execution framework, supporting both PostgreSQL and SQLite databases.
 
 ### Core Components
 
-**Database Adapters** (`src/pg.ts`, `src/sqlite.ts`):
+**Storage Implementations** (`src/pg.ts`, `src/sqlite.ts`)
 
-- Each file provides database-specific table schemas and storage implementations
-- Exports table creation functions: `createDurableTaskExecutionsPgTable()`, `createDurableTaskExecutionsSQLiteTable()`
-- Exports storage factory functions: `createPgDurableStorage()`, `createSQLiteDurableStorage()`
+- `createPgStorage()` - PostgreSQL storage implementation using Drizzle ORM
+- `createSQLiteStorage()` - SQLite storage implementation with transaction mutex
+- Both implement the `Storage` interface from durable-execution
+- Support for concurrent transactions with proper locking mechanisms
 
-**Common Layer** (`src/common.ts`):
+**Schema Definitions** (`src/pg.ts`, `src/sqlite.ts`)
 
-- Contains shared type definitions and data transformation functions
-- `DurableTaskExecutionDbValue` - Database row structure
-- `storageObjectToInsertValue()` - Converts storage objects to DB insert format
-- `selectValueToStorageObject()` - Converts DB rows back to storage objects
-- `storageUpdateToUpdateValue()` - Handles partial updates
+- `createTaskExecutionsPgTable()` - PostgreSQL table schema with proper indexes
+- `createTaskExecutionsSQLiteTable()` - SQLite table schema with compatibility adaptations
+- Tables include all fields required by the durable-execution storage interface
+- Optimized indexes for execution lookups and status-based queries
 
-**Storage Implementation Pattern**:
-Each database adapter follows the same pattern:
+**Data Transformation** (`src/common.ts`)
 
-1. Table schema definition with proper indexes for performance
-2. Storage class implementing the `DurableStorage` interface
-3. Transaction class implementing `DurableStorageTx` interface
-4. Query building functions for different where conditions
+- `storageValueToInsertValue()` - Converts storage format to database format
+- `selectValueToStorageValue()` - Converts database rows back to storage format
+- `storageValueToUpdateValue()` - Handles partial updates with proper null handling
+- Handles hierarchical task relationships (root/parent task references)
 
-### Database Schema
+### Database Schema Structure
 
-All implementations share the same logical schema with database-specific type mappings:
+**Key Fields:**
 
-- Primary key with auto-increment
-- Task hierarchy fields (root, parent relationships)
-- Execution state and metadata
-- JSON fields for complex data (retry options, children tasks, errors)
-- Optimized indexes on frequently queried columns
+- `executionId` - Unique identifier with unique index
+- `taskId` - Task type identifier
+- Status and lifecycle fields (`status`, `isClosed`, `startedAt`, `finishedAt`)
+- Parent-child relationships (`rootTaskId`, `parentTaskId`, `isFinalizeTask`)
+- Execution data (JSON fields for complex objects, text for serialized data)
+- Retry and timeout configuration fields
 
-### Testing Strategy
+**Performance Indexes:**
 
-The test suite (`tests/index.test.ts`) runs comprehensive integration tests against all three database backends:
+- Unique index on `executionId` for fast lookups
+- Composite index on `status`, `isClosed`, `expiresAt` for batch processing
+- Index on `status`, `startAt` for task scheduling queries
 
-- **SQLite**: Uses file-based database with schema migration via drizzle-kit
-- **PostgreSQL**: Uses PGlite (in-memory Postgres) for fast testing
+### Database-Specific Adaptations
 
-Tests cover:
+**PostgreSQL Features:**
 
-- Complex parent-child task hierarchies
-- Sequential task execution
-- Concurrent task execution (100 tasks)
-- Retry mechanisms
-- Error handling and failure scenarios
+- Native JSON column types for complex data
+- Proper timestamp with timezone support
+- Row-level locking with `FOR UPDATE SKIP LOCKED`
+- Identity columns for auto-incrementing IDs
 
-## Dependencies
+**SQLite Adaptations:**
 
-- **Peer Dependencies**: Requires `drizzle-orm` and `durable-execution` to be installed
-- **Development Dependencies**: Various database drivers for testing (`@libsql/client`, `@electric-sql/pglite`)
+- JSON stored as TEXT with mode annotations
+- Transaction mutex to handle SQLite's serialization requirements
+- Boolean fields stored as INTEGER
+- Timestamps stored as INTEGER in timestamp mode
 
-## Monorepo Context
+### Testing Approach
 
-This package is part of a larger durable-execution monorepo. Configuration files (`tsup.config.ts`, `vitest.config.ts`) reference shared configs from the parent `../durable-execution/` directory.
+**Test Structure:**
+
+- Integration tests using temporary databases (PGlite and libsql file)
+- Comprehensive workflow testing including concurrent scenarios
+- Tests all major task patterns: simple, sequential, parent-child, error handling
+- Schema creation via Drizzle Kit push API for test setup
+
+**Test Scenarios:**
+
+- Complex parent-child task hierarchies with finalize tasks
+- Concurrent execution of 100+ tasks
+- Retry logic and failure handling
+- Large-scale concurrent parent tasks (250 children)
+- Task execution state transitions and error propagation
+
+### Storage Interface Implementation
+
+Both storage implementations provide:
+
+- Transaction support via `withTransaction()`
+- Batch operations for task execution CRUD
+- Query operations with filtering and limiting
+- Optimistic locking through version fields
+- Proper handling of concurrent access patterns
+
+### Integration with durable-execution
+
+This package implements the `Storage` interface from the core durable-execution library:
+
+- `StorageTx` transaction interface for atomic operations
+- Support for all task execution states and transitions
+- Compatible with the executor's background processes and concurrency controls
+- Handles task expiration, cancellation, and cleanup operations

@@ -16,7 +16,7 @@ the durable executor server are provided in the
 [durable-execution-orpc-utils](https://github.com/gpahal/durable-execution/tree/main/durable-execution-orpc-utils)
 package using the [oRPC](https://orpc.unnoq.com/) library.
 
-## Properties of durable tasks
+## Properties of tasks
 
 - Tasks should be idempotent as they may be executed multiple times if there is a process failure
 - Tasks can take input and return output
@@ -46,7 +46,7 @@ pnpm add durable-execution
 ### Create a storage implementation
 
 Create a storage implementation that implements the
-[DurableStorage](https://gpahal.github.io/durable-execution/types/DurableStorage.html) type. The
+[Storage](https://gpahal.github.io/durable-execution/types/Storage.html) type. The
 implementation should support async transactions that allow running multiple
 transactions in parallel.
 
@@ -143,7 +143,7 @@ const uploadFile = executor
     finalizeTask: {
       id: 'onUploadFileAndChildrenComplete',
       timeoutMs: 60_000, // 1 minute
-      run: async (ctx, { input, output, childrenTasksOutputs }) => {
+      run: async (ctx, { input, output, childrenTaskExecutionsOutputs }) => {
         // ... combine the output of the run function and children tasks
         return {
           filePath: input.filePath,
@@ -286,9 +286,9 @@ const taskA = executor.task({
 
 ### Task run context
 
-The [run](https://gpahal.github.io/durable-execution/types/DurableTaskOptions.html#run) function
-is passed a context object that contains information about the task execution. See the
-[DurableTaskRunContext](https://gpahal.github.io/durable-execution/types/DurableTaskRunContext.html)
+The [run](https://gpahal.github.io/durable-execution/types/TaskOptions.html#run) function is passed
+a context object that contains information about the task execution. See the
+[TaskRunContext](https://gpahal.github.io/durable-execution/types/TaskRunContext.html)
 type for more details.
 
 ```ts
@@ -417,11 +417,11 @@ const parentTask = executor.parentTask({
   finalizeTask: {
     id: 'onParentRunAndChildrenComplete',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenTasksOutputs }) => {
+    run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
       return {
         parentOutput: output,
-        taskAOutput: childrenTasksOutputs[0]!.output as string,
-        taskBOutput: childrenTasksOutputs[1]!.output as string,
+        taskAOutput: childrenTaskExecutionsOutputs[0]!.output as string,
+        taskBOutput: childrenTaskExecutionsOutputs[1]!.output as string,
       }
     },
   },
@@ -541,10 +541,10 @@ const taskB = executor.parentTask({
     finalizeTask: {
       id: 'taskBFinalizeNested',
       timeoutMs: 1000,
-      run: (ctx, { output, childrenTasksOutputs }) => {
+      run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
         return {
           taskBOutput: output,
-          taskCOutput: childrenTasksOutputs[0]!.output as string,
+          taskCOutput: childrenTaskExecutionsOutputs[0]!.output as string,
         }
       },
     },
@@ -570,8 +570,8 @@ const taskA = executor.parentTask({
     finalizeTask: {
       id: 'taskAFinalizeNested',
       timeoutMs: 1000,
-      run: (ctx, { output, childrenTasksOutputs }) => {
-        const taskBOutput = childrenTasksOutputs[0]!.output as {
+      run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+        const taskBOutput = childrenTaskExecutionsOutputs[0]!.output as {
           taskBOutput: string
           taskCOutput: string
         }
@@ -654,12 +654,12 @@ const taskA = executor.parentTask({
   finalizeTask: {
     id: 'taskAFinalize',
     timeoutMs: 1000,
-    run: (ctx, { input, output, childrenTasksOutputs }) => {
+    run: (ctx, { input, output, childrenTaskExecutionsOutputs }) => {
       return {
         name: input.name,
         taskAOutput: output,
-        taskA1Output: childrenTasksOutputs[0]!.output as string,
-        taskA2Output: childrenTasksOutputs[1]!.output as string,
+        taskA1Output: childrenTaskExecutionsOutputs[0]!.output as string,
+        taskA2Output: childrenTaskExecutionsOutputs[1]!.output as string,
       }
     },
   },
@@ -687,11 +687,11 @@ const taskB = executor.parentTask({
   finalizeTask: {
     id: 'taskBFinalize',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenTasksOutputs }) => {
+    run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
       return {
         ...output,
-        taskB1Output: childrenTasksOutputs[0]!.output as string,
-        taskB2Output: childrenTasksOutputs[1]!.output as string,
+        taskB1Output: childrenTaskExecutionsOutputs[0]!.output as string,
+        taskB2Output: childrenTaskExecutionsOutputs[1]!.output as string,
       }
     },
   },
@@ -795,12 +795,12 @@ const taskA = executor.parentTask({
   finalizeTask: {
     id: 'taskAFinalize',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenTasksOutputs }) => {
+    run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
       return {
         taskAOutput: output,
-        taskA1Output: childrenTasksOutputs[0]!.output as string,
-        taskA2Output: childrenTasksOutputs[1]!.output as string,
-        taskA3Output: childrenTasksOutputs[2]!.output as string,
+        taskA1Output: childrenTaskExecutionsOutputs[0]!.output as string,
+        taskA2Output: childrenTaskExecutionsOutputs[1]!.output as string,
+        taskA3Output: childrenTaskExecutionsOutputs[2]!.output as string,
       }
     },
   },
@@ -821,14 +821,14 @@ const rootTask = executor.parentTask({
   finalizeTask: {
     id: 'rootFinalize',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenTasksOutputs }) => {
-      const taskAOutput = childrenTasksOutputs[0]!.output as {
+    run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+      const taskAOutput = childrenTaskExecutionsOutputs[0]!.output as {
         taskAOutput: string
         taskA1Output: string
         taskA2Output: string
         taskA3Output: string
       }
-      const taskBOutput = childrenTasksOutputs[1]!.output as {
+      const taskBOutput = childrenTaskExecutionsOutputs[1]!.output as {
         taskB1Output: string
         taskB2Output: string
         taskB3Output: string
@@ -867,7 +867,7 @@ we are using the same variable inside the `runParent` function. Use the `finaliz
 coordinate the output of the recursive task and children tasks.
 
 ```ts
-const recursiveTask: DurableTask<{ index: number }, { count: number }> = executor
+const recursiveTask: Task<{ index: number }, { count: number }> = executor
   .inputSchema(z.object({ index: z.number().int().min(0) }))
   .parentTask({
     id: 'recursive',
@@ -883,11 +883,11 @@ const recursiveTask: DurableTask<{ index: number }, { count: number }> = executo
     finalizeTask: {
       id: 'recursiveFinalize',
       timeoutMs: 1000,
-      run: (ctx, { childrenTasksOutputs }) => {
+      run: (ctx, { childrenTaskExecutionsOutputs }) => {
         return {
           count:
             1 +
-            childrenTasksOutputs.reduce(
+            childrenTaskExecutionsOutputs.reduce(
               (acc, childOutput) => acc + (childOutput.output as { count: number }).count,
               0,
             ),
@@ -915,8 +915,9 @@ setTimeout(() => {
   value = 10
 }, 2000)
 
-const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: number }> =
-  executor.inputSchema(z.object({ prevCount: z.number().int().min(0) })).parentTask({
+const pollingTask: Task<{ prevCount: number }, { count: number; value: number }> = executor
+  .inputSchema(z.object({ prevCount: z.number().int().min(0) }))
+  .parentTask({
     id: 'polling',
     sleepMsBeforeRun: 100,
     timeoutMs: 1000,
@@ -941,7 +942,7 @@ const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: nu
     finalizeTask: {
       id: 'pollingFinalize',
       timeoutMs: 1000,
-      run: (ctx, { input, output, childrenTasksOutputs }) => {
+      run: (ctx, { input, output, childrenTaskExecutionsOutputs }) => {
         if (output.isDone) {
           return {
             count: input.prevCount + 1,
@@ -949,7 +950,7 @@ const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: nu
           }
         }
 
-        return childrenTasksOutputs[0]!.output as {
+        return childrenTaskExecutionsOutputs[0]!.output as {
           count: number
           value: number
         }
@@ -966,9 +967,9 @@ const pollingTask: DurableTask<{ prevCount: number }, { count: number; value: nu
 
 ## Design
 
-### Durable task execution
+### Task execution
 
-The following diagram shows the internal state transition of the durable task execution once it is
+The following diagram shows the internal state transition of the task execution once it is
 enqueued till it's run function completes.
 
 ```mermaid
@@ -982,8 +983,8 @@ flowchart TD
   E-->|close| Z
 ```
 
-The following diagram shows the internal state transition of the durable task execution once it's
-run function completes.
+The following diagram shows the internal state transition of the task execution once it's run
+function completes.
 
 ```mermaid
 flowchart TD

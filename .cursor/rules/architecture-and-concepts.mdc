@@ -1,31 +1,34 @@
 ---
 alwaysApply: true
-description: Durable execution concepts, architecture, and key modules
+description: Durable execution concepts, lifecycle, and key files
 ---
-## Architecture
+### Core concepts
 
-- Orchestrator: `DurableExecutor` ([durable-execution/src/index.ts](mdc:durable-execution/src/index.ts))
-- Task system: `task.ts`, `task-internal.ts` for task definitions and execution
-- Storage contract and types: `storage.ts`
-- Serialization: `serializer.ts` (SuperJSON by default)
-- Errors: `errors.ts`; Cancellation: `cancel.ts`; Logging: `logger.ts`
+- Tasks are idempotent units of work run by a `DurableExecutor`
+- Parent tasks can spawn parallel children and optionally a `finalizeTask`
+- Executions are persisted via a `Storage` implementation
+- Background processes advance state: close finished, retry expired, cancel, process ready
 
-## Execution model
+Key files:
 
-- Status progression: Ready → Running → Completed/Failed/Timed Out
-- Parent tasks can spawn children in parallel; sequential chains are supported
-- Optional finalize task runs after children complete
-- Retries use exponential backoff with configurable options
+- Executor: [durable-execution/src/index.ts](mdc:durable-execution/src/index.ts)
+- Task types/APIs: [durable-execution/src/task.ts](mdc:durable-execution/src/task.ts)
+- Storage interface + in-memory impl: [durable-execution/src/storage.ts](mdc:durable-execution/src/storage.ts)
+- Cancellation utilities: [durable-execution/src/cancel.ts](mdc:durable-execution/src/cancel.ts)
+- Errors: [durable-execution/src/errors.ts](mdc:durable-execution/src/errors.ts)
 
-## Storage expectations
+Execution lifecycle (high level):
 
-- Implement `DurableStorage` with `withTransaction(fn)` supporting parallel tx where possible.
-- `DurableStorageTx` must provide `insertTaskExecutions`, `getTaskExecutionIds`, `getTaskExecutions`, `updateTaskExecutions`.
-- Indexing hints (see `DurableTaskExecutionStorageWhere` docs in [storage.ts](mdc:durable-execution/src/storage.ts)):
-  - unique index on execution_id
-  - composite indexes for `(status, isClosed, expiresAt)` and `(status, startAt)`
+- ready → running →
+  - completed
+  - failed | timed_out | cancelled
+  - waiting_for_children_tasks → children_tasks_failed | waiting_for_finalize_task → finalize_task_failed | completed
 
-## Development quickstart
+Important guidelines:
 
-- Create tasks via `executor.task(...)`, `executor.parentTask(...)` and enqueue with `executor.enqueueTask`.
-- Run background processing by `await executor.start()` and stop with `await executor.shutdown()`.
+- Register tasks before enqueue; task IDs must be unique within an executor
+- Inputs should be validated (use `validateInput()` or `inputSchema()`)
+- Use retries thoughtfully; exponential backoff supported via `TaskRetryOptions`
+- Respect `cancelSignal` and `shutdownSignal` in long-running work
+
+Docs and examples: [durable-execution/README.md](mdc:durable-execution/README.md)

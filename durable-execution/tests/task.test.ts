@@ -7,7 +7,7 @@ import {
   DurableExecutionCancelledError,
   DurableExecutionError,
   DurableExecutor,
-  type DurableTaskRunContext,
+  type TaskRunContext,
 } from '../src'
 import { InMemoryStorage } from './in-memory-storage'
 
@@ -526,7 +526,7 @@ describe('simpleTask', () => {
 
   it('should provide context with attempt and prevError on retry', async () => {
     let executed = 0
-    const contexts: Array<DurableTaskRunContext> = []
+    const contexts: Array<TaskRunContext> = []
     const task = executor.task({
       id: 'test',
       retryOptions: {

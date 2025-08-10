@@ -2,21 +2,21 @@ import { createRouterClient, ORPCError, os, type } from '@orpc/server'
 import {
   DurableExecutor,
   InMemoryStorage,
-  type DurableTask,
-  type DurableTaskFinishedExecution,
+  type Task,
+  type TaskFinishedExecution,
 } from 'durable-execution'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { sleep } from '@gpahal/std/promises'
 
-import { createDurableTaskClientHandles } from '../src/client'
-import { convertClientProcedureToDurableTask, createDurableTasksRouter } from '../src/server'
+import { createTaskClientHandles } from '../src/client'
+import { convertClientProcedureToTask, createTasksRouter } from '../src/server'
 
 async function waitAndGetFinishedExecution<TInput, TOutput>(
   executor: DurableExecutor,
-  task: DurableTask<TInput, TOutput>,
+  task: Task<TInput, TOutput>,
   executionId: string,
-): Promise<DurableTaskFinishedExecution<TOutput>> {
+): Promise<TaskFinishedExecution<TOutput>> {
   const handle = await executor.getTaskHandle(task, executionId)
   return await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
 }
@@ -50,11 +50,11 @@ describe('server', () => {
       },
     })
 
-    const router = createDurableTasksRouter(os, executor)
+    const router = createTasksRouter(os, executor)
     const tasks = { add1 }
 
     const client = createRouterClient(router, { context: {} })
-    const handles = createDurableTaskClientHandles(client, tasks)
+    const handles = createTaskClientHandles(client, tasks)
 
     const executionId = await handles.add1.enqueue({ n: 0 })
     let execution = await handles.add1.getExecution(executionId)
@@ -70,7 +70,7 @@ describe('server', () => {
   })
 
   it('should handle invalid task id to enqueue', async () => {
-    const router = createDurableTasksRouter(os, executor)
+    const router = createTasksRouter(os, executor)
     const client = createRouterClient(router, { context: {} })
 
     await expect(client.enqueueTask({ taskId: 'invalid', input: { n: 0 } })).rejects.toThrow(
@@ -79,7 +79,7 @@ describe('server', () => {
   })
 
   it('should handle invalid task id to get execution', async () => {
-    const router = createDurableTasksRouter(os, executor)
+    const router = createTasksRouter(os, executor)
     const client = createRouterClient(router, { context: {} })
 
     await expect(
@@ -96,7 +96,7 @@ describe('server', () => {
       },
     })
 
-    const router = createDurableTasksRouter(os, executor)
+    const router = createTasksRouter(os, executor)
     const client = createRouterClient(router, { context: {} })
 
     await expect(
@@ -117,7 +117,7 @@ describe('server', () => {
     const router = { add1: add1Proc }
 
     const client = createRouterClient(router, { context: {} })
-    const add1 = convertClientProcedureToDurableTask(
+    const add1 = convertClientProcedureToTask(
       executor,
       { id: 'add1', timeoutMs: 1000 },
       client.add1,
@@ -145,7 +145,7 @@ describe('server', () => {
     const router = { add1: add1Proc }
 
     const client = createRouterClient(router, { context: {} })
-    const add1 = convertClientProcedureToDurableTask(
+    const add1 = convertClientProcedureToTask(
       executor,
       { id: 'add1', timeoutMs: 1000 },
       client.add1,
@@ -176,7 +176,7 @@ describe('server', () => {
     const router = { add1: add1Proc }
 
     const client = createRouterClient(router, { context: {} })
-    const add1 = convertClientProcedureToDurableTask(
+    const add1 = convertClientProcedureToTask(
       executor,
       { id: 'add1', timeoutMs: 1000 },
       client.add1,
@@ -207,7 +207,7 @@ describe('server', () => {
     const router = { add1: add1Proc }
 
     const client = createRouterClient(router, { context: {} })
-    const add1 = convertClientProcedureToDurableTask(
+    const add1 = convertClientProcedureToTask(
       executor,
       { id: 'add1', timeoutMs: 1000 },
       client.add1,
@@ -238,7 +238,7 @@ describe('server', () => {
     const router = { add1: add1Proc }
 
     const client = createRouterClient(router, { context: {} })
-    const add1 = convertClientProcedureToDurableTask(
+    const add1 = convertClientProcedureToTask(
       executor,
       { id: 'add1', timeoutMs: 1000 },
       client.add1,

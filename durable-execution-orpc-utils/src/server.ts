@@ -20,27 +20,26 @@ import {
   DurableExecutionError,
   DurableExecutionNotFoundError,
   type DurableExecutor,
-  type DurableTask,
-  type DurableTaskCommonOptions,
-  type DurableTaskEnqueueOptions,
-  type DurableTaskExecution,
+  type Task,
+  type TaskCommonOptions,
+  type TaskEnqueueOptions,
+  type TaskExecution,
 } from 'durable-execution'
 
 import { getErrorMessage } from '@gpahal/std/errors'
 
 /**
- * A record of durable tasks. This type signals to the client which tasks are available to be
- * enqueued.
+ * A record of tasks. This type signals to the client which tasks are available to be enqueued.
  *
  * @example
  * ```ts
  * const tasks = {
- *   task1: durableTask1,
- *   task2: durableTask2,
+ *   task1: task1,
+ *   task2: task2,
  * }
  * ```
  */
-export type AnyDurableTasks = Record<string, DurableTask<unknown, unknown>>
+export type AnyTasks = Record<string, Task<unknown, unknown>>
 
 function createEnqueueTaskProcedure<
   TInitialContext extends Context,
@@ -65,12 +64,12 @@ function createEnqueueTaskProcedure<
     {
       taskId: string
       input: unknown
-      options?: DurableTaskEnqueueOptions
+      options?: TaskEnqueueOptions
     },
     {
       taskId: string
       input: unknown
-      options?: DurableTaskEnqueueOptions
+      options?: TaskEnqueueOptions
     }
   >,
   Schema<string, string>,
@@ -82,7 +81,7 @@ function createEnqueueTaskProcedure<
       type<{
         taskId: string
         input: unknown
-        options?: DurableTaskEnqueueOptions
+        options?: TaskEnqueueOptions
       }>(),
     )
     .output(type<string>())
@@ -139,7 +138,7 @@ function createGetTaskExecutionProcedure<
       executionId: string
     }
   >,
-  Schema<DurableTaskExecution, DurableTaskExecution>,
+  Schema<TaskExecution, TaskExecution>,
   TErrorMap,
   TMeta
 > {
@@ -150,7 +149,7 @@ function createGetTaskExecutionProcedure<
         executionId: string
       }>(),
     )
-    .output(type<DurableTaskExecution>())
+    .output(type<TaskExecution>())
     .handler(async ({ input }) => {
       try {
         const handle = await executor.getTaskHandle({ id: input.taskId }, input.executionId)
@@ -176,15 +175,15 @@ function createGetTaskExecutionProcedure<
 }
 
 /**
- * Creates a router for durable task procedures. Two procedures are created:
+ * Creates a router for task procedures. Two procedures are created:
  * - `enqueueTask` - Enqueues a task
  * - `getTaskExecution` - Gets the execution of a task
  *
  * @param osBuilder - The ORPC builder to use.
  * @param executor - The durable executor to use.
- * @returns A router for durable task procedures.
+ * @returns A router for task procedures.
  */
-export function createDurableTasksRouter<
+export function createTasksRouter<
   TInitialContext extends Context,
   TCurrentContext extends Context,
   TErrorMap extends ErrorMap,
@@ -205,8 +204,8 @@ export function createDurableTasksRouter<
     TInitialContext,
     TCurrentContext,
     Schema<
-      { taskId: string; input: unknown; options?: DurableTaskEnqueueOptions },
-      { taskId: string; input: unknown; options?: DurableTaskEnqueueOptions }
+      { taskId: string; input: unknown; options?: TaskEnqueueOptions },
+      { taskId: string; input: unknown; options?: TaskEnqueueOptions }
     >,
     Schema<string, string>,
     TErrorMap,
@@ -216,7 +215,7 @@ export function createDurableTasksRouter<
     TInitialContext,
     TCurrentContext,
     Schema<{ taskId: string; executionId: string }, { taskId: string; executionId: string }>,
-    Schema<DurableTaskExecution, DurableTaskExecution>,
+    Schema<TaskExecution, TaskExecution>,
     TErrorMap,
     TMeta
   >
@@ -228,29 +227,28 @@ export function createDurableTasksRouter<
 }
 
 /**
- * Converts a client procedure to a durable task. This is useful when you want to use a client
- * procedure as a durable task on the server. The `run` function of the durable task will call the
- * client procedure.
+ * Converts a client procedure to a task. This is useful when you want to use a client procedure as
+ * a task on the server. The `run` function of the task will call the client procedure.
  *
  * @param executor - The durable executor to use.
  * @param taskOptions - The options to use.
  * @param procedure - The procedure to convert.
  * @param rest - The client options.
- * @returns A durable task.
+ * @returns A task.
  */
-export function convertClientProcedureToDurableTask<
+export function convertClientProcedureToTask<
   TClientContext extends ClientContext,
   TInputSchema extends AnySchema,
   TOutputSchema extends AnySchema,
   TErrorMap extends ErrorMap,
 >(
   executor: DurableExecutor,
-  taskOptions: DurableTaskCommonOptions,
+  taskOptions: TaskCommonOptions,
   procedure: ProcedureClient<TClientContext, TInputSchema, TOutputSchema, TErrorMap>,
   ...rest: Record<never, never> extends TClientContext
     ? [options?: FriendlyClientOptions<TClientContext>]
     : [options: FriendlyClientOptions<TClientContext>]
-): DurableTask<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>> {
+): Task<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>> {
   return executor.task({
     ...taskOptions,
     run: async (_, input) => {

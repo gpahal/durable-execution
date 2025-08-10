@@ -4,60 +4,87 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
-- `pnpm build` - Build the package using tsup (ESM output with TypeScript declarations)
-- `pnpm test` - Run Vitest tests
+### Core Commands
+
+- `pnpm build` - Build the package using tsup
+- `pnpm test` - Run all tests with Vitest
+- `pnpm test -t "test-name"` - Run a specific test by name
 - `pnpm test-coverage` - Run tests with coverage reporting
-- `pnpm type-check` - Run TypeScript type checking
-- `pnpm lint` - Lint code with ESLint | `pnpm lint-fix` - Auto-fix linting issues
-- `pnpm clean` - Remove build artifacts
+- `pnpm type-check` - Type check with TypeScript and generate docs
+- `pnpm lint` - Lint code with ESLint
+- `pnpm lint-fix` - Fix linting issues automatically
 
-## Package Overview
+### Monorepo Commands (from root)
 
-This package provides oRPC utilities for the `durable-execution` library, enabling separation of task execution state management from the web application. The key pattern is:
+- `turbo build` - Build all packages in the monorepo
+- `turbo test` - Test all packages in the monorepo
 
-- **Durable Executor Server**: Long-running process that manages task state and orchestration
-- **Web Application**: Stateless/serverless handlers that execute the actual task logic
-- **oRPC Bridge**: Type-safe communication layer between the two processes
+## Architecture Overview
 
-## Architecture
+This package provides oRPC utilities for durable-execution, enabling separation of a long-running durable executor server from client web applications (e.g., serverless Next.js apps).
 
-### Core Components
+### Package Structure
 
-- **`createDurableTasksRouter()`** (src/server.ts:187) - Creates server-side oRPC procedures for task management
-  - `enqueueTask` - Accepts task enqueue requests and returns execution IDs
-  - `getTaskExecution` - Retrieves task execution status and results
+**Server Module** (`src/server.ts`)
 
-- **`createDurableTaskClientHandles()`** (src/client.ts:80) - Creates type-safe client handles for task operations
-  - Provides `enqueue()` and `getExecution()` methods for each registered task
+- `createTasksRouter()` - Creates oRPC router with `enqueueTask` and `getTaskExecution` procedures
+- `convertClientProcedureToTask()` - Wraps client oRPC procedures as durable tasks
+- Error handling converts between DurableExecutionError and ORPCError types
+- Supports type-safe task execution with proper input/output schemas
 
-- **`convertClientProcedureToDurableTask()`** (src/server.ts:241) - Wraps oRPC procedure calls as durable tasks
-  - Converts oRPC errors to appropriate `DurableExecutionError` types
-  - Maps HTTP status codes: `NOT_FOUND` → `DurableExecutionNotFoundError`, `INTERNAL_SERVER_ERROR` → internal error
+**Client Module** (`src/client.ts`)
 
-### Error Handling
+- `TasksRouterClient` - Type-safe client interface for task procedures
+- `createTaskClientHandles()` - Creates task handles for type-safe enqueueing and execution fetching
+- `TaskClientHandle` - Provides `enqueue()` and `getExecution()` methods per task
 
-The package maps oRPC errors to durable execution error types:
+### Key Architecture Patterns
 
-- `NOT_FOUND` → `DurableExecutionNotFoundError`
-- `INTERNAL_SERVER_ERROR` → `DurableExecutionError` (internal=true)
-- Other errors → `DurableExecutionError` (internal=false)
+#### Client-Server Task Flow
 
-## Key Usage Patterns
+1. Web app calls `tasksRouterClient.enqueueTask()` → Durable executor server
+2. Server executes task (may call back to web app via `convertClientProcedureToTask`)
+3. Web app polls `tasksRouterClient.getTaskExecution()` for results
 
-1. **Server Setup**: Create executor with storage, register tasks, expose oRPC procedures
-2. **Client Integration**: Create handles for type-safe task enqueueing and status checking
-3. **Task Wrapping**: Use `convertClientProcedureToDurableTask()` to make web app procedures callable as durable tasks
+#### Type Safety
+
+- Task definitions shared between server and client ensure type safety
+- `AnyTasks` record type constrains available tasks on client
+- Input/output types inferred from durable-execution Task definitions
+
+#### Error Mapping
+
+- Server maps DurableExecutionError → ORPCError (NOT_FOUND, BAD_REQUEST, INTERNAL_SERVER_ERROR)
+- Client procedures map ORPCError → DurableExecutionError for task execution
 
 ## Dependencies
 
-- **Peer Dependencies**: `@orpc/client`, `@orpc/contract`, `@orpc/server`, `durable-execution`
-- **Runtime Dependency**: `@gpahal/std` for error utilities
+### Peer Dependencies
 
-## Testing
+- `@orpc/client`, `@orpc/contract`, `@orpc/server` - oRPC framework for type-safe RPC
+- `durable-execution` - Core durable execution engine (workspace package)
 
-Tests cover:
+### Key Exports
 
-- Basic task enqueueing and execution via oRPC procedures
-- Error handling for invalid task IDs and execution IDs
-- All error scenarios for `convertClientProcedureToDurableTask()` wrapper
-- Integration with in-memory storage for fast test execution
+#### Server exports
+
+- `createTasksRouter` - Main server router factory
+- `convertClientProcedureToTask` - Client procedure wrapper utility
+- `AnyTasks` - Type constraint for task records
+
+#### Client exports
+
+- `TasksRouterClient` - Client interface type
+- `createTaskClientHandles` - Task handle factory
+- `TaskClientHandle` - Individual task client interface
+
+## Testing Approach
+
+Tests use in-memory storage with DurableExecutor and createRouterClient for full integration testing. Key test scenarios:
+
+- Basic task enqueueing and execution retrieval
+- Error handling for invalid task/execution IDs
+- Client procedure conversion with various error types (NOT_FOUND, INTERNAL_SERVER_ERROR, generic errors)
+- Type safety verification across client-server boundaries
+
+Test setup includes background process polling with short intervals for fast test execution.

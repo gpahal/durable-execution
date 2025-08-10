@@ -1,9 +1,0 @@
----
-alwaysApply: true
-description: Quick links to package READMEs for navigation
----
-## Package READMEs
-
-- Core: [durable-execution/README.md](mdc:durable-execution/README.md)
-- oRPC utils: [durable-execution-orpc-utils/README.md](mdc:durable-execution-orpc-utils/README.md)
-- Drizzle storage: [durable-execution-storage-drizzle/README.md](mdc:durable-execution-storage-drizzle/README.md)

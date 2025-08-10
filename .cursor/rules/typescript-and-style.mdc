@@ -1,20 +1,20 @@
 ---
 globs: *.ts,*.tsx
-description: TypeScript, linting, formatting, and testing conventions
+description: TypeScript, exports, and style guidance
 ---
-## TypeScript and style
+### TypeScript and style
 
-- **Language/Runtime**: Node >= 20; TypeScript configured per package `tsconfig.json`.
-- **Types**: Prefer strict types; annotate exported/public APIs; avoid `any` and unsafe casts.
-- **Control flow**: Use guard clauses; handle errors early; keep nesting shallow.
-- **Naming**: Use descriptive, full-word identifiers; functions as verbs, variables as nouns.
-- **Formatting**: Prettier for formatting; do not reformat unrelated code.
-- **Linting**: ESLint per package `eslint.config.mjs`; fix issues before commit.
-- **Tests**: Vitest; colocated under each package's `tests` directory.
+- Prefer explicit function signatures for public APIs; avoid `any`
+- Use descriptive names; keep code readable and high-verbosity where helpful
+- Use guard clauses and handle error/edge cases early
+- Avoid deep nesting; keep control-flow shallow
+- Add concise comments for non-obvious logic; avoid TODOs (implement instead)
+- Match existing formatting; use Prettier and ESLint rules
+- Use Standard Schema for input validation via `inputSchema()` when applicable
+- Respect cancellation with `cancelSignal`/`shutdownSignal` in long-running operations
 
-### Commands
+Repo config references:
 
-- Lint: `pnpm lint` | Fix: `pnpm lint-fix`
-- Format: `pnpm fmt` | Check: `pnpm fmt-check`
-- Type-check: `pnpm type-check`
-- Test: `pnpm test` | Coverage: `pnpm test-coverage`
+- ESLint config: each package `eslint.config.mjs`
+- TS build configs: `tsconfig.json`, `tsconfig.build.json`
+- ESM modules and Node >= 20 per packages’ `package.json`

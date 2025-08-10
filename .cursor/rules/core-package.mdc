@@ -1,29 +1,20 @@
 ---
-description: Guidance for the core durable-execution package
+globs: durable-execution/**
+description: Core package structure and usage tips
 ---
-## Core package
+### Core package (`durable-execution`)
 
-- **Purpose**: Durable task execution runtime with orchestration, retries, and persistence.
-- **Entry point**: [durable-execution/src/index.ts](mdc:durable-execution/src/index.ts)
-- **Key modules**:
-  - Tasks: [durable-execution/src/task.ts](mdc:durable-execution/src/task.ts), [durable-execution/src/task-internal.ts](mdc:durable-execution/src/task-internal.ts)
-  - Storage contract: [durable-execution/src/storage.ts](mdc:durable-execution/src/storage.ts)
-  - Serialization: [durable-execution/src/serializer.ts](mdc:durable-execution/src/serializer.ts)
-  - Errors: [durable-execution/src/errors.ts](mdc:durable-execution/src/errors.ts)
-  - Cancellation: [durable-execution/src/cancel.ts](mdc:durable-execution/src/cancel.ts)
-  - Logging: [durable-execution/src/logger.ts](mdc:durable-execution/src/logger.ts)
+- Main orchestrator: `DurableExecutor` in [src/index.ts](mdc:durable-execution/src/index.ts)
+- Task APIs: `task`, `parentTask`, `sequentialTasks`, `validateInput`, `inputSchema` in [src/index.ts](mdc:durable-execution/src/index.ts) and types in [src/task.ts](mdc:durable-execution/src/task.ts)
+- Storage interface and helpers in [src/storage.ts](mdc:durable-execution/src/storage.ts)
+- Cancellation in [src/cancel.ts](mdc:durable-execution/src/cancel.ts)
+- Error hierarchy in [src/errors.ts](mdc:durable-execution/src/errors.ts)
 
-### Quickstart
+Usage notes:
 
-- Define tasks via `executor.task(...)` or `executor.parentTask(...)`
-- Enqueue with `executor.enqueueTask`
-- Start background processing: `await executor.start()`; stop with `await executor.shutdown()`
-- See examples and tests: [durable-execution/tests](mdc:durable-execution/tests)
+- Always construct `DurableExecutor(storage, options)` once; start via `executor.start()` and stop via `executor.shutdown()`
+- Use `executor.task()` for simple tasks, `executor.parentTask()` for tasks that spawn children, and `executor.sequentialTasks()` for pipelines
+- Enqueue with `executor.enqueueTask(task, input, options)`; manage execution with the returned handle
+- For input validation, prefer `inputSchema()` with Standard Schema (e.g., Zod)
 
-### Dev commands
-
-- Build: `pnpm -F durable-execution build`
-- Test: `pnpm -F durable-execution test`
-- Type-check: `pnpm -F durable-execution type-check`
-- Lint: `pnpm -F durable-execution lint`
-- Format: `pnpm -F durable-execution fmt`
+Refer to examples in [README.md](mdc:durable-execution/README.md)

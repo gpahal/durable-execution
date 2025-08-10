@@ -1,17 +1,17 @@
 ---
-description: Guidance for durable-execution-orpc-utils package
+globs: durable-execution-orpc-utils/**
+description: oRPC utils package guide
 ---
-## oRPC utils package
+### oRPC utils (`durable-execution-orpc-utils`)
 
-- **Purpose**: Utilities to integrate durable execution with an oRPC-style client/server transport.
-- **Entry/Exports**:
-  - Client: [durable-execution-orpc-utils/src/client.ts](mdc:durable-execution-orpc-utils/src/client.ts)
-  - Server: [durable-execution-orpc-utils/src/server.ts](mdc:durable-execution-orpc-utils/src/server.ts)
-- **Docs**: [durable-execution-orpc-utils/README.md](mdc:durable-execution-orpc-utils/README.md)
+Server-side APIs in [src/server.ts](mdc:durable-execution-orpc-utils/src/server.ts):
 
-### Dev commands
+- `createTasksRouter(os, executor)` – exposes `enqueueTask` and `getTaskExecution`
+- `convertClientProcedureToTask(executor, taskOptions, procedure, [clientOptions])` – wrap client oRPC procedure as a durable task
 
-- Build: `pnpm -F durable-execution-orpc-utils build`
-- Test: `pnpm -F durable-execution-orpc-utils test`
-- Type-check: `pnpm -F durable-execution-orpc-utils type-check`
-- Lint: `pnpm -F durable-execution-orpc-utils lint`
+Client helpers in [src/client.ts](mdc:durable-execution-orpc-utils/src/client.ts):
+
+- `createTaskClientHandles(client, tasks, [clientOptions])` – build typed handles with `enqueue()` and `getExecution()`
+- `TasksRouterClient` – typed client for the server procedures
+
+See usage in [README.md](mdc:durable-execution-orpc-utils/README.md)

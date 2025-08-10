@@ -34,10 +34,10 @@ This package exposes:
 - Server-side oRPC procedures to enqueue tasks and fetch task executions
 - Clients for the server-side procedures. When a task is enqueued or execution is fetched, an API
   call is made to the durable executor server internally
-- A utility to wrap a client oRPC procedure as a durable task. When this task is executed on the
-  server, the client oRPC procedure is called. This is useful when all the business logic is in the
-  client web app and you want to use the durable executor server process just to manage the state
-  of task executions.
+- A utility to wrap a client oRPC procedure as a task. When this task is executed on the server,
+  the client oRPC procedure is called. This is useful when all the business logic is in the client
+  web app and you want to use the durable executor server process just to manage the state of task
+  executions.
 
 ## Installation
 
@@ -55,16 +55,16 @@ pnpm add durable-execution durable-execution-orpc-utils @orpc/client @orpc/contr
 
 ## Usage
 
-### Expose durable tasks router from the durable executor server
+### Expose tasks router from the durable executor server
 
 ```ts
 // durable-executor-server.ts
 
 import { os } from '@orpc/server'
 import { DurableExecutor, InMemoryStorage } from 'durable-execution'
-import { createDurableTasksRouter } from 'durable-execution-orpc-utils/server'
+import { createTasksRouter } from 'durable-execution-orpc-utils/server'
 
-// Create executor (use any DurableStorage implementation)
+// Create executor (use any Storage implementation)
 const executor = new DurableExecutor(new InMemoryStorage())
 
 // Register tasks
@@ -83,7 +83,7 @@ const add2 = executor.task({
 const tasks = { add1, add2 }
 
 // Build oRPC router to enqueue tasks and fetch task executions
-export const durableTasksRouter = createDurableTasksRouter(os, executor)
+export const tasksRouter = createTasksRouter(os, executor)
 
 async function server() {
   // ... start the long-running server (see oRPC server docs for more details)
@@ -99,7 +99,7 @@ await Promise.all([
 await executor.shutdown()
 ```
 
-### Use the durable tasks router from the client web app
+### Use the tasks router from the client web app
 
 ```ts
 // web-app.ts
@@ -108,28 +108,28 @@ import { createORPCClient } from '@orpc/client'
 import { RPCLink } from '@orpc/client/fetch'
 import type { RouterClient } from '@orpc/server'
 
-import { tasks, type durableTasksRouter } from './durable-executor-server'
+import { tasks, type tasksRouter } from './durable-executor-server'
 
-// Create a client for the durable executor router. This will be used to enqueue tasks.
-const durableTasksRouterLink = new RPCLink({
+// Create a client for the tasks router. This will be used to enqueue tasks.
+const tasksRouterLink = new RPCLink({
   url: 'http://localhost:3000/rpc',
   headers: () => ({
     authorization: 'TOKEN',
   }),
 })
-const durableTasksRouterClient: RouterClient<typeof durableTasksRouter> = createORPCClient(durableTasksRouterLink)
+const tasksRouterClient: RouterClient<typeof tasksRouter> = createORPCClient(tasksRouterLink)
 
 // Enqueue a task and get execution
-const executionId = await durableTasksRouterClient.enqueueTask({ taskId: 'add1', input: { n: 0 } })
-const execution = await durableTasksRouterClient.getTaskExecution({ taskId: 'add1', executionId })
+const executionId = await tasksRouterClient.enqueueTask({ taskId: 'add1', input: { n: 0 } })
+const execution = await tasksRouterClient.getTaskExecution({ taskId: 'add1', executionId })
 
 // Create handles for the tasks for type-safe enqueue and get execution
-const handles = createDurableTaskClientHandles(durableTasksRouterClient, tasks)
+const handles = createTaskClientHandles(tasksRouterClient, tasks)
 const executionId = await handles.add1.enqueue({ n: 0 })
 const execution = await handles.add1.getExecution(executionId)
 ```
 
-### Expose client procedures to the server and use them as durable tasks on the server
+### Expose client procedures to the server and use them as tasks on the server
 
 On the client web app, define the procedures as usual and create an oRPC router and expose it using
 an oRPC server.
@@ -151,12 +151,12 @@ const webAppRouter = { add1 }
 ```
 
 On the server, create a client for the web app router and use the
-`convertClientProcedureToDurableTask` utility to wrap the client procedures as durable tasks.
+`convertClientProcedureToTask` utility to wrap the client procedures as tasks.
 
 ```ts
 // durable-executor-server.ts
 
-import { convertClientProcedureToDurableTask } from 'durable-execution-orpc-utils/server'
+import { convertClientProcedureToTask } from 'durable-execution-orpc-utils/server'
 
 import { type webAppRouter } from './web-app'
 
@@ -169,7 +169,7 @@ const webAppRouterLink = new RPCLink({
 })
 const webAppRouterClient: RouterClient<typeof webAppRouter> = createORPCClient(webAppRouterLink)
 
-const clientAdd1 = convertClientProcedureToDurableTask(executor, { id: 'add1', timeoutMs: 5000 }, webAppRouterClient.add1)
+const clientAdd1 = convertClientProcedureToTask(executor, { id: 'add1', timeoutMs: 5000 }, webAppRouterClient.add1)
 
 export const tasks = { add1, add2, clientAdd1 }
 ```
@@ -180,12 +180,12 @@ web app itself but the execution state is managed by the durable executor server
 ```ts
 // web-app.ts
 
-import { tasks, type durableTasksRouter } from './durable-executor-server'
+import { tasks, type tasksRouter } from './durable-executor-server'
 
-// ... create a client for the durable executor router like above
+// ... create a client for the tasks router like above
 
 // Create handles for the tasks for type-safe enqueue and get execution
-const handles = createDurableTaskClientHandles(durableTasksRouterClient, tasks)
+const handles = createTaskClientHandles(tasksRouterClient, tasks)
 const executionId = await handles.clientAdd1.enqueue({ n: 0 })
 const execution = await handles.clientAdd1.getExecution(executionId)
 ```
