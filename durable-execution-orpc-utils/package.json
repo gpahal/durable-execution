@@ -1,6 +1,6 @@
 {
   "name": "durable-execution-orpc-utils",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "oRPC utilities for durable-execution to create a separate server process for durable execution",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
