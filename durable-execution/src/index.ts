@@ -226,6 +226,7 @@ export class DurableExecutor {
   private readonly backgroundProcessIntraBatchSleepMs: number
   private readonly maxConcurrentTaskExecutions: number
   private readonly maxTasksPerBatch: number
+  private readonly transactionMaxRetryAttempts: number
   private readonly taskInternalsMap: Map<string, TaskInternal>
   private readonly runningTaskExecutionsMap: Map<
     string,
@@ -257,6 +258,8 @@ export class DurableExecutor {
    *   If not provided, defaults to 100.
    * @param options.maxTasksPerBatch - The maximum number of tasks to process in each batch.
    *   If not provided, defaults to 3.
+   * @param options.transactionMaxRetryAttempts - The maximum number of times to retry a transaction.
+   *   If not provided, defaults to 1.
    */
   constructor(
     storage: Storage,
@@ -268,6 +271,7 @@ export class DurableExecutor {
       backgroundProcessIntraBatchSleepMs,
       maxConcurrentTaskExecutions,
       maxTasksPerBatch,
+      transactionMaxRetryAttempts,
     }: {
       serializer?: Serializer
       logger?: Logger
@@ -276,6 +280,7 @@ export class DurableExecutor {
       backgroundProcessIntraBatchSleepMs?: number
       maxConcurrentTaskExecutions?: number
       maxTasksPerBatch?: number
+      transactionMaxRetryAttempts?: number
     } = {},
   ) {
     this.storage = storage
@@ -294,6 +299,10 @@ export class DurableExecutor {
         ? maxConcurrentTaskExecutions
         : 100
     this.maxTasksPerBatch = maxTasksPerBatch && maxTasksPerBatch > 0 ? maxTasksPerBatch : 3
+    this.transactionMaxRetryAttempts =
+      transactionMaxRetryAttempts && transactionMaxRetryAttempts > 0
+        ? transactionMaxRetryAttempts
+        : 1
 
     this.taskInternalsMap = new Map()
     this.runningTaskExecutionsMap = new Map()
@@ -306,14 +315,10 @@ export class DurableExecutor {
    * Execute a function with a transaction. Supports retries.
    *
    * @param fn - The function to execute.
-   * @param maxRetryAttempts - The maximum number of times to retry the transaction.
    * @returns The result of the function.
    */
-  private async withTransaction<T>(
-    fn: (tx: StorageTx) => Promise<T>,
-    maxRetryAttempts = 1,
-  ): Promise<T> {
-    if (maxRetryAttempts <= 0) {
+  private async withTransaction<T>(fn: (tx: StorageTx) => Promise<T>): Promise<T> {
+    if (this.transactionMaxRetryAttempts <= 0) {
       return await this.storage.withTransaction(fn)
     }
 
@@ -324,7 +329,7 @@ export class DurableExecutor {
         if (error instanceof DurableExecutionError && !error.isRetryable) {
           throw error
         }
-        if (i === maxRetryAttempts) {
+        if (i >= this.transactionMaxRetryAttempts) {
           throw error
         }
 
@@ -337,18 +342,16 @@ export class DurableExecutor {
   /**
    * Execute a function with an existing transaction. Supports retries.
    *
+   * @param tx - The transaction to use. If not provided, a new transaction will be created.
    * @param fn - The function to execute.
-   * @param maxRetryAttempts - The maximum number of times to retry the transaction.
-   * @param tx - The transaction to use.
    * @returns The result of the function.
    */
   private async withExistingTransaction<T>(
     tx: StorageTx | undefined | null,
     fn: (tx: StorageTx) => Promise<T>,
-    maxRetryAttempts = 1,
   ): Promise<T> {
     if (tx == null) {
-      return await this.withTransaction(fn, maxRetryAttempts)
+      return await this.withTransaction(fn)
     }
 
     return await fn(tx)
