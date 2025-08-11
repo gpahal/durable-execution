@@ -9,10 +9,11 @@ import {
   type SQLiteTransaction,
 } from 'drizzle-orm/sqlite-core'
 import {
-  createTransactionMutex,
+  createMutex,
   type ChildTaskExecution,
   type ChildTaskExecutionErrorStorageValue,
   type DurableExecutionErrorStorageValue,
+  type Mutex,
   type Storage,
   type StorageTx,
   type TaskExecutionStatusStorageValue,
@@ -20,7 +21,6 @@ import {
   type TaskExecutionStorageValue,
   type TaskExecutionStorageWhere,
   type TaskRetryOptions,
-  type TransactionMutex,
 } from 'durable-execution'
 
 import {
@@ -128,7 +128,7 @@ class SQLiteStorage<
 {
   private readonly db: BaseSQLiteDatabase<'async', TRunResult, TFullSchema, TSchema>
   private readonly table: TaskExecutionsSQLiteTable
-  private readonly transactionMutex: TransactionMutex
+  private readonly transactionMutex: Mutex
 
   constructor(
     db: BaseSQLiteDatabase<'async', TRunResult, TFullSchema, TSchema>,
@@ -136,7 +136,7 @@ class SQLiteStorage<
   ) {
     this.db = db
     this.table = table
-    this.transactionMutex = createTransactionMutex()
+    this.transactionMutex = createMutex()
   }
 
   async withTransaction<T>(fn: (tx: StorageTx) => Promise<T>): Promise<T> {

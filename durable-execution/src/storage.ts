@@ -1,3 +1,5 @@
+import { createMutex, type Mutex } from '@gpahal/std/promises'
+
 import {
   convertDurableExecutionErrorToStorageValue,
   DurableExecutionError,
@@ -15,8 +17,8 @@ import {
 
 /**
  * Storage with support for transactions. Running multiple transactions in parallel must be
- * supported. If that is not possible, use {@link createTransactionMutex} to run transactions
- * sequentially.
+ * supported. If that is not possible, use something like `createMutex` from `@gpahal/std/mutex`
+ * to run transactions sequentially.
  *
  * @category Storage
  */
@@ -139,67 +141,6 @@ export async function updateTaskExecutionWithOptimisticLocking(
       )
     }
   }
-}
-
-/**
- * Create a transaction mutex. Use this to run {@link Storage.withTransaction} in a storage that
- * does not support running transactions in parallel.
- *
- * @example
- * ```ts
- * const mutex = createTransactionMutex()
- *
- * function createStorage() {
- *   return {
- *     withTransaction: async (fn) => {
- *       await mutex.acquire()
- *       try {
- *         // ... run transaction logic that won't run in parallel with other transactions
- *       } finally {
- *         mutex.release()
- *       }
- *     },
- *   }
- * }
- * ```
- *
- * @category Storage
- */
-export function createTransactionMutex(): TransactionMutex {
-  let locked = false
-  const waiting: Array<() => void> = []
-
-  const acquire = (): Promise<void> => {
-    return new Promise<void>((resolve) => {
-      if (!locked) {
-        locked = true
-        resolve()
-      } else {
-        waiting.push(resolve)
-      }
-    })
-  }
-
-  const release = (): void => {
-    if (waiting.length > 0) {
-      const next = waiting.shift()!
-      next()
-    } else {
-      locked = false
-    }
-  }
-
-  return { acquire, release }
-}
-
-/**
- * A transaction mutex returned by {@link createTransactionMutex}.
- *
- * @category Storage
- */
-export type TransactionMutex = {
-  acquire: () => Promise<void>
-  release: () => void
 }
 
 /**
@@ -738,7 +679,7 @@ export function getTaskExecutionStorageValueParentExecutionError(
 export class InMemoryStorage implements Storage {
   private logger: Logger
   private taskExecutions: Map<string, TaskExecutionStorageValue>
-  private transactionMutex: TransactionMutex
+  private transactionMutex: Mutex
 
   constructor({ enableDebug = false }: { enableDebug?: boolean } = {}) {
     this.logger = createConsoleLogger('InMemoryStorage')
@@ -746,7 +687,7 @@ export class InMemoryStorage implements Storage {
       this.logger = createLoggerWithDebugDisabled(this.logger)
     }
     this.taskExecutions = new Map()
-    this.transactionMutex = createTransactionMutex()
+    this.transactionMutex = createMutex()
   }
 
   async withTransaction<T>(fn: (tx: StorageTx) => Promise<T>): Promise<T> {

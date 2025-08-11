@@ -102,11 +102,10 @@ export {
   type TaskExecutionStorageValue,
   type TaskExecutionStorageWhere,
   type TaskExecutionStorageUpdate,
-  type TransactionMutex,
-  createTransactionMutex,
   InMemoryStorage,
   InMemoryStorageTx,
 } from './storage'
+export { type Mutex, createMutex } from '@gpahal/std/promises'
 
 /**
  * A durable executor. It is used to execute tasks durably, reliably and resiliently.
