@@ -1,4 +1,5 @@
-import type { CancelSignal } from './cancel'
+import type { CancelSignal } from '@gpahal/std/cancel'
+
 import type { DurableExecutionError, DurableExecutionErrorStorageValue } from './errors'
 
 /**

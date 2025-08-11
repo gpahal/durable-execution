@@ -86,8 +86,8 @@ catalogs:
       version: 3.2.4
   prod:
     '@gpahal/std':
-      specifier: ^0.0.30
-      version: 0.0.30
+      specifier: ^0.0.31
+      version: 0.0.31
     '@standard-schema/spec':
       specifier: ^1.0.0
       version: 1.0.0
@@ -170,7 +170,7 @@ importers:
     dependencies:
       '@gpahal/std':
         specifier: catalog:prod
-        version: 0.0.30
+        version: 0.0.31
       '@standard-schema/spec':
         specifier: catalog:prod
         version: 1.0.0
@@ -191,7 +191,7 @@ importers:
     dependencies:
       '@gpahal/std':
         specifier: catalog:prod
-        version: 0.0.30
+        version: 0.0.31
     devDependencies:
       '@orpc/client':
         specifier: catalog:dev
@@ -213,7 +213,7 @@ importers:
         version: 0.3.7
       '@gpahal/std':
         specifier: catalog:prod
-        version: 0.0.30
+        version: 0.0.31
       '@libsql/client':
         specifier: catalog:dev
         version: 0.15.10
@@ -735,6 +735,9 @@ packages:
 
   '@gpahal/std@0.0.30':
     resolution: {integrity: sha512-vNB5ewOdsyWfLW8Z0xpNZuxp/QrhTmMEP+iR9ax/ROzBTMaN+/VELLR14760CZpEjtb5iNjNvOh2XrU+8ZNPJw==}
+
+  '@gpahal/std@0.0.31':
+    resolution: {integrity: sha512-koSn6Ir7RwVn+XeUpjMwtghkt5ywKEMxkBV62I6J4E/zEo8QXuBJmK/tksKE31oc75lJqJXXJ2B2k6hsYLUaTQ==}
 
   '@gpahal/tsconfig@0.0.20':
     resolution: {integrity: sha512-iLjP80LXaYsPOZbLOyKaGcqu4jwlH+FnlSeUYT4I4yDvZHQvbW1HqUouPIrM9pZ04WyQ6afAU/DTBM6esCTZaA==}
@@ -4391,6 +4394,10 @@ snapshots:
       '@ianvs/prettier-plugin-sort-imports': 4.6.1(prettier@3.6.2)
 
   '@gpahal/std@0.0.30':
+    dependencies:
+      ts-custom-error: 3.3.1
+
+  '@gpahal/std@0.0.31':
     dependencies:
       ts-custom-error: 3.3.1
 

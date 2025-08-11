@@ -1,9 +1,10 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 
+import { createCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
 import { getErrorMessage } from '@gpahal/std/errors'
 import { sleep } from '@gpahal/std/promises'
 
-import { createCancellablePromise, createCancelSignal, type CancelSignal } from './cancel'
+import { createCancellablePromiseCustom } from './cancel'
 import {
   convertDurableExecutionErrorToStorageValue,
   DurableExecutionCancelledError,
@@ -49,7 +50,7 @@ export {
   createCancelSignal,
   createTimeoutCancelSignal,
   createCancellablePromise,
-} from './cancel'
+} from '@gpahal/std/cancel'
 export {
   type DurableExecutionErrorType,
   DurableExecutionError,
@@ -306,7 +307,7 @@ export class DurableExecutor {
 
     this.taskInternalsMap = new Map()
     this.runningTaskExecutionsMap = new Map()
-    const [cancelSignal, cancel] = createCancelSignal({ logger: this.logger })
+    const [cancelSignal, cancel] = createCancelSignal()
     this.shutdownSignal = cancelSignal
     this.internalCancel = cancel
   }
@@ -783,9 +784,7 @@ export class DurableExecutor {
         pollingIntervalMs?: number
       } = {}) => {
         const cancelSignal =
-          signal instanceof AbortSignal
-            ? createCancelSignal({ abortSignal: signal, logger: this.logger })[0]
-            : signal
+          signal instanceof AbortSignal ? createCancelSignal({ abortSignal: signal })[0] : signal
 
         const resolvedPollingIntervalMs =
           pollingIntervalMs && pollingIntervalMs > 0 ? pollingIntervalMs : 1000
@@ -798,7 +797,7 @@ export class DurableExecutor {
           if (isFirstIteration) {
             isFirstIteration = false
           } else {
-            await createCancellablePromise(sleep(resolvedPollingIntervalMs), cancelSignal)
+            await createCancellablePromiseCustom(sleep(resolvedPollingIntervalMs), cancelSignal)
 
             if (cancelSignal?.isCancelled()) {
               throw new DurableExecutionCancelledError()
@@ -868,7 +867,7 @@ export class DurableExecutor {
       }
 
       try {
-        const hasNonEmptyResult = await createCancellablePromise(
+        const hasNonEmptyResult = await createCancellablePromiseCustom(
           singleBatchProcessFn(),
           this.shutdownSignal,
         )
@@ -1411,7 +1410,7 @@ export class DurableExecutor {
       return
     }
 
-    const [cancelSignal, cancel] = createCancelSignal({ logger: this.logger })
+    const [cancelSignal, cancel] = createCancelSignal()
     const promise = this.runTaskExecutionWithContext(taskInternal, execution, cancelSignal)
       .catch((error) => {
         // This should not happen.

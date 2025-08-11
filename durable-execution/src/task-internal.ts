@@ -1,6 +1,8 @@
 import { z } from 'zod'
 
-import { createCancellablePromise, createTimeoutCancelSignal, type CancelSignal } from './cancel'
+import { createTimeoutCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
+
+import { createCancellablePromiseCustom } from './cancel'
 import { DurableExecutionError, DurableExecutionTimedOutError } from './errors'
 import {
   isFinalizeTaskOptionsParentTaskOptions,
@@ -347,8 +349,8 @@ export class TaskInternal {
     childrenTasks: Array<ChildTask>
   }> {
     const timeoutCancelSignal = createTimeoutCancelSignal(timeoutMs)
-    return await createCancellablePromise(
-      createCancellablePromise(
+    return await createCancellablePromiseCustom(
+      createCancellablePromiseCustom(
         this.runParent(ctx, input),
         timeoutCancelSignal,
         new DurableExecutionTimedOutError(),
