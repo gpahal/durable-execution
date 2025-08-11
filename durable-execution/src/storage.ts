@@ -16,7 +16,7 @@ import {
 /**
  * Storage with support for transactions. Running multiple transactions in parallel must be
  * supported. If that is not possible, use {@link createTransactionMutex} to run transactions
- * equentially.
+ * sequentially.
  *
  * @category Storage
  */
