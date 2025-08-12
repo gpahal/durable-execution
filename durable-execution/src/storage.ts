@@ -79,7 +79,12 @@ export type StorageTx = {
   ) => number | Promise<number>
 }
 
-const zMaxRetryAttempts = z.number().min(1).max(10).default(1)
+export const zStorageMaxRetryAttempts = z
+  .number()
+  .min(1)
+  .max(10)
+  .nullish()
+  .transform((val) => val ?? 1)
 
 export class StorageInternal implements Storage {
   private readonly logger: Logger
@@ -87,7 +92,7 @@ export class StorageInternal implements Storage {
   private readonly maxRetryAttempts: number
 
   constructor(logger: Logger, storage: Storage, maxRetryAttempts?: number) {
-    const parsedMaxRetryAttempts = zMaxRetryAttempts.safeParse(maxRetryAttempts)
+    const parsedMaxRetryAttempts = zStorageMaxRetryAttempts.safeParse(maxRetryAttempts)
     if (!parsedMaxRetryAttempts.success) {
       throw new DurableExecutionError(
         `Invalid storage max retry attempts: ${z.prettifyError(parsedMaxRetryAttempts.error)}`,
@@ -102,7 +107,7 @@ export class StorageInternal implements Storage {
 
   private getRsolvedMaxRetryAttempts(maxRetryAttempts?: number): number {
     if (maxRetryAttempts != null) {
-      const parsedMaxRetryAttempts = zMaxRetryAttempts.safeParse(maxRetryAttempts)
+      const parsedMaxRetryAttempts = zStorageMaxRetryAttempts.safeParse(maxRetryAttempts)
       if (!parsedMaxRetryAttempts.success) {
         throw new DurableExecutionError(
           `Invalid storage max retry attempts: ${z.prettifyError(parsedMaxRetryAttempts.error)}`,

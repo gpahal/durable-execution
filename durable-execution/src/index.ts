@@ -1,4 +1,5 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
+import z from 'zod'
 
 import { createCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
 import { getErrorMessage } from '@gpahal/std/errors'
@@ -19,6 +20,7 @@ import {
   createTaskExecutionStorageValue,
   getTaskExecutionStorageValueParentExecutionError,
   StorageInternal,
+  zStorageMaxRetryAttempts,
   type Storage,
   type StorageTx,
   type StorageTxInternal,
@@ -106,6 +108,43 @@ export {
   InMemoryStorageTx,
 } from './storage'
 export { type Mutex, createMutex } from '@gpahal/std/promises'
+
+const zDurableExecutorOptions = z.object({
+  logger: z
+    .object({
+      debug: z.function(),
+      info: z.function(),
+      warn: z.function(),
+      error: z.function(),
+    })
+    .nullish()
+    .transform((val) => val ?? createConsoleLogger('DurableExecutor')),
+  serializer: z
+    .object({
+      serialize: z.function(),
+      deserialize: z.function(),
+    })
+    .nullish()
+    .transform((val) => val ?? createSuperjsonSerializer()),
+  enableDebug: z.boolean().nullish(),
+  expireMs: z
+    .number()
+    .nullish()
+    .transform((val) => val ?? 300_000),
+  backgroundProcessIntraBatchSleepMs: z
+    .number()
+    .nullish()
+    .transform((val) => val ?? 500),
+  maxConcurrentTaskExecutions: z
+    .number()
+    .nullish()
+    .transform((val) => val ?? 1000),
+  maxTasksPerBatch: z
+    .number()
+    .nullish()
+    .transform((val) => val ?? 3),
+  storageMaxRetryAttempts: zStorageMaxRetryAttempts,
+})
 
 /**
  * A durable executor. It is used to execute tasks durably, reliably and resiliently.
@@ -262,16 +301,7 @@ export class DurableExecutor {
    */
   constructor(
     storage: Storage,
-    {
-      logger,
-      serializer,
-      enableDebug = false,
-      expireMs,
-      backgroundProcessIntraBatchSleepMs,
-      maxConcurrentTaskExecutions,
-      maxTasksPerBatch,
-      storageMaxRetryAttempts,
-    }: {
+    options: {
       logger?: Logger
       serializer?: Serializer
       enableDebug?: boolean
@@ -282,23 +312,36 @@ export class DurableExecutor {
       storageMaxRetryAttempts?: number
     } = {},
   ) {
-    this.logger = logger ?? createConsoleLogger('DurableExecutor')
+    const parsedOptions = zDurableExecutorOptions.safeParse(options)
+    if (!parsedOptions.success) {
+      throw new DurableExecutionError(
+        `Invalid options: ${z.prettifyError(parsedOptions.error)}`,
+        false,
+      )
+    }
+
+    const {
+      logger,
+      serializer,
+      enableDebug,
+      expireMs,
+      backgroundProcessIntraBatchSleepMs,
+      maxConcurrentTaskExecutions,
+      maxTasksPerBatch,
+      storageMaxRetryAttempts,
+    } = parsedOptions.data
+
+    this.logger = logger as Logger
     if (!enableDebug) {
       this.logger = createLoggerWithDebugDisabled(this.logger)
     }
 
     this.storage = new StorageInternal(this.logger, storage, storageMaxRetryAttempts)
-    this.serializer = new WrappedSerializer(serializer ?? createSuperjsonSerializer())
-    this.expireMs = expireMs && expireMs > 0 ? expireMs : 300_000 // 5 minutes
-    this.backgroundProcessIntraBatchSleepMs =
-      backgroundProcessIntraBatchSleepMs && backgroundProcessIntraBatchSleepMs > 0
-        ? backgroundProcessIntraBatchSleepMs
-        : 500 // 500ms
-    this.maxConcurrentTaskExecutions =
-      maxConcurrentTaskExecutions && maxConcurrentTaskExecutions > 0
-        ? maxConcurrentTaskExecutions
-        : 1000
-    this.maxTasksPerBatch = maxTasksPerBatch && maxTasksPerBatch > 0 ? maxTasksPerBatch : 3
+    this.serializer = new WrappedSerializer(serializer as Serializer)
+    this.expireMs = expireMs
+    this.backgroundProcessIntraBatchSleepMs = backgroundProcessIntraBatchSleepMs
+    this.maxConcurrentTaskExecutions = maxConcurrentTaskExecutions
+    this.maxTasksPerBatch = maxTasksPerBatch
 
     this.taskInternalsMap = new Map()
     this.runningTaskExecutionsMap = new Map()
