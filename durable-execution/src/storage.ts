@@ -1,3 +1,5 @@
+import z from 'zod'
+
 import { createMutex, type Mutex } from '@gpahal/std/promises'
 
 import {
@@ -14,6 +16,7 @@ import {
   type TaskExecutionStatusStorageValue,
   type TaskRetryOptions,
 } from './task'
+import { sleepWithJitter } from './utils'
 
 /**
  * Storage with support for transactions. Running multiple transactions in parallel must be
@@ -22,7 +25,7 @@ import {
  *
  * @category Storage
  */
-export type Storage = {
+export type Storage = StorageTx & {
   withTransaction: <T>(fn: (tx: StorageTx) => Promise<T>) => Promise<T>
 }
 
@@ -40,18 +43,6 @@ export type StorageTx = {
    */
   insertTaskExecutions: (executions: Array<TaskExecutionStorageValue>) => void | Promise<void>
   /**
-   * Get task execution ids.
-   *
-   * @param where - The where clause to filter the task executions.
-   * @param limit - The maximum number of task execution ids to return.
-   * @returns The ids of the task executions.
-   */
-  getTaskExecutionIds: (
-    where: TaskExecutionStorageWhere,
-    limit?: number,
-    skipLockedForUpdate?: boolean,
-  ) => Array<string> | Promise<Array<string>>
-  /**
    * Get task executions.
    *
    * @param where - The where clause to filter the task executions.
@@ -61,84 +52,260 @@ export type StorageTx = {
   getTaskExecutions: (
     where: TaskExecutionStorageWhere,
     limit?: number,
-    skipLockedForUpdate?: boolean,
   ) => Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>>
   /**
-   * Update task executions.
+   * Update task executions and return the task executions that were updated.
+   *
+   * @param where - The where clause to filter the task executions.
+   * @param update - The update object.
+   * @param limit - The maximum number of task executions to update.
+   * @returns The task executions that were updated.
+   */
+  updateTaskExecutionsReturningTaskExecutions: (
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+    limit?: number,
+  ) => Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>>
+  /**
+   * Update all task executions.
    *
    * @param where - The where clause to filter the task executions.
    * @param update - The update object.
    * @returns The count of the task executions that were updated.
    */
-  updateTaskExecutions: (
+  updateAllTaskExecutions: (
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
   ) => number | Promise<number>
 }
 
-export async function updateTaskExecutionsWithLimit(
-  tx: StorageTx,
-  where: TaskExecutionStorageWhere,
-  update: TaskExecutionStorageUpdate,
-  limit?: number,
-): Promise<Array<string>> {
-  const ids = await tx.getTaskExecutionIds(where, limit, true)
-  if (ids.length === 0) {
-    return []
+const zMaxRetryAttempts = z.number().min(1).max(10).default(1)
+
+export class StorageInternal implements Storage {
+  private readonly logger: Logger
+  private readonly storage: Storage
+  private readonly maxRetryAttempts: number
+
+  constructor(logger: Logger, storage: Storage, maxRetryAttempts?: number) {
+    const parsedMaxRetryAttempts = zMaxRetryAttempts.safeParse(maxRetryAttempts)
+    if (!parsedMaxRetryAttempts.success) {
+      throw new DurableExecutionError(
+        `Invalid storage max retry attempts: ${z.prettifyError(parsedMaxRetryAttempts.error)}`,
+        false,
+      )
+    }
+
+    this.logger = logger
+    this.storage = storage
+    this.maxRetryAttempts = parsedMaxRetryAttempts.data
   }
 
-  await tx.updateTaskExecutions(
-    {
-      type: 'by_execution_ids',
-      executionIds: ids,
-    },
-    update,
-  )
-  return ids
-}
+  private getRsolvedMaxRetryAttempts(maxRetryAttempts?: number): number {
+    if (maxRetryAttempts != null) {
+      const parsedMaxRetryAttempts = zMaxRetryAttempts.safeParse(maxRetryAttempts)
+      if (!parsedMaxRetryAttempts.success) {
+        throw new DurableExecutionError(
+          `Invalid storage max retry attempts: ${z.prettifyError(parsedMaxRetryAttempts.error)}`,
+          false,
+        )
+      }
+      return parsedMaxRetryAttempts.data
+    }
+    return this.maxRetryAttempts
+  }
 
-/**
- * Update a task execution with version checking and retries.
- */
-export async function updateTaskExecutionWithOptimisticLocking(
-  tx: StorageTx,
-  executionId: string,
-  updateFn: (
-    currentExecution: TaskExecutionStorageValue,
-  ) => Omit<TaskExecutionStorageUpdate, 'version'>,
-  maxAttempts = 3,
-): Promise<void> {
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const executions = await tx.getTaskExecutions({
+  private async retry<T>(
+    fnName: string,
+    fn: () => T | Promise<T>,
+    maxRetryAttempts?: number,
+  ): Promise<T> {
+    const resolvedMaxRetryAttempts = this.getRsolvedMaxRetryAttempts(maxRetryAttempts)
+    if (resolvedMaxRetryAttempts <= 0) {
+      return await fn()
+    }
+
+    for (let i = 0; ; i++) {
+      try {
+        return await fn()
+      } catch (error) {
+        if (error instanceof DurableExecutionError && !error.isRetryable) {
+          throw error
+        }
+        if (i >= resolvedMaxRetryAttempts) {
+          throw error
+        }
+
+        this.logger.error(`Error while retrying ${fnName}`, error)
+        await sleepWithJitter(25)
+      }
+    }
+  }
+
+  async withTransaction<T>(
+    fn: (tx: StorageTxInternal) => Promise<T>,
+    maxRetryAttempts?: number,
+  ): Promise<T> {
+    return await this.retry(
+      'withTransaction',
+      () => this.storage.withTransaction((tx) => fn(new StorageTxInternal(tx))),
+      maxRetryAttempts,
+    )
+  }
+
+  async withExistingTransaction<T>(
+    tx: StorageTx | undefined | null,
+    fn: (tx: StorageTxInternal) => Promise<T>,
+    maxRetryAttempts?: number,
+  ): Promise<T> {
+    if (tx == null) {
+      return await this.withTransaction(fn, maxRetryAttempts)
+    }
+    return await fn(new StorageTxInternal(tx))
+  }
+
+  async insertTaskExecutions(
+    executions: Array<TaskExecutionStorageValue>,
+    maxRetryAttempts?: number,
+  ): Promise<void> {
+    return await this.retry(
+      'insertTaskExecutions',
+      () => this.storage.insertTaskExecutions(executions),
+      maxRetryAttempts,
+    )
+  }
+
+  async getTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    limit?: number,
+    maxRetryAttempts?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.retry(
+      'getTaskExecutions',
+      () => this.storage.getTaskExecutions(where, limit),
+      maxRetryAttempts,
+    )
+  }
+
+  async getTaskExecutionById(executionId: string): Promise<TaskExecutionStorageValue | undefined> {
+    const executions = await this.storage.getTaskExecutions({
       type: 'by_execution_ids',
       executionIds: [executionId],
     })
     if (executions.length === 0) {
-      return
+      return undefined
     }
+    return executions[0]!
+  }
 
-    const execution = executions[0]!
-    const update = updateFn(execution)
-    const updatedCount = await tx.updateTaskExecutions(
-      {
-        type: 'by_execution_ids',
-        executionIds: [execution.executionId],
-        version: execution.version,
-      },
-      {
-        ...update,
-        version: execution.version + 1,
-      },
+  async updateTaskExecutionsReturningTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+    limit?: number,
+    maxRetryAttempts?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.retry(
+      'updateTaskExecutionsReturningTaskExecutions',
+      () => this.storage.updateTaskExecutionsReturningTaskExecutions(where, update, limit),
+      maxRetryAttempts,
     )
-    if (updatedCount > 0) {
-      break
-    }
+  }
 
-    if (attempt >= maxAttempts - 1) {
-      throw new DurableExecutionError(
-        `Failed to update task executions after ${maxAttempts} attempts due to version conflicts`,
-        false,
+  async updateAllTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+    maxRetryAttempts?: number,
+  ): Promise<number> {
+    return await this.retry(
+      'updateAllTaskExecutions',
+      () => this.storage.updateAllTaskExecutions(where, update),
+      maxRetryAttempts,
+    )
+  }
+}
+
+export class StorageTxInternal implements StorageTx {
+  private readonly tx: StorageTx
+
+  constructor(tx: StorageTx) {
+    this.tx = tx
+  }
+
+  insertTaskExecutions(executions: Array<TaskExecutionStorageValue>): void | Promise<void> {
+    return this.tx.insertTaskExecutions(executions)
+  }
+
+  async getTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    limit?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.tx.getTaskExecutions(where, limit)
+  }
+
+  async getTaskExecutionById(executionId: string): Promise<TaskExecutionStorageValue | undefined> {
+    const executions = await this.tx.getTaskExecutions({
+      type: 'by_execution_ids',
+      executionIds: [executionId],
+    })
+    if (executions.length === 0) {
+      return undefined
+    }
+    return executions[0]!
+  }
+
+  async updateTaskExecutionsReturningTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+    limit?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.tx.updateTaskExecutionsReturningTaskExecutions(where, update, limit)
+  }
+
+  async updateAllTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+  ): Promise<number> {
+    return await this.tx.updateAllTaskExecutions(where, update)
+  }
+
+  async updateTaskExecutionWithOptimisticLocking(
+    executionId: string,
+    updateFn: (
+      currentExecution: TaskExecutionStorageValue,
+    ) => Omit<TaskExecutionStorageUpdate, 'version'>,
+    maxAttempts = 3,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const executions = await this.tx.getTaskExecutions({
+        type: 'by_execution_ids',
+        executionIds: [executionId],
+      })
+      if (executions.length === 0) {
+        return
+      }
+
+      const execution = executions[0]!
+      const update = updateFn(execution)
+      const updatedCount = await this.tx.updateAllTaskExecutions(
+        {
+          type: 'by_execution_ids',
+          executionIds: [execution.executionId],
+          version: execution.version,
+        },
+        {
+          ...update,
+          version: execution.version + 1,
+        },
       )
+      if (updatedCount > 0) {
+        break
+      }
+
+      if (attempt >= maxAttempts - 1) {
+        throw new DurableExecutionError(
+          `Failed to update task executions after ${maxAttempts} attempts due to version conflicts`,
+          false,
+        )
+      }
     }
   }
 }
@@ -702,6 +869,40 @@ export class InMemoryStorage implements Storage {
     }
   }
 
+  async insertTaskExecutions(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+    await this.withTransaction(async (tx) => {
+      await tx.insertTaskExecutions(executions)
+    })
+  }
+
+  async getTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    limit?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.withTransaction(async (tx) => {
+      return await tx.getTaskExecutions(where, limit)
+    })
+  }
+
+  async updateTaskExecutionsReturningTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+    limit?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.withTransaction(async (tx) => {
+      return await tx.updateTaskExecutionsReturningTaskExecutions(where, update, limit)
+    })
+  }
+
+  async updateAllTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+  ): Promise<number> {
+    return await this.withTransaction(async (tx) => {
+      return await tx.updateAllTaskExecutions(where, update)
+    })
+  }
+
   async save(saveFn: (s: string) => Promise<void>): Promise<void> {
     await saveFn(JSON.stringify(this.taskExecutions, null, 2))
   }
@@ -760,77 +961,96 @@ export class InMemoryStorageTx implements StorageTx {
     }
   }
 
-  getTaskExecutionIds(
-    where: TaskExecutionStorageWhere,
-    limit?: number,
-    skipLockedForUpdate?: boolean,
-  ): Array<string> {
-    const executions = this.getTaskExecutions(where, limit, skipLockedForUpdate)
-    return executions.map((e) => e.executionId)
-  }
-
   getTaskExecutions(
     where: TaskExecutionStorageWhere,
     limit?: number,
-    // skipLockedForUpdate can be ignored as transactions run sequentially using the mutex
-    _skipLockedForUpdate?: boolean,
   ): Array<TaskExecutionStorageValue> {
-    let executions = [...this.taskExecutions.values()].filter((execution) => {
-      if (
-        where.type === 'by_execution_ids' &&
-        where.executionIds.includes(execution.executionId) &&
-        (!where.statuses || where.statuses.includes(execution.status)) &&
-        (!where.needsPromiseCancellation ||
-          execution.needsPromiseCancellation === where.needsPromiseCancellation) &&
-        (where.version == null || execution.version === where.version)
-      ) {
-        return true
-      }
-      if (
-        where.type === 'by_statuses' &&
-        where.statuses.includes(execution.status) &&
-        (where.isClosed == null || execution.isClosed === where.isClosed) &&
-        (where.expiresAtLessThan == null ||
-          (execution.expiresAt && execution.expiresAt < where.expiresAtLessThan))
-      ) {
-        return true
-      }
-      if (
-        where.type === 'by_start_at_less_than' &&
-        execution.startAt < where.startAtLessThan &&
-        (!where.statuses || where.statuses.includes(execution.status))
-      ) {
-        return true
-      }
-      return false
-    })
-    if (limit != null && limit >= 0) {
-      executions = executions.slice(0, limit)
-    }
+    const filteredTaskExecutions = getTaskExecutions(this.taskExecutions, where, limit)
     this.logger.debug(
-      `Got ${executions.length} task executions: where=${JSON.stringify(where)} limit=${limit} executions=${executions.map((e) => e.executionId).join(', ')}`,
+      `Got ${filteredTaskExecutions.length} task executions: where=${JSON.stringify(where)} limit=${limit} executions=${filteredTaskExecutions.map((e) => e.executionId).join(', ')}`,
     )
+    return filteredTaskExecutions
+  }
+
+  updateTaskExecutionsReturningTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+    limit?: number,
+  ): Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>> {
+    const executions = this.getTaskExecutions(where, limit)
+    for (const execution of executions) {
+      updateTaskExecution(execution, update)
+    }
     return executions
   }
 
-  updateTaskExecutions(
+  updateAllTaskExecutions(
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
   ): number {
     const executions = this.getTaskExecutions(where)
     for (const execution of executions) {
-      for (const key in update) {
-        if (key === 'unsetError') {
-          execution.error = undefined
-        } else if (key === 'unsetExpiresAt') {
-          execution.expiresAt = undefined
-        } else if (key != null) {
-          // @ts-expect-error - This is safe because we know the key is valid
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          execution[key] = update[key]
-        }
-      }
+      updateTaskExecution(execution, update)
     }
     return executions.length
+  }
+}
+
+function getTaskExecutions(
+  taskExecutions: Map<string, TaskExecutionStorageValue>,
+  where: TaskExecutionStorageWhere,
+  limit?: number,
+) {
+  let filteredTaskExecutions = [...taskExecutions.values()].filter((execution) => {
+    if (
+      where.type === 'by_execution_ids' &&
+      where.executionIds.includes(execution.executionId) &&
+      (!where.statuses || where.statuses.includes(execution.status)) &&
+      (!where.needsPromiseCancellation ||
+        execution.needsPromiseCancellation === where.needsPromiseCancellation) &&
+      (where.version == null || execution.version === where.version)
+    ) {
+      return true
+    }
+    if (
+      where.type === 'by_statuses' &&
+      where.statuses.includes(execution.status) &&
+      (where.isClosed == null || execution.isClosed === where.isClosed) &&
+      (where.expiresAtLessThan == null ||
+        (execution.expiresAt && execution.expiresAt < where.expiresAtLessThan))
+    ) {
+      return true
+    }
+    if (
+      where.type === 'by_start_at_less_than' &&
+      execution.startAt < where.startAtLessThan &&
+      (!where.statuses || where.statuses.includes(execution.status))
+    ) {
+      return true
+    }
+    return false
+  })
+  if (limit != null && limit >= 0) {
+    filteredTaskExecutions = filteredTaskExecutions.slice(0, limit)
+  }
+  return filteredTaskExecutions
+}
+
+function updateTaskExecution(
+  taskExecution: TaskExecutionStorageValue,
+  update: TaskExecutionStorageUpdate,
+) {
+  for (const key in update) {
+    if (key === 'unsetError') {
+      taskExecution.error = undefined
+    }
+    if (key === 'unsetExpiresAt') {
+      taskExecution.expiresAt = undefined
+    }
+    if (key != null) {
+      // @ts-expect-error - This is safe because we know the key is valid
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      taskExecution[key] = update[key]
+    }
   }
 }

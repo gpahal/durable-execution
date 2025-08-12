@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import fs from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 
@@ -173,7 +173,7 @@ async function runExecutorTest(executor: DurableExecutor) {
         id: `t${i}`,
         timeoutMs: 1000,
         run: async (ctx, input: string) => {
-          await sleep(100 * Math.random())
+          await sleep(10 * Math.random())
           return `Hello from task T${i}, ${input}!`
         },
       }),
@@ -193,7 +193,7 @@ async function runExecutorTest(executor: DurableExecutor) {
     id: 'concurrent_parent',
     timeoutMs: 1000,
     runParent: async () => {
-      await sleep(10)
+      await sleep(1)
       return {
         output: undefined,
         childrenTasks: Array.from({ length: 250 }, (_, index) => ({
@@ -379,11 +379,11 @@ async function runExecutorTest(executor: DurableExecutor) {
 }
 
 export async function withTemporaryDirectory(fn: (dirPath: string) => Promise<void>) {
-  const dirPath = await mkdtemp('.tmp_')
+  const dirPath = await fs.mkdtemp('.tmp_')
   try {
     await fn(dirPath)
   } finally {
-    await rm(dirPath, { recursive: true })
+    await fs.rmdir(dirPath, { recursive: true })
   }
 }
 
@@ -395,6 +395,25 @@ export async function withTemporaryFile(filename: string, fn: (file: string) => 
 }
 
 describe('index', () => {
+  afterAll(async () => {
+    const tmpDir = process.cwd()
+    try {
+      const files = await fs.readdir(tmpDir)
+      for (const file of files) {
+        if (file.startsWith('.tmp_')) {
+          const fullPath = path.join(tmpDir, file)
+          try {
+            await fs.rmdir(fullPath, { recursive: true })
+          } catch {
+            // ignore errors
+          }
+        }
+      }
+    } catch {
+      // ignore errors
+    }
+  })
+
   it('should complete with in memory storage', { timeout: 60_000 }, async () => {
     const storage = new InMemoryStorage({ enableDebug: false })
     await runStorageTest(storage)

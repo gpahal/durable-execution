@@ -178,35 +178,35 @@ export function storageValueToUpdateValue(
   update: TaskExecutionStorageUpdate,
 ): TaskExecutionDBUpdateValue {
   const row: TaskExecutionDBUpdateValue = {}
-  if (update.runOutput !== undefined) {
+  if (update.runOutput != null) {
     row.runOutput = update.runOutput
   }
 
-  if (update.output !== undefined) {
+  if (update.output != null) {
     row.output = update.output
   }
 
-  if (update.childrenTaskExecutionsCompletedCount !== undefined) {
+  if (update.childrenTaskExecutionsCompletedCount != null) {
     row.childrenTaskExecutionsCompletedCount = update.childrenTaskExecutionsCompletedCount
   }
 
-  if (update.childrenTaskExecutions !== undefined) {
+  if (update.childrenTaskExecutions != null) {
     row.childrenTaskExecutions = update.childrenTaskExecutions
   }
 
-  if (update.childrenTaskExecutionsErrors !== undefined) {
+  if (update.childrenTaskExecutionsErrors != null) {
     row.childrenTaskExecutionsErrors = update.childrenTaskExecutionsErrors
   }
 
-  if (update.finalizeTaskExecution !== undefined) {
+  if (update.finalizeTaskExecution != null) {
     row.finalizeTaskExecution = update.finalizeTaskExecution
   }
 
-  if (update.finalizeTaskExecutionError !== undefined) {
+  if (update.finalizeTaskExecutionError != null) {
     row.finalizeTaskExecutionError = update.finalizeTaskExecutionError
   }
 
-  if (update.error !== undefined) {
+  if (update.error != null) {
     row.error = update.error
   }
 
@@ -214,35 +214,35 @@ export function storageValueToUpdateValue(
     row.error = null
   }
 
-  if (update.status !== undefined) {
+  if (update.status != null) {
     row.status = update.status
   }
 
-  if (update.isClosed !== undefined) {
+  if (update.isClosed != null) {
     row.isClosed = update.isClosed
   }
 
-  if (update.needsPromiseCancellation !== undefined) {
+  if (update.needsPromiseCancellation != null) {
     row.needsPromiseCancellation = update.needsPromiseCancellation
   }
 
-  if (update.retryAttempts !== undefined) {
+  if (update.retryAttempts != null) {
     row.retryAttempts = update.retryAttempts
   }
 
-  if (update.startAt !== undefined) {
+  if (update.startAt != null) {
     row.startAt = update.startAt
   }
 
-  if (update.startedAt !== undefined) {
+  if (update.startedAt != null) {
     row.startedAt = update.startedAt
   }
 
-  if (update.finishedAt !== undefined) {
+  if (update.finishedAt != null) {
     row.finishedAt = update.finishedAt
   }
 
-  if (update.expiresAt !== undefined) {
+  if (update.expiresAt != null) {
     row.expiresAt = update.expiresAt
   }
 
@@ -250,7 +250,7 @@ export function storageValueToUpdateValue(
     row.expiresAt = null
   }
 
-  if (update.updatedAt !== undefined) {
+  if (update.updatedAt != null) {
     row.updatedAt = update.updatedAt
   }
 

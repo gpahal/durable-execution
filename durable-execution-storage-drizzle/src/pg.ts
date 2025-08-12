@@ -132,6 +132,45 @@ class PgStorage<
       return await fn(storageTx)
     })
   }
+
+  async insertTaskExecutions(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+    if (executions.length === 0) {
+      return
+    }
+    const rows = executions.map((execution) => storageValueToInsertValue(execution))
+    await this.db.insert(this.table).values(rows)
+  }
+
+  async getTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    limit?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    const query = this.db.select().from(this.table).where(buildWhereCondition(this.table, where))
+    const rows = await (limit != null && limit > 0 ? query.limit(limit) : query)
+    return rows.map((row) => selectValueToStorageValue(row))
+  }
+
+  async updateTaskExecutionsReturningTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+    limit?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.withTransaction(async (tx) => {
+      return await tx.updateTaskExecutionsReturningTaskExecutions(where, update, limit)
+    })
+  }
+
+  async updateAllTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+  ): Promise<number> {
+    const rows = await this.db
+      .update(this.table)
+      .set(storageValueToUpdateValue(update))
+      .where(buildWhereCondition(this.table, where))
+      .returning({ executionId: this.table.executionId })
+    return rows.length
+  }
 }
 
 class PgStorageTx<
@@ -157,38 +196,37 @@ class PgStorageTx<
     await this.tx.insert(this.table).values(rows)
   }
 
-  async getTaskExecutionIds(
-    where: TaskExecutionStorageWhere,
-    limit?: number,
-    skipLockedForUpdate?: boolean,
-  ): Promise<Array<string>> {
-    const query = this.tx
-      .select({ executionId: this.table.executionId })
-      .from(this.table)
-      .where(buildWhereCondition(this.table, where))
-    const queryWithLimit = limit != null && limit > 0 ? query.limit(limit) : query
-    const queryWithLimitAndSkipLocked = skipLockedForUpdate
-      ? queryWithLimit.for('update', { skipLocked: true })
-      : queryWithLimit
-    const rows = await queryWithLimitAndSkipLocked
-    return rows.map((row) => row.executionId)
-  }
-
   async getTaskExecutions(
     where: TaskExecutionStorageWhere,
     limit?: number,
-    skipLockedForUpdate?: boolean,
   ): Promise<Array<TaskExecutionStorageValue>> {
     const query = this.tx.select().from(this.table).where(buildWhereCondition(this.table, where))
-    const queryWithLimit = limit != null && limit > 0 ? query.limit(limit) : query
-    const queryWithLimitAndSkipLocked = skipLockedForUpdate
-      ? queryWithLimit.for('update', { skipLocked: true })
-      : queryWithLimit
-    const rows = await queryWithLimitAndSkipLocked
+    const rows = await (limit != null && limit > 0 ? query.limit(limit) : query)
     return rows.map((row) => selectValueToStorageValue(row))
   }
 
-  async updateTaskExecutions(
+  async updateTaskExecutionsReturningTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+    limit?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    const query = this.tx.select().from(this.table).where(buildWhereCondition(this.table, where))
+    const queryWithLimit = limit != null && limit > 0 ? query.limit(limit) : query
+    const rows = await queryWithLimit.for('update', { skipLocked: true })
+
+    await this.tx
+      .update(this.table)
+      .set(storageValueToUpdateValue(update))
+      .where(
+        inArray(
+          this.table.executionId,
+          rows.map((row) => row.executionId),
+        ),
+      )
+    return rows.map((row) => selectValueToStorageValue(row))
+  }
+
+  async updateAllTaskExecutions(
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
   ): Promise<number> {

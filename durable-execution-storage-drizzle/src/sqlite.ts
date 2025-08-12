@@ -150,6 +150,40 @@ class SQLiteStorage<
       this.transactionMutex.release()
     }
   }
+
+  async insertTaskExecutions(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+    await this.withTransaction(async (tx) => {
+      await tx.insertTaskExecutions(executions)
+    })
+  }
+
+  async getTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    limit?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.withTransaction(async (tx) => {
+      return await tx.getTaskExecutions(where, limit)
+    })
+  }
+
+  async updateTaskExecutionsReturningTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+    limit?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.withTransaction(async (tx) => {
+      return await tx.updateTaskExecutionsReturningTaskExecutions(where, update, limit)
+    })
+  }
+
+  async updateAllTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+  ): Promise<number> {
+    return await this.withTransaction(async (tx) => {
+      return await tx.updateAllTaskExecutions(where, update)
+    })
+  }
 }
 
 class SQLiteStorageTx<
@@ -177,32 +211,36 @@ class SQLiteStorageTx<
     await this.tx.insert(this.table).values(rows)
   }
 
-  async getTaskExecutionIds(
-    where: TaskExecutionStorageWhere,
-    limit?: number,
-    // skipLockedForUpdate can be ignored as transactions run sequentially using the mutex
-    _skipLockedForUpdate?: boolean,
-  ): Promise<Array<string>> {
-    const query = this.tx
-      .select({ executionId: this.table.executionId })
-      .from(this.table)
-      .where(buildWhereCondition(this.table, where))
-    const rows = await (limit != null && limit > 0 ? query.limit(limit) : query)
-    return rows.map((row) => row.executionId)
-  }
-
   async getTaskExecutions(
     where: TaskExecutionStorageWhere,
     limit?: number,
-    // skipLockedForUpdate can be ignored as transactions run sequentially using the mutex
-    _skipLockedForUpdate?: boolean,
   ): Promise<Array<TaskExecutionStorageValue>> {
     const query = this.tx.select().from(this.table).where(buildWhereCondition(this.table, where))
     const rows = await (limit != null && limit > 0 ? query.limit(limit) : query)
     return rows.map((row) => selectValueToStorageValue(row))
   }
 
-  async updateTaskExecutions(
+  async updateTaskExecutionsReturningTaskExecutions(
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+    limit?: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    const query = this.tx.select().from(this.table).where(buildWhereCondition(this.table, where))
+    const rows = await (limit != null && limit > 0 ? query.limit(limit) : query)
+
+    await this.tx
+      .update(this.table)
+      .set(storageValueToUpdateValue(update))
+      .where(
+        inArray(
+          this.table.executionId,
+          rows.map((row) => row.executionId),
+        ),
+      )
+    return rows.map((row) => selectValueToStorageValue(row))
+  }
+
+  async updateAllTaskExecutions(
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
   ): Promise<number> {

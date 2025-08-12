@@ -27,7 +27,10 @@ export function createConsoleLogger(name: string): Logger {
   return {
     debug: (message) => console.debug(`DEBUG [${name}] ${message}`),
     info: (message) => console.info(`INFO  [${name}] ${message}`),
-    error: (message, error) => console.error(`ERROR [${name}] ${message}`, error),
+    error: (message, error) =>
+      error
+        ? console.error(`ERROR [${name}] ${message}`, error)
+        : console.error(`ERROR [${name}] ${message}`),
   }
 }
 
