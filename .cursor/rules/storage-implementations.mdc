@@ -1,0 +1,35 @@
+---
+description: Guidance on implementing Storage and using Drizzle-backed storages
+globs: durable-execution-storage-*/src/**/*.ts
+---
+### Storage contract
+
+- Implement methods from [`durable-execution/src/storage.ts`](mdc:durable-execution/src/storage.ts).
+- Prefer reusing provided Drizzle storages for SQLite/PG/MySQL in `durable-execution-storage-drizzle`.
+
+### Drizzle storages
+
+- SQLite: [`src/sqlite.ts`](mdc:durable-execution-storage-drizzle/src/sqlite.ts)
+- Postgres: [`src/pg.ts`](mdc:durable-execution-storage-drizzle/src/pg.ts)
+- MySQL: [`src/mysql.ts`](mdc:durable-execution-storage-drizzle/src/mysql.ts)
+
+### MySQL schema guidance
+
+- MySQL cannot index `TEXT`/`BLOB` without a key length.
+- Use `varchar` for columns used in indexes/unique constraints.
+  - Recommended lengths:
+    - `execution_id`: 64
+    - `status`: 64
+    - `parent_execution_id` (finished children): 255
+- See definitions in [`src/mysql.ts`](mdc:durable-execution-storage-drizzle/src/mysql.ts).
+
+### Testing schemas
+
+- SQLite push: [`pushSQLiteSchema`](mdc:durable-execution-storage-drizzle/tests/index.test.ts)
+- PG push (pglite): [`pushSchema`](mdc:durable-execution-storage-drizzle/tests/index.test.ts)
+- MySQL migrations: generate via `drizzle-kit/api` and `db.execute` the statements, see tests.
+
+### Utilities
+
+- Common mappers in [`src/common.ts`](mdc:durable-execution-storage-drizzle/src/common.ts)
+- Test harness in [`durable-execution-storage-test-utils/src/index.ts`](mdc:durable-execution-storage-test-utils/src/index.ts) for end-to-end storage testing.

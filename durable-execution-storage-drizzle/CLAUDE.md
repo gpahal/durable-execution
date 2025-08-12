@@ -2,119 +2,104 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Development Commands
+## Commands
 
-### Core Commands
+### Build and Development
 
-- `pnpm build` - Build the package using tsup
-- `pnpm test` - Run all tests with Vitest
-- `pnpm test-coverage` - Run tests with coverage reporting
-- `pnpm type-check` - Type check with TypeScript and generate TypeDoc
-- `pnpm lint` - Lint code with ESLint
-- `pnpm lint-fix` - Fix linting issues automatically
+```bash
+pnpm build          # Build with tsup, generates ESM output
+pnpm clean          # Remove build artifacts
+pnpm type-check     # TypeScript type checking + typedoc validation
+```
 
-### Testing Specific Components
+### Testing
 
-- `pnpm test -- --reporter=verbose` - Run tests with detailed output
-- Test timeout is set to 60 seconds for integration tests
+```bash
+pnpm test           # Run tests with Vitest
+pnpm test-coverage  # Run tests with coverage reporting
 
-### Monorepo Commands (from root)
+# Run specific tests
+pnpm vitest run tests/index.test.ts
+```
 
-- `turbo build` - Build all packages in the monorepo
-- `turbo test` - Test all packages in the monorepo
+### Code Quality
 
-## Architecture Overview
+```bash
+pnpm lint           # Run ESLint
+pnpm lint-fix       # Run ESLint with auto-fix
+```
 
-This package provides Drizzle ORM storage implementations for the durable-execution framework, supporting both PostgreSQL and SQLite databases.
+## Architecture
 
-### Core Components
+### Package Structure
 
-**Storage Implementations** (`src/pg.ts`, `src/sqlite.ts`)
+This is a Drizzle ORM storage implementation for the durable-execution framework, providing PostgreSQL, MySQL, and SQLite storage backends.
 
-- `createPgStorage()` - PostgreSQL storage implementation using Drizzle ORM
-- `createSQLiteStorage()` - SQLite storage implementation with transaction mutex
-- Both implement the `Storage` interface from durable-execution
-- Support for concurrent transactions with proper locking mechanisms
+**Core Files**:
 
-**Schema Definitions** (`src/pg.ts`, `src/sqlite.ts`)
+- `src/pg.ts` - PostgreSQL storage with `FOR UPDATE SKIP LOCKED` row locking
+- `src/mysql.ts` - MySQL storage with similar transaction support
+- `src/sqlite.ts` - SQLite storage with mutex-based transaction serialization
+- `src/common.ts` - Shared data transformation utilities between storage types and DB rows
 
-- `createTaskExecutionsPgTable()` - PostgreSQL table schema with proper indexes
-- `createTaskExecutionsSQLiteTable()` - SQLite table schema with compatibility adaptations
-- Tables include all fields required by the durable-execution storage interface
-- Optimized indexes for execution lookups and status-based queries
+### Storage Implementation Pattern
 
-**Data Transformation** (`src/common.ts`)
+Each storage backend provides:
 
-- `storageValueToInsertValue()` - Converts storage format to database format
-- `selectValueToStorageValue()` - Converts database rows back to storage format
-- `storageValueToUpdateValue()` - Handles partial updates with proper null handling
-- Handles hierarchical task relationships (root/parent task references)
+1. **Table Creation Functions**:
+   - `createTaskExecutions[Pg|MySql|SQLite]Table()` - Main task execution table
+   - `createFinishedChildTaskExecutions[Pg|MySql|SQLite]Table()` - Completed child tasks table
 
-### Database Schema Structure
+2. **Storage Factory**:
+   - `create[Pg|MySql|SQLite]Storage(db, taskTable, finishedChildTable)` - Returns Storage implementation
+   - MySQL requires additional `getAffectedRows` callback for result parsing
 
-**Key Fields:**
+3. **Key Operations** (all implement `Storage` interface from `durable-execution`):
+   - `enqueueTaskExecution()` - Add new task
+   - `getTaskExecution()` - Fetch by execution ID
+   - `getTaskExecutions()` - Batch fetch with filtering
+   - `claimTaskExecutions()` - Atomic claim for processing
+   - `updateTaskExecutions()` - Update task state
+   - `getFinishedChildTaskExecutions()` - Get completed children
+   - `addFinishedChildTaskExecutions()` - Record child completion
 
-- `executionId` - Unique identifier with unique index
-- `taskId` - Task type identifier
-- Status and lifecycle fields (`status`, `isClosed`, `startedAt`, `finishedAt`)
-- Parent-child relationships (`rootTaskId`, `parentTaskId`, `isFinalizeTask`)
-- Execution data (JSON fields for complex objects, text for serialized data)
-- Retry and timeout configuration fields
+### Database Schema
 
-**Performance Indexes:**
+All implementations share the same logical schema:
 
-- Unique index on `executionId` for fast lookups
-- Composite index on `status`, `isClosed`, `expiresAt` for batch processing
-- Index on `status`, `startAt` for task scheduling queries
+**Task Executions Table**:
 
-### Database-Specific Adaptations
+- Identity: `id`, `taskId`, `executionId`
+- Hierarchy: `rootTaskId`, `parentTaskId`, `parentExecutionId`
+- State: `status`, `retryAttempts`, `error`
+- Timing: `startAt`, `expiresAt`, `closingExpiresAt`
+- Data: `runInput`, `runOutput` (JSON)
+- Child coordination: `childTaskProcessingOrder`, `finishedChildTaskExecutionIds`
 
-**PostgreSQL Features:**
+**Finished Child Tasks Table** (for parent tasks):
 
-- Native JSON column types for complex data
-- Proper timestamp with timezone support
-- Row-level locking with `FOR UPDATE SKIP LOCKED`
-- Identity columns for auto-incrementing IDs
+- Links to parent via `parentTaskId` + `parentExecutionId`
+- Stores child result data for finalize task processing
 
-**SQLite Adaptations:**
+### Transaction Patterns
 
-- JSON stored as TEXT with mode annotations
-- Transaction mutex to handle SQLite's serialization requirements
-- Boolean fields stored as INTEGER
-- Timestamps stored as INTEGER in timestamp mode
+- **PostgreSQL/MySQL**: Native transactions with row-level locking
+- **SQLite**: All operations wrapped in mutex to ensure serialization (SQLite doesn't support concurrent writes)
+
+Key pattern for claim operations:
+
+```sql
+SELECT ... FOR UPDATE SKIP LOCKED  -- PostgreSQL/MySQL
+-- SQLite uses mutex instead
+```
 
 ### Testing Approach
 
-**Test Structure:**
+Tests in `tests/index.test.ts` use:
 
-- Integration tests using temporary databases (PGlite and libsql file)
-- Comprehensive workflow testing including concurrent scenarios
-- Tests all major task patterns: simple, sequential, parent-child, error handling
-- Schema creation via Drizzle Kit push API for test setup
+- `@electric-sql/pglite` for PostgreSQL testing
+- `@libsql/client` for SQLite testing
+- `@testcontainers/mysql` for MySQL testing (via Docker)
+- `durable-execution-storage-test-utils` for comprehensive storage validation
 
-**Test Scenarios:**
-
-- Complex parent-child task hierarchies with finalize tasks
-- Concurrent execution of 100+ tasks
-- Retry logic and failure handling
-- Large-scale concurrent parent tasks (250 children)
-- Task execution state transitions and error propagation
-
-### Storage Interface Implementation
-
-Both storage implementations provide:
-
-- Transaction support via `withTransaction()`
-- Batch operations for task execution CRUD
-- Query operations with filtering and limiting
-- Optimistic locking through version fields
-- Proper handling of concurrent access patterns
-
-### Integration with durable-execution
-
-This package implements the `Storage` interface from the core durable-execution library:
-
-- `StorageTx` transaction interface for atomic operations
-- Support for all task execution states and transitions
-- Compatible with the executor's background processes and concurrency controls
-- Handles task expiration, cancellation, and cleanup operations
+Each storage implementation is tested with the full test suite from test utils, ensuring consistent behavior across all backends.

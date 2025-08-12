@@ -1,17 +1,17 @@
 import z from 'zod'
 
-import { createMutex, type Mutex } from '@gpahal/std/promises'
-
 import {
   convertDurableExecutionErrorToStorageValue,
   DurableExecutionError,
   type DurableExecutionErrorStorageValue,
 } from './errors'
-import { createConsoleLogger, createLoggerWithDebugDisabled, type Logger } from './logger'
-import { type Serializer } from './serializer'
+import { type Logger } from './logger'
+import type { WrappedSerializer } from './serializer'
 import {
   type ChildTaskExecution,
+  type ChildTaskExecutionError,
   type ChildTaskExecutionErrorStorageValue,
+  type CompletedChildTaskExecution,
   type TaskExecution,
   type TaskExecutionStatusStorageValue,
   type TaskRetryOptions,
@@ -20,12 +20,21 @@ import { sleepWithJitter } from './utils'
 
 /**
  * Storage with support for transactions. Running multiple transactions in parallel must be
- * supported. If that is not possible, use something like `createMutex` from `@gpahal/std/mutex`
- * to run transactions sequentially.
+ * supported. If that is not possible, use something like `createMutex` from
+ * `@gpahal/std/promises` to run transactions sequentially.
+ *
+ * All the operations should be atomic. All the operations should be ordered by `updatedAt`
+ * ascending.
  *
  * @category Storage
  */
 export type Storage = StorageTx & {
+  /**
+   * Run a transaction.
+   *
+   * @param fn - The function to run in the transaction.
+   * @returns The result of the transaction.
+   */
   withTransaction: <T>(fn: (tx: StorageTx) => Promise<T>) => Promise<T>
 }
 
@@ -61,7 +70,7 @@ export type StorageTx = {
    * @param limit - The maximum number of task executions to update.
    * @returns The task executions that were updated.
    */
-  updateTaskExecutionsReturningTaskExecutions: (
+  updateTaskExecutionsAndReturn: (
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
     limit?: number,
@@ -78,17 +87,23 @@ export type StorageTx = {
     update: TaskExecutionStorageUpdate,
   ) => number | Promise<number>
   /**
-   * Insert task executions and update all task executions.
+   * Insert finished child task execution if it does not exist.
    *
-   * @param executions - The task executions to insert.
-   * @param where - The where clause to filter the task executions.
-   * @param update - The update object.
+   * @param finishedChildTaskExecution - The finished child task execution to insert.
    */
-  insertTaskExecutionsAndUpdateAllTaskExecutions: (
-    executions: Array<TaskExecutionStorageValue>,
-    where: TaskExecutionStorageWhere,
-    update: TaskExecutionStorageUpdate,
+  insertFinishedChildTaskExecutionIfNotExists: (
+    finishedChildTaskExecution: FinishedChildTaskExecutionStorageValue,
   ) => void | Promise<void>
+  /**
+   * Delete finished child task executions and return the deleted finished child task executions.
+   *
+   * @param limit - The maximum number of finished child task executions to delete.
+   */
+  deleteFinishedChildTaskExecutionsAndReturn: (
+    limit: number,
+  ) =>
+    | Array<FinishedChildTaskExecutionStorageValue>
+    | Promise<Array<FinishedChildTaskExecutionStorageValue>>
 }
 
 export const zStorageMaxRetryAttempts = z
@@ -98,7 +113,7 @@ export const zStorageMaxRetryAttempts = z
   .nullish()
   .transform((val) => val ?? 1)
 
-export class StorageInternal implements Storage {
+export class StorageInternal {
   private readonly logger: Logger
   private readonly storage: Storage
   private readonly maxRetryAttempts: number
@@ -117,7 +132,7 @@ export class StorageInternal implements Storage {
     this.maxRetryAttempts = parsedMaxRetryAttempts.data
   }
 
-  private getRsolvedMaxRetryAttempts(maxRetryAttempts?: number): number {
+  private getResolvedMaxRetryAttempts(maxRetryAttempts?: number): number {
     if (maxRetryAttempts != null) {
       const parsedMaxRetryAttempts = zStorageMaxRetryAttempts.safeParse(maxRetryAttempts)
       if (!parsedMaxRetryAttempts.success) {
@@ -136,7 +151,7 @@ export class StorageInternal implements Storage {
     fn: () => T | Promise<T>,
     maxRetryAttempts?: number,
   ): Promise<T> {
-    const resolvedMaxRetryAttempts = this.getRsolvedMaxRetryAttempts(maxRetryAttempts)
+    const resolvedMaxRetryAttempts = this.getResolvedMaxRetryAttempts(maxRetryAttempts)
     if (resolvedMaxRetryAttempts <= 0) {
       return await fn()
     }
@@ -153,7 +168,7 @@ export class StorageInternal implements Storage {
         }
 
         this.logger.error(`Error while retrying ${fnName}`, error)
-        await sleepWithJitter(25)
+        await sleepWithJitter(Math.min(25 * 2 ** i, 1000))
       }
     }
   }
@@ -169,21 +184,14 @@ export class StorageInternal implements Storage {
     )
   }
 
-  async withExistingTransaction<T>(
-    tx: StorageTx | undefined | null,
-    fn: (tx: StorageTxInternal) => Promise<T>,
-    maxRetryAttempts?: number,
-  ): Promise<T> {
-    if (tx == null) {
-      return await this.withTransaction(fn, maxRetryAttempts)
-    }
-    return await fn(new StorageTxInternal(tx))
-  }
-
   async insertTaskExecutions(
     executions: Array<TaskExecutionStorageValue>,
     maxRetryAttempts?: number,
   ): Promise<void> {
+    if (executions.length === 0) {
+      return
+    }
+
     return await this.retry(
       'insertTaskExecutions',
       () => this.storage.insertTaskExecutions(executions),
@@ -196,6 +204,10 @@ export class StorageInternal implements Storage {
     limit?: number,
     maxRetryAttempts?: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
+    if (limit != null && limit <= 0) {
+      return []
+    }
+
     return await this.retry(
       'getTaskExecutions',
       () => this.storage.getTaskExecutions(where, limit),
@@ -204,7 +216,7 @@ export class StorageInternal implements Storage {
   }
 
   async getTaskExecutionById(executionId: string): Promise<TaskExecutionStorageValue | undefined> {
-    const executions = await this.storage.getTaskExecutions({
+    const executions = await this.getTaskExecutions({
       type: 'by_execution_ids',
       executionIds: [executionId],
     })
@@ -214,15 +226,15 @@ export class StorageInternal implements Storage {
     return executions[0]!
   }
 
-  async updateTaskExecutionsReturningTaskExecutions(
+  async updateTaskExecutionsAndReturn(
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
     limit?: number,
     maxRetryAttempts?: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     return await this.retry(
-      'updateTaskExecutionsReturningTaskExecutions',
-      () => this.storage.updateTaskExecutionsReturningTaskExecutions(where, update, limit),
+      'updateTaskExecutionsAndReturn',
+      () => this.storage.updateTaskExecutionsAndReturn(where, update, limit),
       maxRetryAttempts,
     )
   }
@@ -239,40 +251,67 @@ export class StorageInternal implements Storage {
     )
   }
 
-  async insertTaskExecutionsAndUpdateAllTaskExecutions(
-    executions: Array<TaskExecutionStorageValue>,
+  async updateAllTaskExecutionsAndInsertTaskExecutionsIfAnyUpdated(
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
+    executions: Array<TaskExecutionStorageValue>,
+    maxRetryAttempts?: number,
+  ): Promise<void> {
+    await this.withTransaction(async (tx) => {
+      await tx.updateAllTaskExecutionsAndInsertTaskExecutionsIfAnyUpdated(where, update, executions)
+    }, maxRetryAttempts)
+  }
+
+  async insertFinishedChildTaskExecutionIfNotExists(
+    finishedChildTaskExecution: FinishedChildTaskExecutionStorageValue,
     maxRetryAttempts?: number,
   ): Promise<void> {
     return await this.retry(
-      'insertTaskExecutionsAndUpdateAllTaskExecutions',
-      () => this.storage.insertTaskExecutionsAndUpdateAllTaskExecutions(executions, where, update),
+      'insertFinishedChildTaskExecutionIfNotExists',
+      () => this.storage.insertFinishedChildTaskExecutionIfNotExists(finishedChildTaskExecution),
+      maxRetryAttempts,
+    )
+  }
+
+  async deleteFinishedChildTaskExecutionsAndReturn(
+    limit: number,
+    maxRetryAttempts?: number,
+  ): Promise<Array<FinishedChildTaskExecutionStorageValue>> {
+    return await this.retry(
+      'deleteFinishedChildTaskExecutionsAndReturn',
+      () => this.storage.deleteFinishedChildTaskExecutionsAndReturn(limit),
       maxRetryAttempts,
     )
   }
 }
 
-export class StorageTxInternal implements StorageTx {
+export class StorageTxInternal {
   private readonly tx: StorageTx
 
   constructor(tx: StorageTx) {
     this.tx = tx
   }
 
-  insertTaskExecutions(executions: Array<TaskExecutionStorageValue>): void | Promise<void> {
-    return this.tx.insertTaskExecutions(executions)
+  async insertTaskExecutions(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+    if (executions.length === 0) {
+      return
+    }
+    return await this.tx.insertTaskExecutions(executions)
   }
 
   async getTaskExecutions(
     where: TaskExecutionStorageWhere,
     limit?: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
+    if (limit != null && limit <= 0) {
+      return []
+    }
+
     return await this.tx.getTaskExecutions(where, limit)
   }
 
   async getTaskExecutionById(executionId: string): Promise<TaskExecutionStorageValue | undefined> {
-    const executions = await this.tx.getTaskExecutions({
+    const executions = await this.getTaskExecutions({
       type: 'by_execution_ids',
       executionIds: [executionId],
     })
@@ -282,12 +321,12 @@ export class StorageTxInternal implements StorageTx {
     return executions[0]!
   }
 
-  async updateTaskExecutionsReturningTaskExecutions(
+  async updateTaskExecutionsAndReturn(
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
     limit?: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.tx.updateTaskExecutionsReturningTaskExecutions(where, update, limit)
+    return await this.tx.updateTaskExecutionsAndReturn(where, update, limit)
   }
 
   async updateAllTaskExecutions(
@@ -297,59 +336,42 @@ export class StorageTxInternal implements StorageTx {
     return await this.tx.updateAllTaskExecutions(where, update)
   }
 
-  async updateTaskExecutionWithOptimisticLocking(
-    executionId: string,
-    updateFn: (
-      currentExecution: TaskExecutionStorageValue,
-    ) => Omit<TaskExecutionStorageUpdate, 'version'>,
-    maxAttempts = 3,
-  ): Promise<void> {
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const executions = await this.tx.getTaskExecutions({
-        type: 'by_execution_ids',
-        executionIds: [executionId],
-      })
-      if (executions.length === 0) {
-        return
-      }
-
-      const execution = executions[0]!
-      const update = updateFn(execution)
-      const isUpdated = await this.updateAllTaskExecutions(
-        {
-          type: 'by_execution_ids',
-          executionIds: [executionId],
-          version: execution.version,
-        },
-        {
-          ...update,
-          version: execution.version + 1,
-        },
-      )
-      if (isUpdated) {
-        break
-      }
-
-      if (attempt >= maxAttempts - 1) {
-        throw new DurableExecutionError(
-          `Failed to update task executions after ${maxAttempts} attempts due to version conflicts`,
-          false,
-        )
-      }
-    }
-  }
-
-  async insertTaskExecutionsAndUpdateAllTaskExecutions(
-    executions: Array<TaskExecutionStorageValue>,
+  async updateAllTaskExecutionsAndInsertTaskExecutionsIfAnyUpdated(
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
+    executions: Array<TaskExecutionStorageValue>,
   ): Promise<void> {
-    return await this.tx.insertTaskExecutionsAndUpdateAllTaskExecutions(executions, where, update)
+    const updatedCount = await this.tx.updateAllTaskExecutions(where, update)
+    if (updatedCount === 0 || executions.length === 0) {
+      return
+    }
+    await this.tx.insertTaskExecutions(executions)
+  }
+
+  async insertFinishedChildTaskExecutionIfNotExists(
+    finishedChildTaskExecution: FinishedChildTaskExecutionStorageValue,
+  ): Promise<void> {
+    return await this.tx.insertFinishedChildTaskExecutionIfNotExists(finishedChildTaskExecution)
+  }
+
+  async deleteFinishedChildTaskExecutionsAndReturn(
+    limit: number,
+  ): Promise<Array<FinishedChildTaskExecutionStorageValue>> {
+    return await this.tx.deleteFinishedChildTaskExecutionsAndReturn(limit)
   }
 }
 
 /**
  * A storage value for a task execution.
+ *
+ * Storage implementations should index based on these clauses to optimize the performance of the
+ * storage operations. Suggested indexes:
+ * - uniqueIndex(execution_id)
+ * - index(execution_id, updatedAt)
+ * - index(status, updatedAt)
+ * - index(status, startAt, updatedAt)
+ * - index(status, expiresAt, updatedAt)
+ * - index(isClosed, status, updatedAt)
  *
  * @category Storage
  */
@@ -368,6 +390,7 @@ export type TaskExecutionStorageValue = {
   parentTaskExecution?: {
     taskId: string
     executionId: string
+    parentChildTaskExecutionIndex: number
     isFinalizeTask?: boolean
   }
 
@@ -391,6 +414,11 @@ export type TaskExecutionStorageValue = {
    * The timeout ms of the task execution.
    */
   timeoutMs: number
+
+  /**
+   * The status of the execution.
+   */
+  status: TaskExecutionStatusStorageValue
   /**
    * The run input of the task execution.
    */
@@ -404,41 +432,9 @@ export type TaskExecutionStorageValue = {
    */
   output?: string
   /**
-   * The number of children task executions that have been completed.
-   */
-  childrenTaskExecutionsCompletedCount: number
-  /**
-   * The children task executions of the execution. It is only present for
-   * `waiting_for_children_tasks` status.
-   */
-  childrenTaskExecutions?: Array<ChildTaskExecution>
-  /**
-   * The errors of the children task executions. It is only present for
-   * `children_tasks_failed` status. In case of multiple errors, the order of errors is not defined.
-   */
-  childrenTaskExecutionsErrors?: Array<ChildTaskExecutionErrorStorageValue>
-  /**
-   * The finalize task execution of the execution.
-   */
-  finalizeTaskExecution?: ChildTaskExecution
-  /**
-   * The error of the finalize task execution. It is only present for `finalize_task_failed` status.
-   */
-  finalizeTaskExecutionError?: DurableExecutionErrorStorageValue
-  /**
    * The error of the execution.
    */
   error?: DurableExecutionErrorStorageValue
-  /**
-   * The status of the execution.
-   */
-  status: TaskExecutionStatusStorageValue
-  /**
-   * Whether the execution is closed. Once the execution is finished, a background process will
-   * update the status of its parent task execution if present and children task executions if
-   * present.
-   */
-  isClosed: boolean
   /**
    * Whether the execution needs a promise cancellation.
    */
@@ -456,19 +452,50 @@ export type TaskExecutionStorageValue = {
    */
   startedAt?: Date
   /**
-   * The time the task execution finished. Set on finish.
-   */
-  finishedAt?: Date
-  /**
    * The time the task execution expires. It is used to recover from process failures. Set on
    * start.
    */
   expiresAt?: Date
   /**
-   * Version for optimistic locking. Incremented on operations that might conflict with other
-   * operations.
+   * The time the task execution finished. Set on finish.
    */
-  version: number
+  finishedAt?: Date
+
+  /**
+   * The children task executions of the execution. It is only present for
+   * `waiting_for_children_tasks` status.
+   */
+  childrenTaskExecutions?: Array<ChildTaskExecution>
+  /**
+   * The completed children task executions of the execution. It is only present for
+   * `waiting_for_children_tasks` status.
+   */
+  completedChildrenTaskExecutions?: Array<ChildTaskExecution>
+  /**
+   * The errors of the children task executions. It is only present for
+   * `children_tasks_failed` status. In case of multiple errors, the order of errors is not defined.
+   */
+  childrenTaskExecutionsErrors?: Array<ChildTaskExecutionErrorStorageValue>
+
+  /**
+   * The finalize task execution of the execution.
+   */
+  finalizeTaskExecution?: ChildTaskExecution
+  /**
+   * The error of the finalize task execution. It is only present for `finalize_task_failed` status.
+   */
+  finalizeTaskExecutionError?: DurableExecutionErrorStorageValue
+
+  /**
+   * Whether the execution is closed. Once the execution is finished, the closing process will
+   * update this field in the background.
+   */
+  isClosed: boolean
+  /**
+   * The time the task execution was closed. Set on closing process finish.
+   */
+  closedAt?: Date
+
   /**
    * The time the task execution was created.
    */
@@ -498,6 +525,7 @@ export function createTaskExecutionStorageValue({
   parentTaskExecution?: {
     taskId: string
     executionId: string
+    parentChildTaskExecutionIndex: number
     isFinalizeTask?: boolean
   }
   taskId: string
@@ -515,14 +543,12 @@ export function createTaskExecutionStorageValue({
     retryOptions,
     sleepMsBeforeRun,
     timeoutMs,
-    runInput,
-    childrenTaskExecutionsCompletedCount: 0,
     status: 'ready',
-    isClosed: false,
+    runInput,
     needsPromiseCancellation: false,
     retryAttempts: 0,
     startAt: new Date(now.getTime() + sleepMsBeforeRun),
-    version: 0,
+    isClosed: false,
     createdAt: now,
     updatedAt: now,
   }
@@ -532,12 +558,6 @@ export function createTaskExecutionStorageValue({
  * The where clause for task execution storage. Storage values are filtered by the where clause
  * before being returned.
  *
- * Storage implementations should index based on these clauses to optimize the performance of the
- * storage operations. Suggested indexes:
- * - uniqueIndex(execution_id)
- * - index(status, isClosed, expiresAt)
- * - index(status, startAt)
- *
  * @category Storage
  */
 export type TaskExecutionStorageWhere =
@@ -546,18 +566,25 @@ export type TaskExecutionStorageWhere =
       executionIds: Array<string>
       statuses?: Array<TaskExecutionStatusStorageValue>
       needsPromiseCancellation?: boolean
-      version?: number
     }
   | {
       type: 'by_statuses'
       statuses: Array<TaskExecutionStatusStorageValue>
-      isClosed?: boolean
-      expiresAtLessThan?: Date
     }
   | {
-      type: 'by_start_at_less_than'
-      statuses: Array<TaskExecutionStatusStorageValue>
+      type: 'by_status_and_start_at_less_than'
+      status: TaskExecutionStatusStorageValue
       startAtLessThan: Date
+    }
+  | {
+      type: 'by_status_and_expires_at_less_than'
+      status: TaskExecutionStatusStorageValue
+      expiresAtLessThan: Date
+    }
+  | {
+      type: 'by_is_closed'
+      isClosed: boolean
+      statuses?: Array<TaskExecutionStatusStorageValue>
     }
 
 /**
@@ -567,26 +594,31 @@ export type TaskExecutionStorageWhere =
  * @category Storage
  */
 export type TaskExecutionStorageUpdate = {
+  status?: TaskExecutionStatusStorageValue
   runOutput?: string
   output?: string
-  childrenTaskExecutionsCompletedCount?: number
-  childrenTaskExecutions?: Array<ChildTaskExecution>
-  childrenTaskExecutionsErrors?: Array<ChildTaskExecutionErrorStorageValue>
-  finalizeTaskExecution?: ChildTaskExecution
-  finalizeTaskExecutionError?: DurableExecutionErrorStorageValue
   error?: DurableExecutionErrorStorageValue
   unsetError?: boolean
-  status?: TaskExecutionStatusStorageValue
-  isClosed?: boolean
   needsPromiseCancellation?: boolean
   retryAttempts?: number
   startAt?: Date
   startedAt?: Date
-  finishedAt?: Date
   expiresAt?: Date
   unsetExpiresAt?: boolean
+  finishedAt?: Date
+
+  childrenTaskExecutions?: Array<ChildTaskExecution>
+  completedChildrenTaskExecutions?: Array<ChildTaskExecution>
+  childrenTaskExecutionsErrors?: Array<ChildTaskExecutionErrorStorageValue>
+  processChildrenTaskExecutionsAt?: Date
+
+  finalizeTaskExecution?: ChildTaskExecution
+  finalizeTaskExecutionError?: DurableExecutionErrorStorageValue
+
+  isClosed?: boolean
+  closedAt?: Date
+
   updatedAt: Date
-  version?: number
 }
 
 /**
@@ -596,26 +628,61 @@ export type TaskExecutionStorageUpdate = {
  */
 export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
   execution: TaskExecutionStorageValue,
-  serializer: Serializer,
+  serializer: WrappedSerializer,
 ): TaskExecution<TOutput> {
   const runInput = serializer.deserialize(execution.runInput)
   const runOutput = execution.runOutput
     ? serializer.deserialize<unknown>(execution.runOutput)
     : undefined
   const output = execution.output ? serializer.deserialize<TOutput>(execution.output) : undefined
+  const error = execution.error
   const childrenTaskExecutions = execution.childrenTaskExecutions
     ? execution.childrenTaskExecutions.map((child) => ({
         taskId: child.taskId,
         executionId: child.executionId,
       }))
     : undefined
+  const completedChildrenTaskExecutions = execution.completedChildrenTaskExecutions
+    ? (execution.completedChildrenTaskExecutions
+        .map((completedChildTaskExecution) => {
+          const index = execution.childrenTaskExecutions?.findIndex(
+            (childTaskExecution) =>
+              childTaskExecution.executionId === completedChildTaskExecution.executionId,
+          )
+          if (index == null || index < 0) {
+            return undefined
+          }
+
+          return {
+            index,
+            taskId: completedChildTaskExecution.taskId,
+            executionId: completedChildTaskExecution.executionId,
+          }
+        })
+        .filter(Boolean) as Array<CompletedChildTaskExecution>)
+    : undefined
+  const completedChildrenTaskExecutionsCount =
+    execution.completedChildrenTaskExecutions?.length ?? 0
   const childrenTaskExecutionsErrors = execution.childrenTaskExecutionsErrors
-    ? execution.childrenTaskExecutionsErrors.map((childError) => ({
-        index: childError.index,
-        taskId: childError.taskId,
-        executionId: childError.executionId,
-        error: childError.error,
-      }))
+    ? (execution.childrenTaskExecutionsErrors
+        .map((childTaskExecutionError) => {
+          const index = execution.childrenTaskExecutions?.findIndex(
+            (childTaskExecution) =>
+              childTaskExecution.executionId === childTaskExecutionError.executionId,
+          )
+          if (index == null || index < 0) {
+            return undefined
+          }
+
+          return {
+            index,
+            taskId: childTaskExecutionError.taskId,
+            executionId: childTaskExecutionError.executionId,
+            status: childTaskExecutionError.status,
+            error: childTaskExecutionError.error,
+          }
+        })
+        .filter(Boolean) as Array<ChildTaskExecutionError>)
     : undefined
   const finalizeTaskExecution = execution.finalizeTaskExecution
     ? {
@@ -624,7 +691,6 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
       }
     : undefined
   const finalizeTaskExecutionError = execution.finalizeTaskExecutionError
-  const error = execution.error
 
   switch (execution.status) {
     case 'ready': {
@@ -636,9 +702,9 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         retryOptions: execution.retryOptions,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
+        status: 'ready',
         runInput,
         error,
-        status: 'ready',
         retryAttempts: execution.retryAttempts,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
@@ -653,9 +719,9 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         retryOptions: execution.retryOptions,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
+        status: 'running',
         runInput,
         error,
-        status: 'running',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         expiresAt: execution.expiresAt!,
@@ -672,13 +738,13 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         retryOptions: execution.retryOptions,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
+        status: 'failed',
         runInput,
         error: error!,
-        status: 'failed',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
-        finishedAt: execution.finishedAt!,
         expiresAt: execution.expiresAt!,
+        finishedAt: execution.finishedAt!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -692,13 +758,13 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         retryOptions: execution.retryOptions,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
+        status: 'timed_out',
         runInput,
         error: error!,
-        status: 'timed_out',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
-        finishedAt: execution.finishedAt!,
         expiresAt: execution.expiresAt!,
+        finishedAt: execution.finishedAt!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -712,14 +778,15 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         retryOptions: execution.retryOptions,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
+        status: 'waiting_for_children_tasks',
         runInput,
         runOutput: runOutput!,
-        childrenTaskExecutionsCompletedCount: execution.childrenTaskExecutionsCompletedCount,
-        childrenTaskExecutions: childrenTaskExecutions ?? [],
-        status: 'waiting_for_children_tasks',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         expiresAt: execution.expiresAt!,
+        childrenTaskExecutions: childrenTaskExecutions ?? [],
+        completedChildrenTaskExecutionsCount,
+        completedChildrenTaskExecutions: completedChildrenTaskExecutions ?? [],
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -733,16 +800,17 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         retryOptions: execution.retryOptions,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
+        status: 'children_tasks_failed',
         runInput,
         runOutput: runOutput!,
-        childrenTaskExecutionsCompletedCount: execution.childrenTaskExecutionsCompletedCount,
-        childrenTaskExecutions: childrenTaskExecutions ?? [],
-        childrenTaskExecutionsErrors: childrenTaskExecutionsErrors ?? [],
-        status: 'children_tasks_failed',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
-        finishedAt: execution.finishedAt!,
         expiresAt: execution.expiresAt!,
+        finishedAt: execution.finishedAt!,
+        childrenTaskExecutions: childrenTaskExecutions ?? [],
+        completedChildrenTaskExecutionsCount,
+        completedChildrenTaskExecutions: completedChildrenTaskExecutions ?? [],
+        childrenTaskExecutionsErrors: childrenTaskExecutionsErrors ?? [],
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -756,15 +824,16 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         retryOptions: execution.retryOptions,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
+        status: 'waiting_for_finalize_task',
         runInput,
         runOutput: runOutput!,
-        childrenTaskExecutionsCompletedCount: execution.childrenTaskExecutionsCompletedCount,
-        childrenTaskExecutions: childrenTaskExecutions ?? [],
-        finalizeTaskExecution: finalizeTaskExecution!,
-        status: 'waiting_for_finalize_task',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
         expiresAt: execution.expiresAt!,
+        childrenTaskExecutions: childrenTaskExecutions ?? [],
+        completedChildrenTaskExecutionsCount,
+        completedChildrenTaskExecutions: completedChildrenTaskExecutions ?? [],
+        finalizeTaskExecution: finalizeTaskExecution!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -778,17 +847,18 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         retryOptions: execution.retryOptions,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
+        status: 'finalize_task_failed',
         runInput,
         runOutput: runOutput!,
-        childrenTaskExecutionsCompletedCount: execution.childrenTaskExecutionsCompletedCount,
-        childrenTaskExecutions: childrenTaskExecutions ?? [],
-        finalizeTaskExecution: finalizeTaskExecution!,
-        finalizeTaskExecutionError: finalizeTaskExecutionError!,
-        status: 'finalize_task_failed',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
-        finishedAt: execution.finishedAt!,
         expiresAt: execution.expiresAt!,
+        finishedAt: execution.finishedAt!,
+        childrenTaskExecutions: childrenTaskExecutions ?? [],
+        completedChildrenTaskExecutionsCount,
+        completedChildrenTaskExecutions: completedChildrenTaskExecutions ?? [],
+        finalizeTaskExecution: finalizeTaskExecution!,
+        finalizeTaskExecutionError: finalizeTaskExecutionError!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -802,17 +872,18 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         retryOptions: execution.retryOptions,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
+        status: 'completed',
         runInput,
         runOutput: runOutput!,
         output: output!,
-        childrenTaskExecutionsCompletedCount: execution.childrenTaskExecutionsCompletedCount,
-        childrenTaskExecutions: childrenTaskExecutions ?? [],
-        finalizeTaskExecution: finalizeTaskExecution!,
-        status: 'completed',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
-        finishedAt: execution.finishedAt!,
         expiresAt: execution.expiresAt!,
+        finishedAt: execution.finishedAt!,
+        childrenTaskExecutions: childrenTaskExecutions ?? [],
+        completedChildrenTaskExecutionsCount,
+        completedChildrenTaskExecutions: completedChildrenTaskExecutions ?? [],
+        finalizeTaskExecution: finalizeTaskExecution!,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -826,17 +897,18 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         retryOptions: execution.retryOptions,
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
+        status: 'cancelled',
         runInput,
         runOutput,
-        childrenTaskExecutionsCompletedCount: execution.childrenTaskExecutionsCompletedCount,
-        childrenTaskExecutions,
-        finalizeTaskExecution,
         error: error!,
-        status: 'cancelled',
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
-        finishedAt: execution.finishedAt!,
         expiresAt: execution.expiresAt!,
+        finishedAt: execution.finishedAt!,
+        childrenTaskExecutions,
+        completedChildrenTaskExecutionsCount,
+        completedChildrenTaskExecutions: completedChildrenTaskExecutions ?? [],
+        finalizeTaskExecution,
         createdAt: execution.createdAt,
         updatedAt: execution.updatedAt,
       }
@@ -876,238 +948,27 @@ export function getTaskExecutionStorageValueParentExecutionError(
 }
 
 /**
- * A storage that stores the task executions in memory. This is useful for testing and for simple
- * use cases. Do not use this for production. It is not persistent.
+ * The storage value of the finished child task execution. The `parentExecutionId` is the id of the
+ * parent execution and it should be unique.
+ *
+ * Storage implementations should index based on these clauses to optimize the performance of the
+ * storage operations. Suggested indexes:
+ * - uniqueIndex(parentExecutionId)
+ * - index(updatedAt)
  *
  * @category Storage
  */
-export class InMemoryStorage implements Storage {
-  private logger: Logger
-  private taskExecutions: Map<string, TaskExecutionStorageValue>
-  private transactionMutex: Mutex
-
-  constructor({ enableDebug = false }: { enableDebug?: boolean } = {}) {
-    this.logger = createConsoleLogger('InMemoryStorage')
-    if (!enableDebug) {
-      this.logger = createLoggerWithDebugDisabled(this.logger)
-    }
-    this.taskExecutions = new Map()
-    this.transactionMutex = createMutex()
-  }
-
-  async withTransaction<T>(fn: (tx: StorageTx) => Promise<T>): Promise<T> {
-    await this.transactionMutex.acquire()
-    try {
-      const tx = new InMemoryStorageTx(this.logger, this.taskExecutions)
-      const output = await fn(tx)
-      this.taskExecutions = tx.taskExecutions
-      return output
-    } finally {
-      this.transactionMutex.release()
-    }
-  }
-
-  async insertTaskExecutions(executions: Array<TaskExecutionStorageValue>): Promise<void> {
-    await this.withTransaction(async (tx) => {
-      await tx.insertTaskExecutions(executions)
-    })
-  }
-
-  async getTaskExecutions(
-    where: TaskExecutionStorageWhere,
-    limit?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.withTransaction(async (tx) => {
-      return await tx.getTaskExecutions(where, limit)
-    })
-  }
-
-  async updateTaskExecutionsReturningTaskExecutions(
-    where: TaskExecutionStorageWhere,
-    update: TaskExecutionStorageUpdate,
-    limit?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.withTransaction(async (tx) => {
-      return await tx.updateTaskExecutionsReturningTaskExecutions(where, update, limit)
-    })
-  }
-
-  async updateAllTaskExecutions(
-    where: TaskExecutionStorageWhere,
-    update: TaskExecutionStorageUpdate,
-  ): Promise<number> {
-    return await this.withTransaction(async (tx) => {
-      return await tx.updateAllTaskExecutions(where, update)
-    })
-  }
-
-  async insertTaskExecutionsAndUpdateAllTaskExecutions(
-    executions: Array<TaskExecutionStorageValue>,
-    where: TaskExecutionStorageWhere,
-    update: TaskExecutionStorageUpdate,
-  ): Promise<void> {
-    return await this.withTransaction(async (tx) => {
-      await tx.insertTaskExecutionsAndUpdateAllTaskExecutions(executions, where, update)
-    })
-  }
-
-  async save(saveFn: (s: string) => Promise<void>): Promise<void> {
-    await saveFn(JSON.stringify(this.taskExecutions, null, 2))
-  }
-
-  async load(loadFn: () => Promise<string>): Promise<void> {
-    try {
-      const data = await loadFn()
-      if (!data.trim()) {
-        this.taskExecutions = new Map()
-        return
-      }
-
-      this.taskExecutions = new Map(JSON.parse(data) as Array<[string, TaskExecutionStorageValue]>)
-    } catch {
-      this.taskExecutions = new Map()
-    }
-  }
-
-  logAllTaskExecutions(): void {
-    this.logger.info('------\n\nAll task executions:')
-    for (const execution of this.taskExecutions.values()) {
-      this.logger.info(
-        `Task execution: ${execution.executionId}\nJSON: ${JSON.stringify(execution, null, 2)}\n\n`,
-      )
-    }
-    this.logger.info('------')
-  }
-}
-
-/**
- * The transaction for the in-memory storage.
- *
- * @category Storage
- */
-export class InMemoryStorageTx implements StorageTx {
-  private logger: Logger
-  readonly taskExecutions: Map<string, TaskExecutionStorageValue>
-
-  constructor(logger: Logger, executions: Map<string, TaskExecutionStorageValue>) {
-    this.logger = logger
-    this.taskExecutions = new Map<string, TaskExecutionStorageValue>()
-    for (const [key, value] of executions) {
-      this.taskExecutions.set(key, { ...value })
-    }
-  }
-
-  insertTaskExecutions(executions: Array<TaskExecutionStorageValue>): void {
-    this.logger.debug(
-      `Inserting ${executions.length} task executions: executions=${executions.map((e) => e.executionId).join(', ')}`,
-    )
-    for (const execution of executions) {
-      if (this.taskExecutions.has(execution.executionId)) {
-        throw new Error(`Task execution ${execution.executionId} already exists`)
-      }
-      this.taskExecutions.set(execution.executionId, execution)
-    }
-  }
-
-  getTaskExecutions(
-    where: TaskExecutionStorageWhere,
-    limit?: number,
-  ): Array<TaskExecutionStorageValue> {
-    const filteredTaskExecutions = getTaskExecutions(this.taskExecutions, where, limit)
-    this.logger.debug(
-      `Got ${filteredTaskExecutions.length} task executions: where=${JSON.stringify(where)} limit=${limit} executions=${filteredTaskExecutions.map((e) => e.executionId).join(', ')}`,
-    )
-    return filteredTaskExecutions
-  }
-
-  updateTaskExecutionsReturningTaskExecutions(
-    where: TaskExecutionStorageWhere,
-    update: TaskExecutionStorageUpdate,
-    limit?: number,
-  ): Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>> {
-    const executions = this.getTaskExecutions(where, limit)
-    for (const execution of executions) {
-      updateTaskExecution(execution, update)
-    }
-    return executions
-  }
-
-  updateAllTaskExecutions(
-    where: TaskExecutionStorageWhere,
-    update: TaskExecutionStorageUpdate,
-  ): number {
-    const executions = this.getTaskExecutions(where)
-    for (const execution of executions) {
-      updateTaskExecution(execution, update)
-    }
-    return executions.length
-  }
-
-  insertTaskExecutionsAndUpdateAllTaskExecutions(
-    executions: Array<TaskExecutionStorageValue>,
-    where: TaskExecutionStorageWhere,
-    update: TaskExecutionStorageUpdate,
-  ): void {
-    this.insertTaskExecutions(executions)
-    this.updateAllTaskExecutions(where, update)
-  }
-}
-
-function getTaskExecutions(
-  taskExecutions: Map<string, TaskExecutionStorageValue>,
-  where: TaskExecutionStorageWhere,
-  limit?: number,
-) {
-  let filteredTaskExecutions = [...taskExecutions.values()].filter((execution) => {
-    if (
-      where.type === 'by_execution_ids' &&
-      where.executionIds.includes(execution.executionId) &&
-      (!where.statuses || where.statuses.includes(execution.status)) &&
-      (!where.needsPromiseCancellation ||
-        execution.needsPromiseCancellation === where.needsPromiseCancellation) &&
-      (where.version == null || execution.version === where.version)
-    ) {
-      return true
-    }
-    if (
-      where.type === 'by_statuses' &&
-      where.statuses.includes(execution.status) &&
-      (where.isClosed == null || execution.isClosed === where.isClosed) &&
-      (where.expiresAtLessThan == null ||
-        (execution.expiresAt && execution.expiresAt < where.expiresAtLessThan))
-    ) {
-      return true
-    }
-    if (
-      where.type === 'by_start_at_less_than' &&
-      execution.startAt < where.startAtLessThan &&
-      (!where.statuses || where.statuses.includes(execution.status))
-    ) {
-      return true
-    }
-    return false
-  })
-  if (limit != null && limit >= 0) {
-    filteredTaskExecutions = filteredTaskExecutions.slice(0, limit)
-  }
-  return filteredTaskExecutions
-}
-
-function updateTaskExecution(
-  taskExecution: TaskExecutionStorageValue,
-  update: TaskExecutionStorageUpdate,
-) {
-  for (const key in update) {
-    if (key === 'unsetError') {
-      taskExecution.error = undefined
-    }
-    if (key === 'unsetExpiresAt') {
-      taskExecution.expiresAt = undefined
-    }
-    if (key != null) {
-      // @ts-expect-error - This is safe because we know the key is valid
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      taskExecution[key] = update[key]
-    }
-  }
+export type FinishedChildTaskExecutionStorageValue = {
+  /**
+   * The id of the parent execution. It should be unique.
+   */
+  parentExecutionId: string
+  /**
+   * The time the finished child task execution was created.
+   */
+  createdAt: Date
+  /**
+   * The time the finished child task execution was updated.
+   */
+  updatedAt: Date
 }

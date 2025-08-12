@@ -18,7 +18,7 @@ describe('backpressure', () => {
         maxConcurrentTaskExecutions: 3,
         maxTasksPerBatch: 2,
       })
-      void executor.start()
+      executor.startBackgroundProcesses()
     })
 
     afterEach(async () => {
@@ -118,7 +118,7 @@ describe('backpressure', () => {
         maxConcurrentTaskExecutions: 2,
         maxTasksPerBatch: 5,
       })
-      void executor.start()
+      executor.startBackgroundProcesses()
     })
 
     afterEach(async () => {
@@ -184,7 +184,7 @@ describe('backpressure', () => {
         maxConcurrentTaskExecutions: 5,
         maxTasksPerBatch: 3,
       })
-      void executor.start()
+      executor.startBackgroundProcesses()
     })
 
     afterEach(async () => {
@@ -254,7 +254,7 @@ describe('backpressure', () => {
         maxConcurrentTaskExecutions: 4,
         maxTasksPerBatch: 2,
       })
-      void executor.start()
+      executor.startBackgroundProcesses()
     })
 
     afterEach(async () => {
@@ -276,6 +276,9 @@ describe('backpressure', () => {
         currConcurrentTaskExecutions: 0,
         maxConcurrentTaskExecutions: 4,
         maxTasksPerBatch: 2,
+        maxChildrenTasksPerParent: 1000,
+        maxSerializedInputDataSize: 1024 * 1024,
+        maxSerializedOutputDataSize: 1024 * 1024,
         registeredTasksCount: 1,
         isShutdown: false,
       })

@@ -1,0 +1,46 @@
+---
+description: How to use DurableExecutor, tasks, storage, and error types
+globs: *.ts,*.tsx
+---
+### Core usage
+
+- **Imports**: see [`durable-execution/src/index.ts`](mdc:durable-execution/src/index.ts)
+- **Executor**: construct with a `Storage` and optional logger.
+- **Tasks**: define with `createTask` and run via `executor.enqueue`.
+- **Errors**: exported in [`durable-execution/src/errors.ts`](mdc:durable-execution/src/errors.ts); inspect by `.type`.
+
+### Minimal example
+
+```ts
+import { DurableExecutor, createTask, InMemoryStorage } from 'durable-execution'
+
+// Define a task
+const add = createTask<{ a: number; b: number }, number>({
+ id: 'add',
+ run: async ({ a, b }) => a + b,
+})
+
+// Create executor
+const storage = new InMemoryStorage()
+const executor = new DurableExecutor({ storage })
+
+// Enqueue and await
+const handle = await executor.enqueue(add, { a: 1, b: 2 })
+const result = await handle.result()
+```
+
+### Cancellation and timeouts
+
+- Pass `timeoutMs` and `sleepMsBeforeRun` in enqueue options.
+- Call `handle.cancel()` to request cancellation; the engine sets `needsPromiseCancellation`.
+
+### Using Drizzle-backed storage
+
+- SQLite: [`durable-execution-storage-drizzle/src/sqlite.ts`](mdc:durable-execution-storage-drizzle/src/sqlite.ts)
+- Postgres: [`durable-execution-storage-drizzle/src/pg.ts`](mdc:durable-execution-storage-drizzle/src/pg.ts)
+- MySQL: [`durable-execution-storage-drizzle/src/mysql.ts`](mdc:durable-execution-storage-drizzle/src/mysql.ts)
+
+### Key types
+
+- `TaskExecutionStatus`, `TaskRetryOptions`, `DurableExecutionError` in core exports.
+- `Storage` contract in [`durable-execution/src/storage.ts`](mdc:durable-execution/src/storage.ts).

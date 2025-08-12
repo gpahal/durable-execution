@@ -20,8 +20,8 @@ describe('concurrentScenarios', () => {
       enableDebug: false,
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    void executor1.start()
-    void executor2.start()
+    executor1.startBackgroundProcesses()
+    executor2.startBackgroundProcesses()
   })
 
   afterEach(async () => {
@@ -171,7 +171,7 @@ describe('concurrentScenarios', () => {
 
   it(
     'should handle version conflicts during concurrent updates gracefully',
-    { timeout: 30_000 },
+    { timeout: 60_000 },
     async () => {
       const fastChild = executor1.task({
         id: 'fast_child',

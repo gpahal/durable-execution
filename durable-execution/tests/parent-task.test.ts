@@ -16,11 +16,11 @@ describe('parentTask', () => {
       enableDebug: false,
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    void executor.start()
+    executor.startBackgroundProcesses()
   })
 
-  afterEach(() => {
-    void executor.shutdown()
+  afterEach(async () => {
+    await executor.shutdown()
   })
 
   it('should complete', async () => {

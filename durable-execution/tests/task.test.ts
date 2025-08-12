@@ -21,11 +21,11 @@ describe('simpleTask', () => {
       enableDebug: false,
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    void executor.start()
+    executor.startBackgroundProcesses()
   })
 
-  afterEach(() => {
-    void executor.shutdown()
+  afterEach(async () => {
+    await executor.shutdown()
   })
 
   it('should complete', async () => {
@@ -456,7 +456,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
-      finishedExecution.startedAt.getTime(),
+      finishedExecution.startedAt!.getTime(),
     )
     expect(executor.getRunningTaskExecutionIds()).toContain(finishedExecution.executionId)
 
@@ -520,7 +520,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
-      finishedExecution.startedAt.getTime(),
+      finishedExecution.startedAt!.getTime(),
     )
   })
 
@@ -750,10 +750,10 @@ describe('simpleTask', () => {
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
-      finishedExecution.startedAt.getTime(),
+      finishedExecution.startedAt!.getTime(),
     )
     expect(
-      finishedExecution.finishedAt.getTime() - finishedExecution.startedAt.getTime(),
+      finishedExecution.finishedAt.getTime() - finishedExecution.startedAt!.getTime(),
     ).toBeLessThan(2000)
   })
 

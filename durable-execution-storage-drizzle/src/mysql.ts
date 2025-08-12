@@ -3,16 +3,20 @@ import {
   bigint,
   boolean,
   index,
-  integer,
+  int,
   json,
-  pgTable,
+  mysqlTable,
+  serial,
   text,
   timestamp,
   uniqueIndex,
-  type PgDatabase,
-  type PgQueryResultHKT,
-  type PgTransaction,
-} from 'drizzle-orm/pg-core'
+  varchar,
+  type MySqlDatabase,
+  type MySqlQueryResultHKT,
+  type MySqlQueryResultKind,
+  type MySqlTransaction,
+  type PreparedQueryHKTBase,
+} from 'drizzle-orm/mysql-core'
 import type {
   ChildTaskExecution,
   ChildTaskExecutionErrorStorageValue,
@@ -33,37 +37,37 @@ import {
 } from './common'
 
 /**
- * Create a pg table for task executions.
+ * Create a mysql table for task executions.
  *
  * @param tableName - The name of the table.
- * @returns The pg table.
+ * @returns The mysql table.
  */
-export function createTaskExecutionsPgTable(tableName = 'task_executions') {
-  return pgTable(
+export function createTaskExecutionsMySqlTable(tableName = 'task_executions') {
+  return mysqlTable(
     tableName,
     {
-      id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+      id: serial('id').primaryKey(),
       rootTaskId: text('root_task_id'),
       rootExecutionId: text('root_execution_id'),
       parentTaskId: text('parent_task_id'),
       parentExecutionId: text('parent_execution_id'),
       isFinalizeTask: boolean('is_finalize_task'),
       taskId: text('task_id').notNull(),
-      executionId: text('execution_id').notNull(),
+      executionId: varchar('execution_id', { length: 64 }).notNull(),
       retryOptions: json('retry_options').$type<TaskRetryOptions>().notNull(),
       sleepMsBeforeRun: bigint('sleep_ms_before_run', { mode: 'number' }).notNull(),
       timeoutMs: bigint('timeout_ms', { mode: 'number' }).notNull(),
-      status: text('status').$type<TaskExecutionStatusStorageValue>().notNull(),
+      status: varchar('status', { length: 64 }).$type<TaskExecutionStatusStorageValue>().notNull(),
       runInput: text('run_input').notNull(),
       runOutput: text('run_output'),
       output: text('output'),
       error: json('error').$type<DurableExecutionErrorStorageValue>(),
       needsPromiseCancellation: boolean('needs_promise_cancellation').notNull(),
-      retryAttempts: integer('retry_attempts').notNull(),
-      startAt: timestamp('start_at', { withTimezone: true }).notNull(),
-      startedAt: timestamp('started_at', { withTimezone: true }),
-      expiresAt: timestamp('expires_at', { withTimezone: true }),
-      finishedAt: timestamp('finished_at', { withTimezone: true }),
+      retryAttempts: int('retry_attempts').notNull(),
+      startAt: timestamp('start_at').notNull(),
+      startedAt: timestamp('started_at'),
+      expiresAt: timestamp('expires_at'),
+      finishedAt: timestamp('finished_at'),
       childrenTaskExecutions: json('children_task_executions').$type<Array<ChildTaskExecution>>(),
       completedChildrenTaskExecutions: json('completed_children_task_executions').$type<
         Array<ChildTaskExecution>
@@ -76,9 +80,9 @@ export function createTaskExecutionsPgTable(tableName = 'task_executions') {
         'finalize_task_execution_error',
       ).$type<DurableExecutionErrorStorageValue>(),
       isClosed: boolean('is_closed').notNull(),
-      closedAt: timestamp('closed_at', { withTimezone: true }),
-      createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
-      updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+      closedAt: timestamp('closed_at'),
+      createdAt: timestamp('created_at').notNull(),
+      updatedAt: timestamp('updated_at').notNull(),
     },
     (table) => [
       uniqueIndex(`ix_${tableName}_execution_id`).on(table.executionId),
@@ -104,21 +108,21 @@ export function createTaskExecutionsPgTable(tableName = 'task_executions') {
 }
 
 /**
- * Create a pg table for finished child task executions.
+ * Create a mysql table for finished child task executions.
  *
  * @param tableName - The name of the table.
- * @returns The pg table.
+ * @returns The mysql table.
  */
-export function createFinishedChildTaskExecutionsPgTable(
+export function createFinishedChildTaskExecutionsMySqlTable(
   tableName = 'finished_child_task_executions',
 ) {
-  return pgTable(
+  return mysqlTable(
     tableName,
     {
-      id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
-      parentExecutionId: text('parent_execution_id').notNull(),
-      createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
-      updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+      id: serial('id').primaryKey(),
+      parentExecutionId: varchar('parent_execution_id', { length: 255 }).notNull(),
+      createdAt: timestamp('created_at').notNull(),
+      updatedAt: timestamp('updated_at').notNull(),
     },
     (table) => [
       uniqueIndex(`ix_${tableName}_parent_execution_id`).on(table.parentExecutionId),
@@ -128,65 +132,79 @@ export function createFinishedChildTaskExecutionsPgTable(
 }
 
 /**
- * The type of the pg table for task executions.
+ * The type of the mysql table for task executions.
  */
-export type TaskExecutionsPgTable = ReturnType<typeof createTaskExecutionsPgTable>
+export type TaskExecutionsMySqlTable = ReturnType<typeof createTaskExecutionsMySqlTable>
 
 /**
- * The type of the pg table for finished child task executions.
+ * The type of the mysql table for finished child task executions.
  */
-export type FinishedChildTaskExecutionsPgTable = ReturnType<
-  typeof createFinishedChildTaskExecutionsPgTable
+export type FinishedChildTaskExecutionsMySqlTable = ReturnType<
+  typeof createFinishedChildTaskExecutionsMySqlTable
 >
 
 /**
- * Create a pg storage.
+ * Create a mysql storage.
  *
- * @param db - The pg database.
- * @param taskExecutionsTable - The pg task executions table.
- * @param finishedChildTaskExecutionsTable - The pg finished child task executions table.
- * @returns The pg storage.
+ * @param db - The mysql database.
+ * @param taskExecutionsTable - The mysql task executions table.
+ * @param finishedChildTaskExecutionsTable - The mysql finished child task executions table.
+ * @returns The mysql storage.
  */
-export function createPgStorage<
-  TQueryResult extends PgQueryResultHKT,
+export function createMySqlStorage<
+  TQueryResult extends MySqlQueryResultHKT,
+  TPreparedQueryHKT extends PreparedQueryHKTBase,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
 >(
-  db: PgDatabase<TQueryResult, TFullSchema, TSchema>,
-  taskExecutionsTable: TaskExecutionsPgTable,
-  finishedChildTaskExecutionsTable: FinishedChildTaskExecutionsPgTable,
+  db: MySqlDatabase<TQueryResult, TPreparedQueryHKT, TFullSchema, TSchema>,
+  taskExecutionsTable: TaskExecutionsMySqlTable,
+  finishedChildTaskExecutionsTable: FinishedChildTaskExecutionsMySqlTable,
+  getAffectedRowsCount: (result: MySqlQueryResultKind<TQueryResult, never>) => number,
 ): Storage {
-  return new PgStorage(db, taskExecutionsTable, finishedChildTaskExecutionsTable)
+  return new MySqlStorage(
+    db,
+    taskExecutionsTable,
+    finishedChildTaskExecutionsTable,
+    getAffectedRowsCount,
+  )
 }
 
-class PgStorage<
-  TQueryResult extends PgQueryResultHKT,
+class MySqlStorage<
+  TQueryResult extends MySqlQueryResultHKT,
+  TPreparedQueryHKT extends PreparedQueryHKTBase,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
 > implements Storage
 {
-  private readonly db: PgDatabase<TQueryResult, TFullSchema, TSchema>
-  private readonly taskExecutionsTable: TaskExecutionsPgTable
-  private readonly finishedChildTaskExecutionsTable: FinishedChildTaskExecutionsPgTable
+  private readonly db: MySqlDatabase<TQueryResult, TPreparedQueryHKT, TFullSchema, TSchema>
+  private readonly taskExecutionsTable: TaskExecutionsMySqlTable
+  private readonly finishedChildTaskExecutionsTable: FinishedChildTaskExecutionsMySqlTable
+  private readonly getAffectedRowsCount: (
+    result: MySqlQueryResultKind<TQueryResult, never>,
+  ) => number
 
   constructor(
-    db: PgDatabase<TQueryResult, TFullSchema, TSchema>,
-    taskExecutionsTable: TaskExecutionsPgTable,
-    finishedChildTaskExecutionsTable: FinishedChildTaskExecutionsPgTable,
+    db: MySqlDatabase<TQueryResult, TPreparedQueryHKT, TFullSchema, TSchema>,
+    taskExecutionsTable: TaskExecutionsMySqlTable,
+    finishedChildTaskExecutionsTable: FinishedChildTaskExecutionsMySqlTable,
+    getAffectedRowsCount: (result: MySqlQueryResultKind<TQueryResult, never>) => number,
   ) {
     this.db = db
     this.taskExecutionsTable = taskExecutionsTable
     this.finishedChildTaskExecutionsTable = finishedChildTaskExecutionsTable
+    this.getAffectedRowsCount = getAffectedRowsCount
   }
 
   async withTransaction<T>(
-    fn: (tx: PgStorageTx<TQueryResult, TFullSchema, TSchema>) => Promise<T>,
+    fn: (tx: MySqlStorageTx<TQueryResult, TPreparedQueryHKT, TFullSchema, TSchema>) => Promise<T>,
   ): Promise<T> {
     return await this.db.transaction(async (tx) => {
-      const storageTx = new PgStorageTx(
+      const storageTx = new MySqlStorageTx(
         tx,
         this.taskExecutionsTable,
         this.finishedChildTaskExecutionsTable,
+        this.getAffectedRowsCount,
       )
       return await fn(storageTx)
     })
@@ -226,12 +244,11 @@ class PgStorage<
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
   ): Promise<number> {
-    const rows = await this.db
+    const result = await this.db
       .update(this.taskExecutionsTable)
       .set(taskExecutionStorageValueToUpdateValue(update))
       .where(buildTaskExecutionWhereCondition(this.taskExecutionsTable, where))
-      .returning({ executionId: this.taskExecutionsTable.executionId })
-    return rows.length
+    return this.getAffectedRowsCount(result)
   }
 
   async insertFinishedChildTaskExecutionIfNotExists(
@@ -249,23 +266,29 @@ class PgStorage<
   }
 }
 
-class PgStorageTx<
-  TQueryResult extends PgQueryResultHKT,
+class MySqlStorageTx<
+  TQueryResult extends MySqlQueryResultHKT,
+  TPreparedQueryHKT extends PreparedQueryHKTBase,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
 > {
-  private readonly tx: PgTransaction<TQueryResult, TFullSchema, TSchema>
-  private readonly taskExecutionsTable: TaskExecutionsPgTable
-  private readonly finishedChildTaskExecutionsTable: FinishedChildTaskExecutionsPgTable
+  private readonly tx: MySqlTransaction<TQueryResult, TPreparedQueryHKT, TFullSchema, TSchema>
+  private readonly taskExecutionsTable: TaskExecutionsMySqlTable
+  private readonly finishedChildTaskExecutionsTable: FinishedChildTaskExecutionsMySqlTable
+  private readonly getAffectedRowsCount: (
+    result: MySqlQueryResultKind<TQueryResult, never>,
+  ) => number
 
   constructor(
-    tx: PgTransaction<TQueryResult, TFullSchema, TSchema>,
-    taskExecutionsTable: TaskExecutionsPgTable,
-    finishedChildTaskExecutionsTable: FinishedChildTaskExecutionsPgTable,
+    tx: MySqlTransaction<TQueryResult, TPreparedQueryHKT, TFullSchema, TSchema>,
+    taskExecutionsTable: TaskExecutionsMySqlTable,
+    finishedChildTaskExecutionsTable: FinishedChildTaskExecutionsMySqlTable,
+    getAffectedRowsCount: (result: MySqlQueryResultKind<TQueryResult, never>) => number,
   ) {
     this.tx = tx
     this.taskExecutionsTable = taskExecutionsTable
     this.finishedChildTaskExecutionsTable = finishedChildTaskExecutionsTable
+    this.getAffectedRowsCount = getAffectedRowsCount
   }
 
   async insertTaskExecutions(executions: Array<TaskExecutionStorageValue>): Promise<void> {
@@ -317,12 +340,11 @@ class PgStorageTx<
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
   ): Promise<number> {
-    const rows = await this.tx
+    const result = await this.tx
       .update(this.taskExecutionsTable)
       .set(taskExecutionStorageValueToUpdateValue(update))
       .where(buildTaskExecutionWhereCondition(this.taskExecutionsTable, where))
-      .returning({ executionId: this.taskExecutionsTable.executionId })
-    return rows.length
+    return this.getAffectedRowsCount(result)
   }
 
   async insertFinishedChildTaskExecutionIfNotExists(
@@ -331,7 +353,11 @@ class PgStorageTx<
     await this.tx
       .insert(this.finishedChildTaskExecutionsTable)
       .values(finishedChildTaskExecution)
-      .onConflictDoNothing()
+      .onDuplicateKeyUpdate({
+        set: {
+          parentExecutionId: finishedChildTaskExecution.parentExecutionId,
+        },
+      })
   }
 
   async deleteFinishedChildTaskExecutionsAndReturn(
@@ -358,7 +384,7 @@ class PgStorageTx<
 }
 
 function buildTaskExecutionWhereCondition(
-  table: TaskExecutionsPgTable,
+  table: TaskExecutionsMySqlTable,
   where: TaskExecutionStorageWhere,
 ): SQL | undefined {
   const conditions: Array<SQL> = []

@@ -12,57 +12,68 @@ export type TaskExecutionDBValue = {
   rootTaskId?: string | null
   rootExecutionId?: string | null
   parentTaskId?: string | null
+  parentChildTaskExecutionIndex?: number | null
   parentExecutionId?: string | null
   isFinalizeTask?: boolean | null
   taskId: string
   executionId: string
   retryOptions: TaskRetryOptions
-  timeoutMs: number
   sleepMsBeforeRun: number
+  timeoutMs: number
+  status: TaskExecutionStatusStorageValue
   runInput: string
   runOutput?: string | null
   output?: string | null
-  childrenTaskExecutionsCompletedCount: number
-  childrenTaskExecutions?: Array<ChildTaskExecution> | null
-  childrenTaskExecutionsErrors?: Array<ChildTaskExecutionErrorStorageValue> | null
-  finalizeTaskExecution?: ChildTaskExecution | null
-  finalizeTaskExecutionError?: DurableExecutionErrorStorageValue | null
   error?: DurableExecutionErrorStorageValue | null
-  status: TaskExecutionStatusStorageValue
-  isClosed: boolean
   needsPromiseCancellation: boolean
   retryAttempts: number
   startAt: Date
   startedAt?: Date | null
-  finishedAt?: Date | null
   expiresAt?: Date | null
-  version: number
+  finishedAt?: Date | null
+
+  childrenTaskExecutions?: Array<ChildTaskExecution> | null
+  completedChildrenTaskExecutions?: Array<ChildTaskExecution> | null
+  childrenTaskExecutionsErrors?: Array<ChildTaskExecutionErrorStorageValue> | null
+
+  finalizeTaskExecution?: ChildTaskExecution | null
+  finalizeTaskExecutionError?: DurableExecutionErrorStorageValue | null
+
+  isClosed: boolean
+  closedAt?: Date | null
+
   createdAt: Date
   updatedAt: Date
 }
 
 export type TaskExecutionDBUpdateValue = {
+  status?: TaskExecutionStatusStorageValue
   runOutput?: string
   output?: string
-  childrenTaskExecutionsCompletedCount?: number
-  childrenTaskExecutions?: Array<ChildTaskExecution>
-  childrenTaskExecutionsErrors?: Array<ChildTaskExecutionErrorStorageValue>
-  finalizeTaskExecution?: ChildTaskExecution
-  finalizeTaskExecutionError?: DurableExecutionErrorStorageValue
   error?: DurableExecutionErrorStorageValue | null
-  status?: TaskExecutionStatusStorageValue
-  isClosed?: boolean
   needsPromiseCancellation?: boolean
   retryAttempts?: number
   startAt?: Date
   startedAt?: Date
-  finishedAt?: Date
   expiresAt?: Date | null
-  version?: number
+  finishedAt?: Date
+
+  childrenTaskExecutions?: Array<ChildTaskExecution>
+  completedChildrenTaskExecutions?: Array<ChildTaskExecution>
+  childrenTaskExecutionsErrors?: Array<ChildTaskExecutionErrorStorageValue>
+
+  finalizeTaskExecution?: ChildTaskExecution
+  finalizeTaskExecutionError?: DurableExecutionErrorStorageValue
+
+  isClosed?: boolean
+  closedAt?: Date
+
   updatedAt?: Date
 }
 
-export function storageValueToInsertValue(value: TaskExecutionStorageValue): TaskExecutionDBValue {
+export function taskExecutionStorageValueToInsertValue(
+  value: TaskExecutionStorageValue,
+): TaskExecutionDBValue {
   return {
     rootTaskId: value.rootTaskExecution?.taskId,
     rootExecutionId: value.rootTaskExecution?.executionId,
@@ -72,46 +83,46 @@ export function storageValueToInsertValue(value: TaskExecutionStorageValue): Tas
     taskId: value.taskId,
     executionId: value.executionId,
     retryOptions: value.retryOptions,
-    timeoutMs: value.timeoutMs,
     sleepMsBeforeRun: value.sleepMsBeforeRun,
+    timeoutMs: value.timeoutMs,
+    status: value.status,
     runInput: value.runInput,
     runOutput: value.runOutput,
     output: value.output,
-    childrenTaskExecutionsCompletedCount: value.childrenTaskExecutionsCompletedCount,
-    childrenTaskExecutions: value.childrenTaskExecutions,
-    childrenTaskExecutionsErrors: value.childrenTaskExecutionsErrors,
-    finalizeTaskExecution: value.finalizeTaskExecution,
-    finalizeTaskExecutionError: value.finalizeTaskExecutionError,
     error: value.error,
-    status: value.status,
-    isClosed: value.isClosed,
     needsPromiseCancellation: value.needsPromiseCancellation,
     retryAttempts: value.retryAttempts,
     startAt: value.startAt,
     startedAt: value.startedAt,
-    finishedAt: value.finishedAt,
     expiresAt: value.expiresAt,
-    version: value.version,
+    finishedAt: value.finishedAt,
+    childrenTaskExecutions: value.childrenTaskExecutions,
+    completedChildrenTaskExecutions: value.completedChildrenTaskExecutions,
+    childrenTaskExecutionsErrors: value.childrenTaskExecutionsErrors,
+    finalizeTaskExecution: value.finalizeTaskExecution,
+    finalizeTaskExecutionError: value.finalizeTaskExecutionError,
+    isClosed: value.isClosed,
+    closedAt: value.closedAt,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
   }
 }
 
-export function selectValueToStorageValue(row: TaskExecutionDBValue): TaskExecutionStorageValue {
+export function taskExecutionSelectValueToStorageValue(
+  row: TaskExecutionDBValue,
+): TaskExecutionStorageValue {
   const obj: TaskExecutionStorageValue = {
     taskId: row.taskId,
     executionId: row.executionId,
     retryOptions: row.retryOptions,
-    timeoutMs: row.timeoutMs,
     sleepMsBeforeRun: row.sleepMsBeforeRun,
-    runInput: row.runInput,
-    childrenTaskExecutionsCompletedCount: row.childrenTaskExecutionsCompletedCount,
+    timeoutMs: row.timeoutMs,
     status: row.status,
-    isClosed: row.isClosed,
+    runInput: row.runInput,
     needsPromiseCancellation: row.needsPromiseCancellation,
     retryAttempts: row.retryAttempts,
     startAt: row.startAt,
-    version: row.version,
+    isClosed: row.isClosed,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -127,6 +138,7 @@ export function selectValueToStorageValue(row: TaskExecutionDBValue): TaskExecut
     obj.parentTaskExecution = {
       taskId: row.parentTaskId,
       executionId: row.parentExecutionId,
+      parentChildTaskExecutionIndex: row.parentChildTaskExecutionIndex ?? 0,
       isFinalizeTask: row.isFinalizeTask ?? false,
     }
   }
@@ -139,8 +151,28 @@ export function selectValueToStorageValue(row: TaskExecutionDBValue): TaskExecut
     obj.output = row.output
   }
 
+  if (row.error) {
+    obj.error = row.error
+  }
+
+  if (row.startedAt) {
+    obj.startedAt = row.startedAt
+  }
+
+  if (row.expiresAt) {
+    obj.expiresAt = row.expiresAt
+  }
+
+  if (row.finishedAt) {
+    obj.finishedAt = row.finishedAt
+  }
+
   if (row.childrenTaskExecutions) {
     obj.childrenTaskExecutions = row.childrenTaskExecutions
+  }
+
+  if (row.completedChildrenTaskExecutions) {
+    obj.completedChildrenTaskExecutions = row.completedChildrenTaskExecutions
   }
 
   if (row.childrenTaskExecutionsErrors) {
@@ -155,29 +187,21 @@ export function selectValueToStorageValue(row: TaskExecutionDBValue): TaskExecut
     obj.finalizeTaskExecutionError = row.finalizeTaskExecutionError
   }
 
-  if (row.error) {
-    obj.error = row.error
-  }
-
-  if (row.startedAt) {
-    obj.startedAt = row.startedAt
-  }
-
-  if (row.finishedAt) {
-    obj.finishedAt = row.finishedAt
-  }
-
-  if (row.expiresAt) {
-    obj.expiresAt = row.expiresAt
+  if (row.closedAt) {
+    obj.closedAt = row.closedAt
   }
 
   return obj
 }
 
-export function storageValueToUpdateValue(
+export function taskExecutionStorageValueToUpdateValue(
   update: TaskExecutionStorageUpdate,
 ): TaskExecutionDBUpdateValue {
   const row: TaskExecutionDBUpdateValue = {}
+  if (update.status != null) {
+    row.status = update.status
+  }
+
   if (update.runOutput != null) {
     row.runOutput = update.runOutput
   }
@@ -186,40 +210,12 @@ export function storageValueToUpdateValue(
     row.output = update.output
   }
 
-  if (update.childrenTaskExecutionsCompletedCount != null) {
-    row.childrenTaskExecutionsCompletedCount = update.childrenTaskExecutionsCompletedCount
-  }
-
-  if (update.childrenTaskExecutions != null) {
-    row.childrenTaskExecutions = update.childrenTaskExecutions
-  }
-
-  if (update.childrenTaskExecutionsErrors != null) {
-    row.childrenTaskExecutionsErrors = update.childrenTaskExecutionsErrors
-  }
-
-  if (update.finalizeTaskExecution != null) {
-    row.finalizeTaskExecution = update.finalizeTaskExecution
-  }
-
-  if (update.finalizeTaskExecutionError != null) {
-    row.finalizeTaskExecutionError = update.finalizeTaskExecutionError
-  }
-
   if (update.error != null) {
     row.error = update.error
   }
 
   if (update.unsetError) {
     row.error = null
-  }
-
-  if (update.status != null) {
-    row.status = update.status
-  }
-
-  if (update.isClosed != null) {
-    row.isClosed = update.isClosed
   }
 
   if (update.needsPromiseCancellation != null) {
@@ -238,16 +234,44 @@ export function storageValueToUpdateValue(
     row.startedAt = update.startedAt
   }
 
-  if (update.finishedAt != null) {
-    row.finishedAt = update.finishedAt
-  }
-
   if (update.expiresAt != null) {
     row.expiresAt = update.expiresAt
   }
 
   if (update.unsetExpiresAt) {
     row.expiresAt = null
+  }
+
+  if (update.finishedAt != null) {
+    row.finishedAt = update.finishedAt
+  }
+
+  if (update.childrenTaskExecutions != null) {
+    row.childrenTaskExecutions = update.childrenTaskExecutions
+  }
+
+  if (update.completedChildrenTaskExecutions != null) {
+    row.completedChildrenTaskExecutions = update.completedChildrenTaskExecutions
+  }
+
+  if (update.childrenTaskExecutionsErrors != null) {
+    row.childrenTaskExecutionsErrors = update.childrenTaskExecutionsErrors
+  }
+
+  if (update.finalizeTaskExecution != null) {
+    row.finalizeTaskExecution = update.finalizeTaskExecution
+  }
+
+  if (update.finalizeTaskExecutionError != null) {
+    row.finalizeTaskExecutionError = update.finalizeTaskExecutionError
+  }
+
+  if (update.isClosed != null) {
+    row.isClosed = update.isClosed
+  }
+
+  if (update.closedAt != null) {
+    row.closedAt = update.closedAt
   }
 
   if (update.updatedAt != null) {

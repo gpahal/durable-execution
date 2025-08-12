@@ -91,11 +91,12 @@ function convertParentTaskOptionsOptionsInternal(
 
 const zRetryOptions = z
   .object({
-    maxAttempts: z.number().int().min(0),
+    maxAttempts: z.number().int().min(0).max(100), // Reasonable maximum
     baseDelayMs: z
       .number()
       .int()
       .min(0)
+      .max(3_600_000) // 1 hour
       .nullish()
       .transform((val) => {
         if (val == null) {
@@ -106,6 +107,7 @@ const zRetryOptions = z
     delayMultiplier: z
       .number()
       .min(0.1)
+      .max(10)
       .nullish()
       .transform((val) => {
         if (val == null) {
@@ -117,6 +119,7 @@ const zRetryOptions = z
       .number()
       .int()
       .min(0)
+      .max(86_400_000) // 24 hours
       .nullish()
       .transform((val) => {
         if (val == null) {
@@ -130,10 +133,24 @@ const zRetryOptions = z
     if (val == null) {
       return {
         maxAttempts: 0,
+        baseDelayMs: undefined,
+        delayMultiplier: undefined,
+        maxDelayMs: undefined,
       }
     }
     return val
   })
+  .refine(
+    (val) => {
+      if (val.maxDelayMs != null && val.baseDelayMs != null) {
+        return val.maxDelayMs >= val.baseDelayMs
+      }
+      return true
+    },
+    {
+      message: 'maxDelayMs must be greater than or equal to baseDelayMs',
+    },
+  )
 
 const zSleepMsBeforeRun = z
   .number()
@@ -146,7 +163,7 @@ const zSleepMsBeforeRun = z
     return val
   })
 
-const zTimeoutMs = z.number().int().min(1)
+const zTimeoutMs = z.number().int().min(1).max(3_600_000) // 1 hour
 
 export class TaskInternal {
   readonly id: string
@@ -293,7 +310,7 @@ export class TaskInternal {
       validatedOptions.retryOptions = parsedRetryOptions.data
     }
 
-    if (options?.sleepMsBeforeRun) {
+    if (options?.sleepMsBeforeRun != null) {
       const parsedSleepMsBeforeRun = zSleepMsBeforeRun.safeParse(options.sleepMsBeforeRun)
       if (!parsedSleepMsBeforeRun.success) {
         throw new DurableExecutionError(
@@ -305,7 +322,7 @@ export class TaskInternal {
       validatedOptions.sleepMsBeforeRun = parsedSleepMsBeforeRun.data
     }
 
-    if (options?.timeoutMs) {
+    if (options?.timeoutMs != null) {
       const parsedTimeoutMs = zTimeoutMs.safeParse(options.timeoutMs)
       if (!parsedTimeoutMs.success) {
         throw new DurableExecutionError(

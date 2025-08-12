@@ -89,11 +89,11 @@ async function server() {
   // ... start the long-running server (see oRPC server docs for more details)
 }
 
-// Start the durable executor and run the server
-await Promise.all([
-  executor.start(), // Start the durable executor in the background
-  server(), // Run the server
-])
+// Start the durable executor background processes
+executor.startBackgroundProcesses()
+
+// Run the server
+await server()
 
 // Shutdown the durable executor when the app is done
 await executor.shutdown()

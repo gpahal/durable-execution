@@ -1,6 +1,6 @@
 {
   "name": "durable-execution-storage-drizzle",
-  "version": "0.18.0",
+  "version": "0.21.0",
   "description": "Drizzle ORM storage implementation for durable-execution",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
@@ -59,8 +59,11 @@
     "@gpahal/std": "catalog:prod",
     "@electric-sql/pglite": "catalog:dev",
     "@libsql/client": "catalog:dev",
+    "@testcontainers/mysql": "catalog:dev",
     "drizzle-kit": "catalog:dev",
     "drizzle-orm": "catalog:dev",
-    "durable-execution": "workspace:*"
+    "durable-execution": "workspace:*",
+    "durable-execution-storage-test-utils": "workspace:*",
+    "testcontainers": "catalog:dev"
   }
 }

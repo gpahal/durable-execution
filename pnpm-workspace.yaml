@@ -1,6 +1,7 @@
 packages:
   - durable-execution
   - durable-execution-orpc-utils
+  - durable-execution-storage-test-utils
   - durable-execution-storage-drizzle
 
 onlyBuiltDependencies:
@@ -10,7 +11,7 @@ onlyBuiltDependencies:
 
 catalogs:
   prod:
-    '@gpahal/std': ^0.0.31
+    '@gpahal/std': ^0.0.32
     '@standard-schema/spec': ^1.0.0
     '@standard-schema/utils': ^0.3.0
     nanoid: ^5.1.5
@@ -19,14 +20,15 @@ catalogs:
   dev:
     '@changesets/cli': ^2.29.5
     '@electric-sql/pglite': ^0.3.7
-    '@gpahal/eslint-config': ^0.0.104
+    '@gpahal/eslint-config': ^0.0.105
     '@gpahal/prettier-config': ^0.0.29
     '@gpahal/tsconfig': ^0.0.20
     '@ianvs/prettier-plugin-sort-imports': ^4.6.1
     '@libsql/client': ^0.15.10
-    '@orpc/client': ^1.7.10
-    '@orpc/contract': ^1.7.10
-    '@orpc/server': ^1.7.10
+    '@orpc/client': ^1.8.0
+    '@orpc/contract': ^1.8.0
+    '@orpc/server': ^1.8.0
+    '@testcontainers/mysql': ^11.5.1
     '@types/node': ^24.2.1
     '@vitest/coverage-v8': ^3.2.4
     drizzle-kit: ^0.31.4
@@ -36,10 +38,11 @@ catalogs:
     premove: ^4.0.0
     prettier: ^3.6.2
     simple-git-hooks: ^2.13.1
+    testcontainers: ^11.5.1
     tsup: ^8.5.0
-    tsx: ^4.20.3
+    tsx: ^4.20.4
     turbo: ^2.5.5
-    typedoc: ^0.28.9
+    typedoc: ^0.28.10
     typedoc-plugin-mermaid: ^1.12.0
     typescript: ^5.9.2
     vitest: ^3.2.4

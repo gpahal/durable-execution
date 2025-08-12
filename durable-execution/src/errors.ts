@@ -103,9 +103,9 @@ export class DurableExecutionCancelledError extends DurableExecutionError {
  */
 export type DurableExecutionErrorStorageValue = {
   errorType: DurableExecutionErrorType
+  isRetryable: boolean
   isInternal: boolean
   message: string
-  isRetryable: boolean
 }
 
 export function convertDurableExecutionErrorToStorageValue(
@@ -113,8 +113,8 @@ export function convertDurableExecutionErrorToStorageValue(
 ): DurableExecutionErrorStorageValue {
   return {
     errorType: error.getErrorType(),
+    isRetryable: error.isRetryable,
     isInternal: error.isInternal,
     message: error.message,
-    isRetryable: error.isRetryable,
   }
 }

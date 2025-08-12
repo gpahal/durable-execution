@@ -2,8 +2,8 @@ import { createRouterClient, ORPCError, os, type } from '@orpc/server'
 import {
   DurableExecutor,
   InMemoryStorage,
+  type FinishedTaskExecution,
   type Task,
-  type TaskFinishedExecution,
 } from 'durable-execution'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -16,7 +16,7 @@ async function waitAndGetFinishedExecution<TInput, TOutput>(
   executor: DurableExecutor,
   task: Task<TInput, TOutput>,
   executionId: string,
-): Promise<TaskFinishedExecution<TOutput>> {
+): Promise<FinishedTaskExecution<TOutput>> {
   const handle = await executor.getTaskHandle(task, executionId)
   return await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
 }
@@ -31,7 +31,7 @@ describe('server', () => {
       enableDebug: false,
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    void executor.start()
+    executor.startBackgroundProcesses()
   })
 
   afterEach(async () => {

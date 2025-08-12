@@ -33,17 +33,33 @@ export function createSuperjsonSerializer(): Serializer {
  *
  * @category Serializer
  */
-export class WrappedSerializer implements Serializer {
+export class WrappedSerializer {
   private readonly serializer: Serializer
 
   constructor(serializer: Serializer) {
     this.serializer = serializer
   }
 
-  serialize<T>(value: T): string {
+  serialize<T>(value: T, maxSerializedDataSize?: number): string {
     try {
-      return this.serializer.serialize(value)
+      const result = this.serializer.serialize(value)
+      if (maxSerializedDataSize == null) {
+        return result
+      }
+
+      const sizeInBytes = Buffer.byteLength(result, 'utf8')
+      if (sizeInBytes > maxSerializedDataSize) {
+        throw new DurableExecutionError(
+          `Serialized data size (${sizeInBytes} bytes) exceeds maximum allowed size (${maxSerializedDataSize} bytes)`,
+          false,
+        )
+      }
+
+      return result
     } catch (error) {
+      if (error instanceof DurableExecutionError) {
+        throw error
+      }
       throw new DurableExecutionError(`Error serializing value: ${getErrorMessage(error)}`, false)
     }
   }

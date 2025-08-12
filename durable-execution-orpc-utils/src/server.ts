@@ -19,9 +19,9 @@ import {
 import {
   DurableExecutionError,
   DurableExecutionNotFoundError,
+  type CommonTaskOptions,
   type DurableExecutor,
   type Task,
-  type TaskCommonOptions,
   type TaskEnqueueOptions,
   type TaskExecution,
 } from 'durable-execution'
@@ -243,7 +243,7 @@ export function convertClientProcedureToTask<
   TErrorMap extends ErrorMap,
 >(
   executor: DurableExecutor,
-  taskOptions: TaskCommonOptions,
+  taskOptions: CommonTaskOptions,
   procedure: ProcedureClient<TClientContext, TInputSchema, TOutputSchema, TErrorMap>,
   ...rest: Record<never, never> extends TClientContext
     ? [options?: FriendlyClientOptions<TClientContext>]

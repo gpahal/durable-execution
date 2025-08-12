@@ -15,12 +15,12 @@ describe('taskHandle', () => {
       enableDebug: false,
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    void executor.start()
+    executor.startBackgroundProcesses()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     if (executor) {
-      void executor.shutdown()
+      await executor.shutdown()
     }
   })
 
@@ -152,6 +152,9 @@ describe('taskHandle', () => {
     expect(handle.getExecutionId()).toBeDefined()
 
     const cancelSignal = createTimeoutCancelSignal(10_000)
+    await sleep(1000)
+    const execution = await handle.getExecution()
+    console.log(execution)
     await expect(
       handle.waitAndGetFinishedExecution({ signal: cancelSignal }),
     ).resolves.toBeDefined()

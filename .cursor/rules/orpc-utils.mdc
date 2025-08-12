@@ -1,0 +1,26 @@
+---
+description: How ORPC helpers expose durable-execution over RPC and how to consume from clients
+globs: durable-execution-orpc-utils/src/*.ts
+---
+### Server
+
+- Use [`durable-execution-orpc-utils/src/server.ts`](mdc:durable-execution-orpc-utils/src/server.ts)
+  - `createTasksRouter({ executor, tasks })` to expose tasks.
+  - `convertClientProcedureToTask(proc)` to wrap existing procedures as tasks.
+
+### Client
+
+- Use [`durable-execution-orpc-utils/src/client.ts`](mdc:durable-execution-orpc-utils/src/client.ts)
+  - `createTaskClientHandles({ client, tasks })` returns client handles with `enqueue` and `getExecution`.
+
+### Example
+
+```ts
+// server
+const router = createTasksRouter({ executor, tasks: { add } })
+
+// client
+const { add } = createTaskClientHandles({ client, tasks: { add: { id: 'add' } } })
+const handle = await add.enqueue({ a: 1, b: 2 })
+const result = await handle.result()
+```

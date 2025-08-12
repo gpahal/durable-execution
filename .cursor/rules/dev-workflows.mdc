@@ -1,0 +1,28 @@
+---
+description: Common dev commands and workflows for the monorepo
+---
+### Install and bootstrap
+
+- `pnpm i` (Node >= 20, `pnpm@10` per root `package.json`)
+
+### Build, test, lint
+
+- From repo root:
+  - `pnpm build` → builds all packages via Turbo
+  - `pnpm test` / `pnpm test-coverage`
+  - `pnpm type-check`
+  - `pnpm lint` / `pnpm lint-fix`
+  - `pnpm fmt` / `pnpm fmt-check`
+
+### Per-package
+
+- Core `durable-execution`:
+  - `pnpm -F durable-execution build`
+  - `pnpm -F durable-execution test`
+  - `pnpm -F durable-execution build-docs`
+
+- Drizzle storage, oRPC utils, test-utils: same pattern with `-F <package>`
+
+### Changesets and publishing
+
+- `pnpm cs` to version locally, `pnpm cs-publish` to run lint+tests and publish

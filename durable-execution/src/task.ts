@@ -1,6 +1,6 @@
 import type { CancelSignal } from '@gpahal/std/cancel'
 
-import type { DurableExecutionError, DurableExecutionErrorStorageValue } from './errors'
+import type { DurableExecutionErrorStorageValue } from './errors'
 
 /**
  * A task that can be run using a durable executor. See the
@@ -37,7 +37,7 @@ export type InferTaskOutput<TTask extends Task<unknown, unknown>> =
  *
  * @category Task
  */
-export type TaskCommonOptions = {
+export type CommonTaskOptions = {
   /**
    * A unique identifier for the task. Can only contain alphanumeric characters and underscores.
    * The identifier must be unique among all the tasks in the same executor.
@@ -71,7 +71,7 @@ export type TaskRetryOptions = {
    */
   maxAttempts: number
   /**
-   * The base delay before each retry. Defaults to 1000 or 1 second.
+   * The base delay before each retry. Defaults to 0.
    */
   baseDelayMs?: number
   /**
@@ -99,8 +99,7 @@ export type TaskRetryOptions = {
  * executor.
  *
  * Make sure the id is unique among all the tasks in the same durable executor. If two tasks are
- * registered with the same id, the second one will overwrite the first one, even if the first one
- * is enqueued.
+ * registered with the same id, an error will be thrown.
  *
  * The tasks can be added to an executor using the {@link DurableExecutor.task} method. If the
  * input to a task needs to be validated, it can be done using the
@@ -127,7 +126,7 @@ export type TaskRetryOptions = {
  *
  * @category Task
  */
-export type TaskOptions<TInput = undefined, TOutput = unknown> = TaskCommonOptions & {
+export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptions & {
   /**
    * The task run logic. It returns the output.
    *
@@ -258,7 +257,7 @@ export type ParentTaskOptions<
     childrenTaskExecutionsOutputs: Array<ChildTaskExecutionOutput>
   },
   TFinalizeTaskRunOutput = unknown,
-> = TaskCommonOptions & {
+> = CommonTaskOptions & {
   /**
    * The task run logic. It is similar to the `run` function in {@link TaskOptions} but it
    * returns the output and children tasks to be run in parallel after the run function completes.
@@ -392,16 +391,16 @@ export type TaskRunContext = {
  * @category Task
  */
 export type TaskExecution<TOutput = unknown> =
-  | TaskReadyExecution
-  | TaskRunningExecution
-  | TaskFailedExecution
-  | TaskTimedOutExecution
-  | TaskWaitingForChildrenTasksExecution
-  | TaskChildrenTasksFailedExecution
-  | TaskWaitingForFinalizeTaskExecution
-  | TaskFinalizeTaskFailedExecution
-  | TaskCompletedExecution<TOutput>
-  | TaskCancelledExecution
+  | ReadyTaskExecution
+  | RunningTaskExecution
+  | FailedTaskExecution
+  | TimedOutTaskExecution
+  | WaitingForChildrenTasksTaskExecution
+  | ChildrenTasksFailedTaskExecution
+  | WaitingForFinalizeTaskTaskExecution
+  | FinalizeTaskFailedTaskExecution
+  | CompletedTaskExecution<TOutput>
+  | CancelledTaskExecution
 
 /**
  * A finished execution of a task. See
@@ -410,20 +409,20 @@ export type TaskExecution<TOutput = unknown> =
  *
  * @category Task
  */
-export type TaskFinishedExecution<TOutput = unknown> =
-  | TaskFailedExecution
-  | TaskTimedOutExecution
-  | TaskChildrenTasksFailedExecution
-  | TaskFinalizeTaskFailedExecution
-  | TaskCompletedExecution<TOutput>
-  | TaskCancelledExecution
+export type FinishedTaskExecution<TOutput = unknown> =
+  | FailedTaskExecution
+  | TimedOutTaskExecution
+  | ChildrenTasksFailedTaskExecution
+  | FinalizeTaskFailedTaskExecution
+  | CompletedTaskExecution<TOutput>
+  | CancelledTaskExecution
 
 /**
  * A task execution that is ready to be run.
  *
  * @category Task
  */
-export type TaskReadyExecution = {
+export type ReadyTaskExecution = {
   rootTaskExecution?: {
     taskId: string
     executionId: string
@@ -439,9 +438,9 @@ export type TaskReadyExecution = {
   retryOptions: TaskRetryOptions
   sleepMsBeforeRun: number
   timeoutMs: number
+  status: 'ready'
   runInput: unknown
   error?: DurableExecutionErrorStorageValue
-  status: 'ready'
   retryAttempts: number
   createdAt: Date
   updatedAt: Date
@@ -452,7 +451,7 @@ export type TaskReadyExecution = {
  *
  * @category Task
  */
-export type TaskRunningExecution = Omit<TaskReadyExecution, 'status'> & {
+export type RunningTaskExecution = Omit<ReadyTaskExecution, 'status'> & {
   status: 'running'
   startedAt: Date
   expiresAt: Date
@@ -463,7 +462,7 @@ export type TaskRunningExecution = Omit<TaskReadyExecution, 'status'> & {
  *
  * @category Task
  */
-export type TaskFailedExecution = Omit<TaskRunningExecution, 'status' | 'error'> & {
+export type FailedTaskExecution = Omit<RunningTaskExecution, 'status' | 'error'> & {
   status: 'failed'
   error: DurableExecutionErrorStorageValue
   finishedAt: Date
@@ -474,7 +473,7 @@ export type TaskFailedExecution = Omit<TaskRunningExecution, 'status' | 'error'>
  *
  * @category Task
  */
-export type TaskTimedOutExecution = Omit<TaskRunningExecution, 'status' | 'error'> & {
+export type TimedOutTaskExecution = Omit<RunningTaskExecution, 'status' | 'error'> & {
   status: 'timed_out'
   error: DurableExecutionErrorStorageValue
   finishedAt: Date
@@ -485,14 +484,15 @@ export type TaskTimedOutExecution = Omit<TaskRunningExecution, 'status' | 'error
  *
  * @category Task
  */
-export type TaskWaitingForChildrenTasksExecution = Omit<
-  TaskRunningExecution,
+export type WaitingForChildrenTasksTaskExecution = Omit<
+  RunningTaskExecution,
   'status' | 'error'
 > & {
   status: 'waiting_for_children_tasks'
   runOutput: unknown
-  childrenTaskExecutionsCompletedCount: number
   childrenTaskExecutions: Array<ChildTaskExecution>
+  completedChildrenTaskExecutionsCount: number
+  completedChildrenTaskExecutions: Array<CompletedChildTaskExecution>
 }
 
 /**
@@ -501,12 +501,12 @@ export type TaskWaitingForChildrenTasksExecution = Omit<
  *
  * @category Task
  */
-export type TaskChildrenTasksFailedExecution = Omit<
-  TaskWaitingForChildrenTasksExecution,
+export type ChildrenTasksFailedTaskExecution = Omit<
+  WaitingForChildrenTasksTaskExecution,
   'status'
 > & {
   status: 'children_tasks_failed'
-  childrenTaskExecutionsErrors: Array<ChildTaskExecutionErrorStorageValue>
+  childrenTaskExecutionsErrors: Array<ChildTaskExecutionError>
   finishedAt: Date
 }
 
@@ -515,8 +515,8 @@ export type TaskChildrenTasksFailedExecution = Omit<
  *
  * @category Task
  */
-export type TaskWaitingForFinalizeTaskExecution = Omit<
-  TaskWaitingForChildrenTasksExecution,
+export type WaitingForFinalizeTaskTaskExecution = Omit<
+  WaitingForChildrenTasksTaskExecution,
   'status' | 'error'
 > & {
   status: 'waiting_for_finalize_task'
@@ -529,8 +529,8 @@ export type TaskWaitingForFinalizeTaskExecution = Omit<
  *
  * @category Task
  */
-export type TaskFinalizeTaskFailedExecution = Omit<
-  TaskWaitingForFinalizeTaskExecution,
+export type FinalizeTaskFailedTaskExecution = Omit<
+  WaitingForFinalizeTaskTaskExecution,
   'status'
 > & {
   status: 'finalize_task_failed'
@@ -543,8 +543,8 @@ export type TaskFinalizeTaskFailedExecution = Omit<
  *
  * @category Task
  */
-export type TaskCompletedExecution<TOutput = unknown> = Omit<
-  TaskWaitingForChildrenTasksExecution,
+export type CompletedTaskExecution<TOutput = unknown> = Omit<
+  WaitingForChildrenTasksTaskExecution,
   'status' | 'output'
 > & {
   status: 'completed'
@@ -563,29 +563,43 @@ export type TaskCompletedExecution<TOutput = unknown> = Omit<
  *
  * @category Task
  */
-export type TaskCancelledExecution = Omit<TaskRunningExecution, 'status' | 'error'> & {
+export type CancelledTaskExecution = Omit<ReadyTaskExecution, 'status' | 'error'> & {
   status: 'cancelled'
   error: DurableExecutionErrorStorageValue
+  finishedAt: Date
+
   /**
    * The output of the task. This is only present for tasks whose run method completed
    * successfully.
    */
   runOutput?: unknown
   /**
-   * The number of children task executions that have been completed.
+   * The time the task execution started. This is only present for tasks which started running.
    */
-  childrenTaskExecutionsCompletedCount: number
+  startedAt?: Date
+  /**
+   * The time the task execution expires. This is only present for tasks which started running.
+   */
+  expiresAt?: Date
   /**
    * The children task executions that were running when the task was cancelled. This is only present for
    * tasks whose run method completed successfully.
    */
   childrenTaskExecutions?: Array<ChildTaskExecution>
   /**
+   * The number of children task executions that have been completed.
+   */
+  completedChildrenTaskExecutionsCount: number
+  /**
+   * The children task executions that were completed when the task was cancelled. This is only
+   * present for tasks whose run method completed successfully.
+   */
+  completedChildrenTaskExecutions?: Array<CompletedChildTaskExecution>
+  /**
    * The finalize task execution. This is only present for tasks which have a finalize task and
    * whose run method completed successfully.
    */
   finalizeTaskExecution?: ChildTaskExecution
-  finishedAt: Date
 }
 
 /**
@@ -622,6 +636,17 @@ export type ChildTaskExecutionOutput<TOutput = unknown> = {
 }
 
 /**
+ * A completed child task execution.
+ *
+ * @category Task
+ */
+export type CompletedChildTaskExecution = {
+  index: number
+  taskId: string
+  executionId: string
+}
+
+/**
  * A child task execution error.
  *
  * @category Task
@@ -630,7 +655,8 @@ export type ChildTaskExecutionError = {
   index: number
   taskId: string
   executionId: string
-  error: DurableExecutionError
+  status: TaskExecutionStatusStorageValue
+  error: DurableExecutionErrorStorageValue
 }
 
 /**
@@ -639,16 +665,16 @@ export type ChildTaskExecutionError = {
  * @category Task
  */
 export type ChildTaskExecutionErrorStorageValue = {
-  index: number
   taskId: string
   executionId: string
+  status: TaskExecutionStatusStorageValue
   error: DurableExecutionErrorStorageValue
 }
 
 /**
  * A storage value for the status of a task.
  *
- * @category Storage
+ * @category Task
  */
 export type TaskExecutionStatusStorageValue =
   | 'ready'
@@ -662,6 +688,11 @@ export type TaskExecutionStatusStorageValue =
   | 'completed'
   | 'cancelled'
 
+/**
+ * The statuses of a task execution that are considered all.
+ *
+ * @category Task
+ */
 export const ALL_TASK_EXECUTION_STATUSES_STORAGE_VALUES = [
   'ready',
   'running',
@@ -674,12 +705,24 @@ export const ALL_TASK_EXECUTION_STATUSES_STORAGE_VALUES = [
   'completed',
   'cancelled',
 ] as Array<TaskExecutionStatusStorageValue>
+
+/**
+ * The statuses of a task execution that are considered active.
+ *
+ * @category Task
+ */
 export const ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_VALUES = [
   'ready',
   'running',
   'waiting_for_children_tasks',
   'waiting_for_finalize_task',
 ] as Array<TaskExecutionStatusStorageValue>
+
+/**
+ * The statuses of a task execution that are considered finished.
+ *
+ * @category Task
+ */
 export const FINISHED_TASK_EXECUTION_STATUSES_STORAGE_VALUES = [
   'failed',
   'timed_out',
@@ -714,7 +757,7 @@ export type TaskEnqueueOptions = {
  * const execution = await handle.getExecution()
  *
  * // Wait for the task execution to be finished and get it
- * const finishedExecution = await handle.waitAndGetExecution()
+ * const finishedExecution = await handle.waitAndGetFinishedExecution()
  * if (finishedExecution.status === 'completed') {
  *   // Do something with the result
  * } else if (finishedExecution.status === 'failed') {
@@ -758,12 +801,14 @@ export type TaskExecutionHandle<TOutput = unknown> = {
    * Wait for the task execution to be finished and get it.
    *
    * @param options - The options for waiting for the task execution.
+   * @param options.signal - The signal to cancel the waiting.
+   * @param options.pollingIntervalMs - The polling interval in milliseconds. Defaults to 1000ms.
    * @returns The task execution.
    */
   waitAndGetFinishedExecution: (options?: {
     signal?: CancelSignal | AbortSignal
     pollingIntervalMs?: number
-  }) => Promise<TaskFinishedExecution<TOutput>>
+  }) => Promise<FinishedTaskExecution<TOutput>>
   /**
    * Cancel the task execution.
    */

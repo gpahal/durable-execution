@@ -68,11 +68,11 @@ async function app() {
   // ... use the durable executor to enqueue functions and workflows
 }
 
-// Start the durable executor and run the app
-await Promise.all([
-  executor.start(), // Start the durable executor in the background
-  app(), // Run the app
-])
+// Start the durable executor background processes
+executor.startBackgroundProcesses()
+
+// Run the app
+await app()
 
 // Shutdown the durable executor when the app is done
 await executor.shutdown()
@@ -163,7 +163,7 @@ async function app() {
     uploadUrl: 'https://example.com/upload',
   })
   const uploadFileExecution = await uploadFileHandle.getExecution()
-  const uploadFileFinishedExecution = await uploadFileHandle.waitAndGetExecution()
+  const uploadFileFinishedExecution = await uploadFileHandle.waitAndGetFinishedExecution()
   await uploadFileHandle.cancel()
 
   console.log(uploadFileExecution)

@@ -35,16 +35,7 @@ async function buildDocs() {
       excludeProtected: false,
       excludeInternal: true,
       defaultCategory: 'Other',
-      categoryOrder: [
-        'Executor',
-        'Task',
-        'Storage',
-        'Cancel',
-        'Errors',
-        'Serializer',
-        'Logger',
-        'Other',
-      ],
+      categoryOrder: ['Executor', 'Task', 'Storage', 'Errors', 'Serializer', 'Logger', 'Other'],
       navigation: {
         includeCategories: true,
       },

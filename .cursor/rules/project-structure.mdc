@@ -6,7 +6,7 @@ alwaysApply: true
 - **packages**:
   - `durable-execution`: core durable task engine
   - `durable-execution-orpc-utils`: oRPC server/client utilities for remote task enqueue/get
-  - `durable-execution-storage-drizzle`: Drizzle ORM storage implementations (SQLite, Postgres, MySQL)
+  - `durable-execution-storage-drizzle`: Drizzle ORM storage impls (SQLite, Postgres)
   - `durable-execution-storage-test-utils`: shared storage test harness
 
 ### Key entry points
@@ -17,7 +17,7 @@ alwaysApply: true
   - [`durable-execution/src/task.ts`](mdc:durable-execution/src/task.ts): task types/contracts
   - [`durable-execution/src/storage.ts`](mdc:durable-execution/src/storage.ts): `Storage` interface and helpers
   - [`durable-execution/src/in-memory-storage.ts`](mdc:durable-execution/src/in-memory-storage.ts): in-memory impl
-  - [`durable-execution/src/errors.ts`](mdc:durable-execution/src/errors.ts), [`durable-execution/src/serializer.ts`](mdc:durable-execution/src/serializer.ts), [`durable-execution/src/logger.ts`](mdc:durable-execution/src/logger.ts)
+  - [`durable-execution/src/errors.ts`](mdc:durable-execution/src/errors.ts), [`serializer.ts`](mdc:durable-execution/src/serializer.ts), [`logger.ts`](mdc:durable-execution/src/logger.ts)
 
 - **oRPC utilities**:
   - [`durable-execution-orpc-utils/src/server.ts`](mdc:durable-execution-orpc-utils/src/server.ts): `createTasksRouter`, `convertClientProcedureToTask`
@@ -26,7 +26,6 @@ alwaysApply: true
 - **Drizzle storage**:
   - [`durable-execution-storage-drizzle/src/sqlite.ts`](mdc:durable-execution-storage-drizzle/src/sqlite.ts): SQLite table + storage
   - [`durable-execution-storage-drizzle/src/pg.ts`](mdc:durable-execution-storage-drizzle/src/pg.ts): Postgres table + storage
-  - [`durable-execution-storage-drizzle/src/mysql.ts`](mdc:durable-execution-storage-drizzle/src/mysql.ts): MySQL table + storage
   - [`durable-execution-storage-drizzle/src/common.ts`](mdc:durable-execution-storage-drizzle/src/common.ts): mapping helpers
 
 - **Test utils**:

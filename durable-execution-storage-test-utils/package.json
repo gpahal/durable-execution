@@ -1,19 +1,20 @@
 {
-  "name": "durable-execution-orpc-utils",
+  "name": "durable-execution-storage-test-utils",
   "version": "0.21.0",
-  "description": "oRPC utilities for durable-execution to create a separate server process for durable execution",
+  "description": "Test utilities for durable-execution storage implementations",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/gpahal/durable-execution.git",
-    "directory": "durable-execution-orpc-utils"
+    "directory": "durable-execution-storage-test-utils"
   },
   "homepage": "https://gpahal.github.io/durable-execution",
   "bugs": {
     "url": "https://github.com/gpahal/durable-execution/issues"
   },
   "keywords": [
+    "storage",
     "durable-execution",
     "durable-tasks",
     "durable-functions",
@@ -27,17 +28,13 @@
   "type": "module",
   "exports": {
     "./package.json": "./package.json",
-    "./server": {
-      "import": "./build/server.js",
-      "types": "./build/server.d.ts"
-    },
-    "./client": {
-      "import": "./build/client.js",
-      "types": "./build/client.d.ts"
+    ".": {
+      "import": "./build/index.js",
+      "types": "./build/index.d.ts"
     }
   },
-  "module": "./build/server.js",
-  "types": "./build/server.d.ts",
+  "module": "./build/index.js",
+  "types": "./build/index.d.ts",
   "files": [
     "package.json",
     "src",
@@ -48,23 +45,15 @@
     "clean": "premove build",
     "test": "vitest run",
     "test-coverage": "vitest run --coverage",
-    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/server.ts --entryPoints src/client.ts",
+    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/index.ts",
     "lint": "eslint .",
     "lint-fix": "eslint . --fix"
   },
   "peerDependencies": {
-    "@orpc/client": "^catalog:dev",
-    "@orpc/contract": "^catalog:dev",
-    "@orpc/server": "^catalog:dev",
     "durable-execution": "workspace:*"
   },
-  "dependencies": {
-    "@gpahal/std": "catalog:prod"
-  },
   "devDependencies": {
-    "@orpc/client": "catalog:dev",
-    "@orpc/contract": "catalog:dev",
-    "@orpc/server": "catalog:dev",
+    "@gpahal/std": "catalog:prod",
     "durable-execution": "workspace:*"
   }
 }

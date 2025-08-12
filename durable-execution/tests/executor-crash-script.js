@@ -24,7 +24,7 @@ async function main() {
     enableDebug: false,
     backgroundProcessIntraBatchSleepMs: 50,
   })
-  void executor.start()
+  executor.startBackgroundProcesses()
 
   try {
     const task = executor.task({

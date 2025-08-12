@@ -22,7 +22,7 @@ pnpm add durable-execution durable-execution-storage-drizzle drizzle-orm
 
 ## Features
 
-- Full support for PostgreSQL and SQLite
+- Full support for PostgreSQL, MySQL and SQLite
 - Transaction support for consistent state management
 - Type-safe schema definitions
 - Optimized indexes for performance
@@ -35,17 +35,22 @@ pnpm add durable-execution durable-execution-storage-drizzle drizzle-orm
 ```ts
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { DurableExecutor } from 'durable-execution'
-import { createTaskExecutionsPgTable, createPgStorage } from 'durable-execution-storage-drizzle'
+import {
+  createTaskExecutionsPgTable,
+  createFinishedChildTaskExecutionsPgTable,
+  createPgStorage,
+} from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
 const db = drizzle(process.env.DATABASE_URL!)
 
 // Create the schema - you can customize the table name by passing a string to the function
 const taskExecutionsTable = createTaskExecutionsPgTable()
+const finishedChildTaskExecutionsTable = createFinishedChildTaskExecutionsPgTable()
 // Export the table from your schema file
 
 // Create the storage instance
-const storage = createPgStorage(db, taskExecutionsTable)
+const storage = createPgStorage(db, taskExecutionsTable, finishedChildTaskExecutionsTable)
 
 // Create and use the executor
 const executor = new DurableExecutor(storage)
@@ -62,14 +67,70 @@ const task = executor.task({
 // Use the executor
 async function main() {
   const handle = await executor.enqueueTask(task, { name: 'World' })
-  const result = await handle.waitAndGetExecution()
+  const result = await handle.waitAndGetFinishedExecution()
   console.log(result.output) // "Hello, World!"
 }
 
-await Promise.all([
-  executor.start(),
-  main(),
-])
+// Start the durable executor background processes
+executor.startBackgroundProcesses()
+
+// Run main
+await main()
+
+await executor.shutdown()
+```
+
+### MySQL
+
+```ts
+import { drizzle } from 'drizzle-orm/mysql2'
+import { DurableExecutor } from 'durable-execution'
+import {
+  createTaskExecutionsMySqlTable,
+  createFinishedChildTaskExecutionsMySqlTable,
+  createMySqlStorage,
+} from 'durable-execution-storage-drizzle'
+
+// Create drizzle instance
+const db = drizzle(process.env.DATABASE_URL!)
+
+// Create the schema - you can customize the table name by passing a string to the function
+const taskExecutionsTable = createTaskExecutionsMySqlTable()
+const finishedChildTaskExecutionsTable = createFinishedChildTaskExecutionsMySqlTable()
+// Export the table from your schema file
+
+// Create the storage instance
+const storage = createMySqlStorage(
+  db,
+  taskExecutionsTable,
+  finishedChildTaskExecutionsTable,
+  (result) => result[0].affectedRows,
+)
+
+// Create and use the executor
+const executor = new DurableExecutor(storage)
+
+// Create a task
+const task = executor.task({
+  id: 'my-task',
+  timeoutMs: 30_000,
+  run: (ctx, input: { name: string }) => {
+    return `Hello, ${input.name}!`
+  },
+})
+
+// Use the executor
+async function main() {
+  const handle = await executor.enqueueTask(task, { name: 'World' })
+  const result = await handle.waitAndGetFinishedExecution()
+  console.log(result.output) // "Hello, World!"
+}
+
+// Start the durable executor background processes
+executor.startBackgroundProcesses()
+
+// Run main
+await main()
 
 await executor.shutdown()
 ```
@@ -79,17 +140,22 @@ await executor.shutdown()
 ```ts
 import { drizzle } from 'drizzle-orm/libsql'
 import { DurableExecutor } from 'durable-execution'
-import { createTaskExecutionsSQLiteTable, createSQLiteStorage } from 'durable-execution-storage-drizzle'
+import {
+  createTaskExecutionsSQLiteTable,
+  createFinishedChildTaskExecutionsSQLiteTable,
+  createSQLiteStorage,
+} from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
 const db = drizzle(process.env.DATABASE_URL!)
 
 // Create the table - you can customize the table name by passing a string to the function
 const taskExecutionsTable = createTaskExecutionsSQLiteTable()
+const finishedChildTaskExecutionsTable = createFinishedChildTaskExecutionsSQLiteTable()
 // Export the table from your schema file
 
 // Create the storage instance
-const storage = createSQLiteStorage(db, taskExecutionsTable)
+const storage = createSQLiteStorage(db, taskExecutionsTable, finishedChildTaskExecutionsTable)
 
 // Create and use the executor
 const executor = new DurableExecutor(storage)
@@ -106,14 +172,15 @@ const task = executor.task({
 // Use the executor
 async function main() {
   const handle = await executor.enqueueTask(task, { name: 'World' })
-  const result = await handle.waitAndGetExecution()
+  const result = await handle.waitAndGetFinishedExecution()
   console.log(result.output) // "Hello, World!"
 }
 
-await Promise.all([
-  executor.start(),
-  main(),
-])
+// Start the durable executor background processes
+executor.startBackgroundProcesses()
+
+// Run main
+await main()
 
 await executor.shutdown()
 ```

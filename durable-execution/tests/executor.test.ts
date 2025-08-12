@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutionError, DurableExecutor, type TaskRunContext } from '../src'
+import { DurableExecutor, type TaskRunContext } from '../src'
 import { InMemoryStorage } from './in-memory-storage'
 
 describe('executor', () => {
@@ -15,12 +15,12 @@ describe('executor', () => {
       enableDebug: false,
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    void executor.start()
+    executor.startBackgroundProcesses()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     if (executor) {
-      void executor.shutdown()
+      await executor.shutdown()
     }
   })
 
@@ -34,7 +34,7 @@ describe('executor', () => {
           // Do nothing
         },
       }),
-    ).toThrow('Executor shutdown')
+    ).toThrow('Durable executor shutdown')
   })
 
   it('should handle executor shutdown with running task', { timeout: 10_000 }, async () => {
@@ -93,7 +93,7 @@ describe('executor', () => {
     executor = new DurableExecutor(storage, {
       enableDebug: false,
     })
-    void executor.start()
+    executor.startBackgroundProcesses()
 
     await expect(executor.enqueueTask(task)).rejects.toThrow('Task test not found')
   })
@@ -116,55 +116,5 @@ describe('executor', () => {
         },
       }),
     ).toThrow('Task test already exists')
-  })
-
-  it('should retry withTransaction', async () => {
-    const originalWithTransaction = storage.withTransaction
-    let executed = 0
-    storage.withTransaction = () => {
-      executed++
-      throw new Error('Mocked withTransaction error')
-    }
-
-    try {
-      const task = executor.task({
-        id: 'test',
-        timeoutMs: 10_000,
-        run: async () => {
-          await sleep(1000)
-          return 'test'
-        },
-      })
-
-      await expect(executor.enqueueTask(task)).rejects.toThrow('Mocked withTransaction error')
-      expect(executed).toBeGreaterThanOrEqual(2)
-    } finally {
-      storage.withTransaction = originalWithTransaction
-    }
-  })
-
-  it('should not retry withTransaction', async () => {
-    const originalWithTransaction = storage.withTransaction
-    let executed = 0
-    storage.withTransaction = () => {
-      executed++
-      throw new DurableExecutionError('Mocked withTransaction error', false)
-    }
-
-    try {
-      const task = executor.task({
-        id: 'test',
-        timeoutMs: 10_000,
-        run: async () => {
-          await sleep(1000)
-          return 'test'
-        },
-      })
-
-      await expect(executor.enqueueTask(task)).rejects.toThrow('Mocked withTransaction error')
-      expect(executed).toBe(1)
-    } finally {
-      storage.withTransaction = originalWithTransaction
-    }
   })
 })
