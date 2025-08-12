@@ -1280,74 +1280,73 @@ export class DurableExecutor {
 
     const availableLimit = this.maxConcurrentTaskExecutions - currConcurrentTaskExecutions
     const batchLimit = Math.min(this.maxTasksPerBatch, availableLimit)
-    return await this.storage.withTransaction(async (tx) => {
-      const now = new Date()
-      const executions = await tx.updateTaskExecutionsReturningTaskExecutions(
-        {
-          type: 'by_start_at_less_than',
-          statuses: ['ready'],
-          startAtLessThan: now,
-        },
-        { status: 'running', startedAt: now, updatedAt: now },
-        batchLimit,
-      )
+    const now = new Date()
+    const expiresAt = new Date(now.getTime() + this.expireMs * 2)
+    const executions = await this.storage.updateTaskExecutionsReturningTaskExecutions(
+      {
+        type: 'by_start_at_less_than',
+        statuses: ['ready'],
+        startAtLessThan: now,
+      },
+      { status: 'running', expiresAt, startedAt: now, updatedAt: now },
+      batchLimit,
+    )
 
-      this.logger.debug(`Processing ${executions.length} ready task executions`)
-      if (executions.length === 0) {
-        return false
-      }
+    this.logger.debug(`Processing ${executions.length} ready task executions`)
+    if (executions.length === 0) {
+      return false
+    }
 
-      const processExecution = async (
-        execution: TaskExecutionStorageValue,
-      ): Promise<[TaskInternal, TaskExecutionStorageValue] | undefined> => {
-        execution.status = 'running'
-        execution.startedAt = now
-        execution.updatedAt = now
+    const processExecution = async (
+      execution: TaskExecutionStorageValue,
+    ): Promise<[TaskInternal, TaskExecutionStorageValue] | undefined> => {
+      execution.status = 'running'
+      execution.startedAt = now
+      execution.updatedAt = now
 
-        const taskInternal = this.taskInternalsMap.get(execution.taskId)
-        if (!taskInternal) {
-          // This will only happen if the task is not registered in this executor.
-          // Mark the execution as failed.
-          await tx.updateAllTaskExecutions(
-            {
-              type: 'by_execution_ids',
-              executionIds: [execution.executionId],
-              statuses: ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
-            },
-            {
-              error: convertDurableExecutionErrorToStorageValue(
-                new DurableExecutionNotFoundError('Task not found'),
-              ),
-              status: 'failed',
-              finishedAt: now,
-              updatedAt: now,
-            },
-          )
-          return undefined
-        }
-
-        const expireMs = execution.timeoutMs + this.expireMs
-        const expiresAt = new Date(now.getTime() + expireMs)
-        await tx.updateAllTaskExecutions(
-          { type: 'by_execution_ids', executionIds: [execution.executionId] },
-          { expiresAt, updatedAt: now },
+      const taskInternal = this.taskInternalsMap.get(execution.taskId)
+      if (!taskInternal) {
+        // This will only happen if the task is not registered in this executor.
+        // Mark the execution as failed.
+        await this.storage.updateAllTaskExecutions(
+          {
+            type: 'by_execution_ids',
+            executionIds: [execution.executionId],
+            statuses: ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
+          },
+          {
+            error: convertDurableExecutionErrorToStorageValue(
+              new DurableExecutionNotFoundError('Task not found'),
+            ),
+            status: 'failed',
+            finishedAt: now,
+            updatedAt: now,
+          },
         )
-        execution.expiresAt = expiresAt
-        return [taskInternal, execution]
+        return undefined
       }
 
-      const toRunExecutions = await Promise.all(
-        executions.map((execution) => processExecution(execution)),
+      const expireMs = execution.timeoutMs + this.expireMs
+      const expiresAt = new Date(now.getTime() + expireMs)
+      await this.storage.updateAllTaskExecutions(
+        { type: 'by_execution_ids', executionIds: [execution.executionId] },
+        { expiresAt, updatedAt: now },
       )
+      execution.expiresAt = expiresAt
+      return [taskInternal, execution]
+    }
 
-      for (const toRunExecution of toRunExecutions) {
-        if (toRunExecution) {
-          this.runTaskExecutionWithCancelSignal(toRunExecution[0], toRunExecution[1])
-        }
+    const toRunExecutions = await Promise.all(
+      executions.map((execution) => processExecution(execution)),
+    )
+
+    for (const toRunExecution of toRunExecutions) {
+      if (toRunExecution) {
+        this.runTaskExecutionWithCancelSignal(toRunExecution[0], toRunExecution[1])
       }
+    }
 
-      return true
-    })
+    return true
   }
 
   /**
@@ -1465,8 +1464,8 @@ export class DurableExecutor {
           const retryOptions = finalizeTaskTaskInternal.getRetryOptions()
           const sleepMsBeforeRun = finalizeTaskTaskInternal.getSleepMsBeforeRun()
           const timeoutMs = finalizeTaskTaskInternal.getTimeoutMs()
-          await this.storage.withTransaction(async (tx) => {
-            await tx.insertTaskExecutions([
+          await this.storage.insertTaskExecutionsAndUpdateAllTaskExecutions(
+            [
               createTaskExecutionStorageValue({
                 now,
                 rootTaskExecution: execution.rootTaskExecution ?? {
@@ -1485,27 +1484,24 @@ export class DurableExecutor {
                 timeoutMs,
                 runInput: this.serializer.serialize(runInput),
               }),
-            ])
-
-            await tx.updateAllTaskExecutions(
-              {
-                type: 'by_execution_ids',
-                executionIds: [execution.executionId],
-                statuses: ['running'],
+            ],
+            {
+              type: 'by_execution_ids',
+              executionIds: [execution.executionId],
+              statuses: ['running'],
+            },
+            {
+              runOutput: runOutputSerialized,
+              childrenTaskExecutions: [],
+              finalizeTaskExecution: {
+                taskId: finalizeTaskTaskInternal.id,
+                executionId,
               },
-              {
-                runOutput: runOutputSerialized,
-                childrenTaskExecutions: [],
-                finalizeTaskExecution: {
-                  taskId: finalizeTaskTaskInternal.id,
-                  executionId,
-                },
-                unsetError: true,
-                status: 'waiting_for_finalize_task',
-                updatedAt: now,
-              },
-            )
-          })
+              unsetError: true,
+              status: 'waiting_for_finalize_task',
+              updatedAt: now,
+            },
+          )
         } else {
           await this.storage.updateAllTaskExecutions(
             {
@@ -1568,24 +1564,21 @@ export class DurableExecutor {
           })
         }
 
-        await this.storage.withTransaction(async (tx) => {
-          await tx.insertTaskExecutions(childrenTaskExecutionsStorageValues)
-
-          await tx.updateAllTaskExecutions(
-            {
-              type: 'by_execution_ids',
-              executionIds: [execution.executionId],
-              statuses: ['running'],
-            },
-            {
-              runOutput: runOutputSerialized,
-              childrenTaskExecutions,
-              unsetError: true,
-              status: 'waiting_for_children_tasks',
-              updatedAt: now,
-            },
-          )
-        })
+        await this.storage.insertTaskExecutionsAndUpdateAllTaskExecutions(
+          childrenTaskExecutionsStorageValues,
+          {
+            type: 'by_execution_ids',
+            executionIds: [execution.executionId],
+            statuses: ['running'],
+          },
+          {
+            runOutput: runOutputSerialized,
+            childrenTaskExecutions,
+            unsetError: true,
+            status: 'waiting_for_children_tasks',
+            updatedAt: now,
+          },
+        )
       }
     } catch (error) {
       const durableExecutionError =

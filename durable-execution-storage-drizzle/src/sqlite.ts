@@ -184,6 +184,16 @@ class SQLiteStorage<
       return await tx.updateAllTaskExecutions(where, update)
     })
   }
+
+  async insertTaskExecutionsAndUpdateAllTaskExecutions(
+    executions: Array<TaskExecutionStorageValue>,
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+  ): Promise<void> {
+    await this.withTransaction(async (tx) => {
+      await tx.insertTaskExecutionsAndUpdateAllTaskExecutions(executions, where, update)
+    })
+  }
 }
 
 class SQLiteStorageTx<
@@ -250,6 +260,15 @@ class SQLiteStorageTx<
       .where(buildWhereCondition(this.table, where))
       .returning({ executionId: this.table.executionId })
     return rows.length
+  }
+
+  async insertTaskExecutionsAndUpdateAllTaskExecutions(
+    executions: Array<TaskExecutionStorageValue>,
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+  ): Promise<void> {
+    await this.insertTaskExecutions(executions)
+    await this.updateAllTaskExecutions(where, update)
   }
 }
 

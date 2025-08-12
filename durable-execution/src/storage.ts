@@ -77,6 +77,18 @@ export type StorageTx = {
     where: TaskExecutionStorageWhere,
     update: TaskExecutionStorageUpdate,
   ) => number | Promise<number>
+  /**
+   * Insert task executions and update all task executions.
+   *
+   * @param executions - The task executions to insert.
+   * @param where - The where clause to filter the task executions.
+   * @param update - The update object.
+   */
+  insertTaskExecutionsAndUpdateAllTaskExecutions: (
+    executions: Array<TaskExecutionStorageValue>,
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+  ) => void | Promise<void>
 }
 
 export const zStorageMaxRetryAttempts = z
@@ -226,6 +238,19 @@ export class StorageInternal implements Storage {
       maxRetryAttempts,
     )
   }
+
+  async insertTaskExecutionsAndUpdateAllTaskExecutions(
+    executions: Array<TaskExecutionStorageValue>,
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+    maxRetryAttempts?: number,
+  ): Promise<void> {
+    return await this.retry(
+      'insertTaskExecutionsAndUpdateAllTaskExecutions',
+      () => this.storage.insertTaskExecutionsAndUpdateAllTaskExecutions(executions, where, update),
+      maxRetryAttempts,
+    )
+  }
 }
 
 export class StorageTxInternal implements StorageTx {
@@ -290,10 +315,10 @@ export class StorageTxInternal implements StorageTx {
 
       const execution = executions[0]!
       const update = updateFn(execution)
-      const updatedCount = await this.tx.updateAllTaskExecutions(
+      const isUpdated = await this.updateAllTaskExecutions(
         {
           type: 'by_execution_ids',
-          executionIds: [execution.executionId],
+          executionIds: [executionId],
           version: execution.version,
         },
         {
@@ -301,7 +326,7 @@ export class StorageTxInternal implements StorageTx {
           version: execution.version + 1,
         },
       )
-      if (updatedCount > 0) {
+      if (isUpdated) {
         break
       }
 
@@ -312,6 +337,14 @@ export class StorageTxInternal implements StorageTx {
         )
       }
     }
+  }
+
+  async insertTaskExecutionsAndUpdateAllTaskExecutions(
+    executions: Array<TaskExecutionStorageValue>,
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+  ): Promise<void> {
+    return await this.tx.insertTaskExecutionsAndUpdateAllTaskExecutions(executions, where, update)
   }
 }
 
@@ -908,6 +941,16 @@ export class InMemoryStorage implements Storage {
     })
   }
 
+  async insertTaskExecutionsAndUpdateAllTaskExecutions(
+    executions: Array<TaskExecutionStorageValue>,
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+  ): Promise<void> {
+    return await this.withTransaction(async (tx) => {
+      await tx.insertTaskExecutionsAndUpdateAllTaskExecutions(executions, where, update)
+    })
+  }
+
   async save(saveFn: (s: string) => Promise<void>): Promise<void> {
     await saveFn(JSON.stringify(this.taskExecutions, null, 2))
   }
@@ -998,6 +1041,15 @@ export class InMemoryStorageTx implements StorageTx {
       updateTaskExecution(execution, update)
     }
     return executions.length
+  }
+
+  insertTaskExecutionsAndUpdateAllTaskExecutions(
+    executions: Array<TaskExecutionStorageValue>,
+    where: TaskExecutionStorageWhere,
+    update: TaskExecutionStorageUpdate,
+  ): void {
+    this.insertTaskExecutions(executions)
+    this.updateAllTaskExecutions(where, update)
   }
 }
 
