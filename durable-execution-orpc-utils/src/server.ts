@@ -19,27 +19,16 @@ import {
 import {
   DurableExecutionError,
   DurableExecutionNotFoundError,
+  type AnyTasks,
   type CommonTaskOptions,
   type DurableExecutor,
+  type InferTaskInput,
   type Task,
   type TaskEnqueueOptions,
   type TaskExecution,
 } from 'durable-execution'
 
 import { getErrorMessage } from '@gpahal/std/errors'
-
-/**
- * A record of tasks. This type signals to the client which tasks are available to be enqueued.
- *
- * @example
- * ```ts
- * const tasks = {
- *   task1: task1,
- *   task2: task2,
- * }
- * ```
- */
-export type AnyTasks = Record<string, Task<unknown, unknown>>
 
 function createEnqueueTaskProcedure<
   TInitialContext extends Context,
@@ -54,9 +43,11 @@ function createEnqueueTaskProcedure<
     TErrorMap,
     TMeta
   >,
+  TTasks extends AnyTasks,
 >(
   osBuilder: TBuilder,
   executor: DurableExecutor,
+  tasks: TTasks,
 ): DecoratedProcedure<
   TInitialContext,
   TCurrentContext,
@@ -86,8 +77,19 @@ function createEnqueueTaskProcedure<
     )
     .output(type<string>())
     .handler(async ({ input }) => {
+      const task = tasks[input.taskId as keyof TTasks]
+      if (!task) {
+        throw new ORPCError('NOT_FOUND', {
+          message: `Task ${input.taskId} not found`,
+        })
+      }
+
       try {
-        const handle = await executor.enqueueTask({ id: input.taskId }, input.input, input.options)
+        const handle = await executor.enqueueTask(
+          task,
+          input.input as InferTaskInput<typeof task>,
+          input.options,
+        )
         return handle.getExecutionId()
       } catch (error) {
         if (error instanceof DurableExecutionError) {
@@ -122,9 +124,11 @@ function createGetTaskExecutionProcedure<
     TErrorMap,
     TMeta
   >,
+  TTasks extends AnyTasks,
 >(
   osBuilder: TBuilder,
   executor: DurableExecutor,
+  tasks: TTasks,
 ): DecoratedProcedure<
   TInitialContext,
   TCurrentContext,
@@ -151,8 +155,15 @@ function createGetTaskExecutionProcedure<
     )
     .output(type<TaskExecution>())
     .handler(async ({ input }) => {
+      const task = tasks[input.taskId as keyof TTasks]
+      if (!task) {
+        throw new ORPCError('NOT_FOUND', {
+          message: `Task ${input.taskId} not found`,
+        })
+      }
+
       try {
-        const handle = await executor.getTaskHandle({ id: input.taskId }, input.executionId)
+        const handle = await executor.getTaskHandle(task, input.executionId)
         return await handle.getExecution()
       } catch (error) {
         if (error instanceof DurableExecutionError) {
@@ -181,6 +192,7 @@ function createGetTaskExecutionProcedure<
  *
  * @param osBuilder - The ORPC builder to use.
  * @param executor - The durable executor to use.
+ * @param tasks - The tasks to use.
  * @returns A router for task procedures.
  */
 export function createTasksRouter<
@@ -196,9 +208,11 @@ export function createTasksRouter<
     TErrorMap,
     TMeta
   >,
+  TTasks extends AnyTasks,
 >(
   osBuilder: TBuilder,
   executor: DurableExecutor,
+  tasks: TTasks,
 ): {
   enqueueTask: DecoratedProcedure<
     TInitialContext,
@@ -221,8 +235,8 @@ export function createTasksRouter<
   >
 } {
   return {
-    enqueueTask: createEnqueueTaskProcedure(osBuilder, executor),
-    getTaskExecution: createGetTaskExecutionProcedure(osBuilder, executor),
+    enqueueTask: createEnqueueTaskProcedure(osBuilder, executor, tasks),
+    getTaskExecution: createGetTaskExecutionProcedure(osBuilder, executor, tasks),
   }
 }
 

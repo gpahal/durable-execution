@@ -32,6 +32,7 @@ pnpm -F durable-execution-storage-test-utils test
 
 # Run specific test files
 pnpm vitest run tests/executor.test.ts           # Core executor tests
+pnpm vitest run tests/executor-client.test.ts    # Client tests
 pnpm vitest run tests/parent-task.test.ts        # Parent-child task tests
 pnpm vitest run tests/concurrent-scenarios.test.ts # Concurrency tests
 ```
@@ -63,25 +64,30 @@ This is a monorepo containing a durable execution engine for running resilient t
 **Core Package - `durable-execution/`**
 
 - Main durable execution engine and task orchestration
-- Exports: `DurableExecutor`, task types, storage interface, error types
-- Key files: `executor.ts`, `task.ts`, `storage.ts`, `in-memory-storage.ts`
+- Exports: `DurableExecutor`, `DurableExecutorClient`, task types, storage interface, error types
+- Key files: `executor.ts`, `executor-client.ts`, `task.ts`, `storage.ts`, `in-memory-storage.ts`
 
 **Storage Implementation - `durable-execution-storage-drizzle/`**
 
 - Drizzle ORM-based storage for PostgreSQL, MySQL, and SQLite
 - Production-ready storage implementations with proper indexing and transactions
 - Exports: `createPgStorage()`, `createMySqlStorage()`, `createSQLiteStorage()`, table schema creators
+- PostgreSQL/MySQL use `FOR UPDATE SKIP LOCKED` for row locking
+- SQLite uses mutex-based transaction serialization
 
 **oRPC Integration - `durable-execution-orpc-utils/`**
 
 - Utilities for running durable executor as a separate server process
 - Type-safe client-server communication via oRPC
-- Exports: server router creation, client handles, procedure conversion
+- Split exports: `./server` and `./client` entry points
+- Server: `createTasksRouter()`, `convertClientProcedureToTask()`
+- Client: `TasksRouterClient<>`, `createTaskClientHandles()`
 
 **Test Utilities - `durable-execution-storage-test-utils/`**
 
 - Comprehensive test suite for validating storage implementations
 - Exports: `runStorageTest()` function and test utilities
+- Used by storage packages to ensure consistent behavior
 
 ### Core Architecture Patterns
 
@@ -92,6 +98,12 @@ This is a monorepo containing a durable execution engine for running resilient t
 3. Enqueue tasks via `enqueueTask(task, input)`
 4. Manage task execution through handles
 5. Call `shutdown()` when done
+
+#### DurableExecutorClient
+
+- Lightweight client for enqueuing tasks without background processes
+- Shares the same storage as DurableExecutor
+- Useful for distributed architectures where task submission and execution are separated
 
 #### Task Types and Execution Flow
 
@@ -132,13 +144,13 @@ Each package contains comprehensive tests in `tests/*.test.ts`:
 - oRPC integration testing with mock procedures
 - Concurrent execution and failure scenario testing
 
-Run package-specific tests with:
+Key test files:
 
-```bash
-pnpm vitest run tests/executor.test.ts           # Core executor tests
-pnpm vitest run tests/parent-task.test.ts        # Parent-child task tests
-pnpm vitest run tests/concurrent-scenarios.test.ts # Concurrency tests
-```
+- `executor.test.ts` - Core executor functionality
+- `executor-client.test.ts` - DurableExecutorClient functionality
+- `parent-task.test.ts` - Parent-child task relationships
+- `concurrent-scenarios.test.ts` - Concurrency and race conditions
+- `executor-crash.test.ts` - Process failure resilience
 
 ## Development Workflow
 

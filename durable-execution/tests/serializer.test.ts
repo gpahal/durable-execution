@@ -1,7 +1,8 @@
-import { WrappedSerializer } from 'src/serializer'
 import { describe, it } from 'vitest'
 
-describe('wrappedSerializer', () => {
+import { createSuperjsonSerializer, DurableExecutionError, WrappedSerializer } from '../src'
+
+describe('serializer', () => {
   it('should handle wrapper serializer errors', () => {
     let executed = 0
     const serializer = new WrappedSerializer({
@@ -30,5 +31,94 @@ describe('wrappedSerializer', () => {
       'Error deserializing value: deserialize error',
     )
     expect(executed).toBe(4)
+  })
+
+  it('should create superjson serializer', () => {
+    const serializer = createSuperjsonSerializer()
+
+    const value = { test: 'value', number: 123, date: new Date() }
+    const serialized = serializer.serialize(value)
+    const deserialized = serializer.deserialize(serialized)
+
+    expect(deserialized).toEqual(value)
+  })
+
+  it('should handle size limit in WrappedSerializer', () => {
+    const serializer = new WrappedSerializer(createSuperjsonSerializer())
+
+    const largeValue = 'x'.repeat(1000)
+
+    expect(() => {
+      serializer.serialize(largeValue, 100)
+    }).toThrow(DurableExecutionError)
+
+    expect(() => {
+      serializer.serialize(largeValue, 100)
+    }).toThrow('exceeds maximum allowed size')
+  })
+
+  it('should handle serialization errors in WrappedSerializer', () => {
+    const serializer = new WrappedSerializer({
+      serialize: () => {
+        throw new Error('Serialization failed')
+      },
+      deserialize: () => {
+        throw new Error('Deserialization failed')
+      },
+    })
+
+    expect(() => {
+      serializer.serialize('test')
+    }).toThrow(DurableExecutionError)
+
+    expect(() => {
+      serializer.serialize('test')
+    }).toThrow('Error serializing value')
+
+    expect(() => {
+      serializer.deserialize('test')
+    }).toThrow(DurableExecutionError)
+
+    expect(() => {
+      serializer.deserialize('test')
+    }).toThrow('Error deserializing value')
+  })
+
+  it('should preserve DurableExecutionError in WrappedSerializer', () => {
+    const originalError = new DurableExecutionError('Original error', false)
+
+    const serializer = new WrappedSerializer({
+      serialize: () => {
+        throw originalError
+      },
+      deserialize: () => {
+        throw originalError
+      },
+    })
+
+    expect(() => {
+      serializer.serialize('test')
+    }).toThrow(originalError)
+
+    expect(() => {
+      serializer.deserialize('test')
+    }).toThrow(DurableExecutionError)
+
+    try {
+      serializer.deserialize('test')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DurableExecutionError)
+      expect((error as Error).message).toContain('Original error')
+    }
+  })
+
+  it('should handle undefined max size in WrappedSerializer', () => {
+    const serializer = new WrappedSerializer(createSuperjsonSerializer())
+
+    const value = 'x'.repeat(1000)
+    const result = serializer.serialize(value)
+
+    expect(result).toBeDefined()
+    expect(result.length).toBeGreaterThan(1000)
   })
 })

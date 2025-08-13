@@ -1,15 +1,34 @@
 import { z } from 'zod'
 
-import { createTimeoutCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
+import {
+  createCancelSignal,
+  createTimeoutCancelSignal,
+  type CancelSignal,
+} from '@gpahal/std/cancel'
+import { sleep } from '@gpahal/std/promises'
 
 import { createCancellablePromiseCustom } from './cancel'
-import { DurableExecutionError, DurableExecutionTimedOutError } from './errors'
 import {
+  convertDurableExecutionErrorToStorageValue,
+  DurableExecutionCancelledError,
+  DurableExecutionError,
+  DurableExecutionNotFoundError,
+  DurableExecutionTimedOutError,
+} from './errors'
+import type { Logger } from './logger'
+import type { WrappedSerializer } from './serializer'
+import { convertTaskExecutionStorageValueToTaskExecution, type StorageInternal } from './storage'
+import {
+  ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
+  FINISHED_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
   isFinalizeTaskOptionsParentTaskOptions,
   isFinalizeTaskOptionsTaskOptions,
   type ChildTask,
+  type CommonTaskOptions,
+  type FinishedTaskExecution,
   type ParentTaskOptions,
   type TaskEnqueueOptions,
+  type TaskExecutionHandle,
   type TaskOptions,
   type TaskRetryOptions,
   type TaskRunContext,
@@ -168,8 +187,8 @@ const zTimeoutMs = z.number().int().min(1).max(3_600_000) // 1 hour
 export class TaskInternal {
   readonly id: string
   readonly retryOptions: TaskRetryOptions
-  private readonly sleepMsBeforeRun: number
-  private readonly timeoutMs: number
+  readonly sleepMsBeforeRun: number
+  readonly timeoutMs: number
   private readonly validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
   readonly disableChildrenTaskExecutionsOutputsInOutput: boolean
   private readonly runParent: (
@@ -211,34 +230,10 @@ export class TaskInternal {
     taskInternalsMap: Map<string, TaskInternal>,
     taskOptions: TaskOptionsInternal,
   ): TaskInternal {
-    validateTaskId(taskOptions.id)
+    const validatedCommonTaskOptions = validateCommonTaskOptions(taskOptions)
     if (taskInternalsMap.has(taskOptions.id)) {
       throw new DurableExecutionError(
         `Task ${taskOptions.id} already exists. Use unique ids for tasks`,
-        false,
-      )
-    }
-
-    const parsedRetryOptions = zRetryOptions.safeParse(taskOptions.retryOptions)
-    if (!parsedRetryOptions.success) {
-      throw new DurableExecutionError(
-        `Invalid retry options for task ${taskOptions.id}: ${z.prettifyError(parsedRetryOptions.error)}`,
-        false,
-      )
-    }
-
-    const parsedSleepMsBeforeRun = zSleepMsBeforeRun.safeParse(taskOptions.sleepMsBeforeRun)
-    if (!parsedSleepMsBeforeRun.success) {
-      throw new DurableExecutionError(
-        `Invalid sleep ms before run for task ${taskOptions.id}: ${z.prettifyError(parsedSleepMsBeforeRun.error)}`,
-        false,
-      )
-    }
-
-    const parsedTimeoutMs = zTimeoutMs.safeParse(taskOptions.timeoutMs)
-    if (!parsedTimeoutMs.success) {
-      throw new DurableExecutionError(
-        `Invalid timeout value for task ${taskOptions.id}: ${z.prettifyError(parsedTimeoutMs.error)}`,
         false,
       )
     }
@@ -249,9 +244,9 @@ export class TaskInternal {
 
     const taskInternal = new TaskInternal(
       taskOptions.id,
-      parsedRetryOptions.data,
-      parsedSleepMsBeforeRun.data,
-      parsedTimeoutMs.data,
+      validatedCommonTaskOptions.retryOptions,
+      validatedCommonTaskOptions.sleepMsBeforeRun,
+      validatedCommonTaskOptions.timeoutMs,
       taskOptions.validateInputFn,
       taskOptions.disableChildrenTaskExecutionsOutputsInOutput,
       taskOptions.runParent,
@@ -295,67 +290,6 @@ export class TaskInternal {
     )
   }
 
-  validateEnqueueOptions(options?: TaskEnqueueOptions): TaskEnqueueOptions {
-    const validatedOptions: TaskEnqueueOptions = {}
-
-    if (options?.retryOptions) {
-      const parsedRetryOptions = zRetryOptions.safeParse(options.retryOptions)
-      if (!parsedRetryOptions.success) {
-        throw new DurableExecutionError(
-          `Invalid retry options for task ${this.id}: ${z.prettifyError(parsedRetryOptions.error)}`,
-          false,
-        )
-      }
-
-      validatedOptions.retryOptions = parsedRetryOptions.data
-    }
-
-    if (options?.sleepMsBeforeRun != null) {
-      const parsedSleepMsBeforeRun = zSleepMsBeforeRun.safeParse(options.sleepMsBeforeRun)
-      if (!parsedSleepMsBeforeRun.success) {
-        throw new DurableExecutionError(
-          `Invalid sleep ms before run for task ${this.id}: ${z.prettifyError(parsedSleepMsBeforeRun.error)}`,
-          false,
-        )
-      }
-
-      validatedOptions.sleepMsBeforeRun = parsedSleepMsBeforeRun.data
-    }
-
-    if (options?.timeoutMs != null) {
-      const parsedTimeoutMs = zTimeoutMs.safeParse(options.timeoutMs)
-      if (!parsedTimeoutMs.success) {
-        throw new DurableExecutionError(
-          `Invalid timeout value for task ${this.id}: ${z.prettifyError(parsedTimeoutMs.error)}`,
-          false,
-        )
-      }
-
-      validatedOptions.timeoutMs = parsedTimeoutMs.data
-    }
-
-    return validatedOptions
-  }
-
-  getRetryOptions(options?: TaskEnqueueOptions): TaskRetryOptions {
-    return options?.retryOptions != null ? options.retryOptions : this.retryOptions
-  }
-
-  getSleepMsBeforeRun(options?: TaskEnqueueOptions): number {
-    return options?.sleepMsBeforeRun != null ? options.sleepMsBeforeRun : this.sleepMsBeforeRun
-  }
-
-  getTimeoutMs(options?: TaskEnqueueOptions): number {
-    return options?.timeoutMs != null ? options.timeoutMs : this.timeoutMs
-  }
-
-  async validateInput(input: unknown): Promise<unknown> {
-    if (!this.validateInputFn) {
-      return input
-    }
-    return this.validateInputFn(this.id, input)
-  }
-
   async runParentWithTimeoutAndCancellation(
     ctx: TaskRunContext,
     input: unknown,
@@ -365,6 +299,10 @@ export class TaskInternal {
     output: unknown
     childrenTasks: Array<ChildTask>
   }> {
+    if (this.validateInputFn) {
+      input = await this.validateInputFn(this.id, input)
+    }
+
     const timeoutCancelSignal = createTimeoutCancelSignal(timeoutMs)
     return await createCancellablePromiseCustom(
       createCancellablePromiseCustom(
@@ -374,6 +312,198 @@ export class TaskInternal {
       ),
       cancelSignal,
     )
+  }
+}
+
+export function getTaskHandleInternal<TOutput>(
+  storage: StorageInternal,
+  serializer: WrappedSerializer,
+  logger: Logger,
+  taskId: string,
+  executionId: string,
+): TaskExecutionHandle<TOutput> {
+  return {
+    getTaskId: () => taskId,
+    getExecutionId: () => executionId,
+    getExecution: async () => {
+      const execution = await storage.getTaskExecutionById(executionId)
+      if (!execution) {
+        throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
+      }
+      return convertTaskExecutionStorageValueToTaskExecution(execution, serializer)
+    },
+    waitAndGetFinishedExecution: async ({
+      signal,
+      pollingIntervalMs,
+    }: {
+      signal?: CancelSignal | AbortSignal
+      pollingIntervalMs?: number
+    } = {}) => {
+      const cancelSignal =
+        signal instanceof AbortSignal ? createCancelSignal({ abortSignal: signal })[0] : signal
+
+      const resolvedPollingIntervalMs =
+        pollingIntervalMs && pollingIntervalMs > 0 ? pollingIntervalMs : 1000
+      let isFirstIteration = true
+      while (true) {
+        if (cancelSignal?.isCancelled()) {
+          throw new DurableExecutionCancelledError()
+        }
+
+        if (isFirstIteration) {
+          isFirstIteration = false
+        } else {
+          await createCancellablePromiseCustom(sleep(resolvedPollingIntervalMs), cancelSignal)
+
+          if (cancelSignal?.isCancelled()) {
+            throw new DurableExecutionCancelledError()
+          }
+        }
+
+        const execution = await storage.getTaskExecutionById(executionId)
+        if (!execution) {
+          throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
+        }
+
+        if (FINISHED_TASK_EXECUTION_STATUSES_STORAGE_VALUES.includes(execution.status)) {
+          return convertTaskExecutionStorageValueToTaskExecution(
+            execution,
+            serializer,
+          ) as FinishedTaskExecution<TOutput>
+        } else {
+          logger.debug(
+            `Waiting for task ${executionId} to be finished. Status: ${execution.status}`,
+          )
+        }
+      }
+    },
+    cancel: async () => {
+      const now = new Date()
+      await storage.updateAllTaskExecutions(
+        {
+          type: 'by_execution_ids',
+          executionIds: [executionId],
+          statuses: ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
+        },
+        {
+          status: 'cancelled',
+          error: convertDurableExecutionErrorToStorageValue(new DurableExecutionCancelledError()),
+          needsPromiseCancellation: true,
+          finishedAt: now,
+          updatedAt: now,
+        },
+      )
+      logger.debug(`Cancelled task execution ${executionId}`)
+    },
+  }
+}
+
+export function validateCommonTaskOptions(taskOptions: CommonTaskOptions): {
+  retryOptions: TaskRetryOptions
+  sleepMsBeforeRun: number
+  timeoutMs: number
+} {
+  validateTaskId(taskOptions.id)
+
+  const parsedRetryOptions = zRetryOptions.safeParse(taskOptions.retryOptions)
+  if (!parsedRetryOptions.success) {
+    throw new DurableExecutionError(
+      `Invalid retry options for task ${taskOptions.id}: ${z.prettifyError(parsedRetryOptions.error)}`,
+      false,
+    )
+  }
+
+  const parsedSleepMsBeforeRun = zSleepMsBeforeRun.safeParse(taskOptions.sleepMsBeforeRun)
+  if (!parsedSleepMsBeforeRun.success) {
+    throw new DurableExecutionError(
+      `Invalid sleep ms before run for task ${taskOptions.id}: ${z.prettifyError(parsedSleepMsBeforeRun.error)}`,
+      false,
+    )
+  }
+
+  const parsedTimeoutMs = zTimeoutMs.safeParse(taskOptions.timeoutMs)
+  if (!parsedTimeoutMs.success) {
+    throw new DurableExecutionError(
+      `Invalid timeout value for task ${taskOptions.id}: ${z.prettifyError(parsedTimeoutMs.error)}`,
+      false,
+    )
+  }
+
+  return {
+    retryOptions: parsedRetryOptions.data,
+    sleepMsBeforeRun: parsedSleepMsBeforeRun.data,
+    timeoutMs: parsedTimeoutMs.data,
+  }
+}
+
+export function validateEnqueueOptions(
+  taskId: string,
+  options?: TaskEnqueueOptions,
+): TaskEnqueueOptions {
+  const validatedOptions: TaskEnqueueOptions = {}
+
+  if (options?.retryOptions) {
+    const parsedRetryOptions = zRetryOptions.safeParse(options.retryOptions)
+    if (!parsedRetryOptions.success) {
+      throw new DurableExecutionError(
+        `Invalid retry options for task ${taskId}: ${z.prettifyError(parsedRetryOptions.error)}`,
+        false,
+      )
+    }
+
+    validatedOptions.retryOptions = parsedRetryOptions.data
+  }
+
+  if (options?.sleepMsBeforeRun != null) {
+    const parsedSleepMsBeforeRun = zSleepMsBeforeRun.safeParse(options.sleepMsBeforeRun)
+    if (!parsedSleepMsBeforeRun.success) {
+      throw new DurableExecutionError(
+        `Invalid sleep ms before run for task ${taskId}: ${z.prettifyError(parsedSleepMsBeforeRun.error)}`,
+        false,
+      )
+    }
+
+    validatedOptions.sleepMsBeforeRun = parsedSleepMsBeforeRun.data
+  }
+
+  if (options?.timeoutMs != null) {
+    const parsedTimeoutMs = zTimeoutMs.safeParse(options.timeoutMs)
+    if (!parsedTimeoutMs.success) {
+      throw new DurableExecutionError(
+        `Invalid timeout value for task ${taskId}: ${z.prettifyError(parsedTimeoutMs.error)}`,
+        false,
+      )
+    }
+
+    validatedOptions.timeoutMs = parsedTimeoutMs.data
+  }
+
+  return validatedOptions
+}
+
+export function overrideTaskEnqueueOptions(
+  existingOptions: {
+    retryOptions: TaskRetryOptions
+    sleepMsBeforeRun: number
+    timeoutMs: number
+  },
+  overrideOptions?: TaskEnqueueOptions,
+): {
+  retryOptions: TaskRetryOptions
+  sleepMsBeforeRun: number
+  timeoutMs: number
+} {
+  return {
+    retryOptions:
+      overrideOptions?.retryOptions == null
+        ? existingOptions.retryOptions
+        : overrideOptions.retryOptions,
+    sleepMsBeforeRun:
+      overrideOptions?.sleepMsBeforeRun == null
+        ? existingOptions.sleepMsBeforeRun
+        : overrideOptions.sleepMsBeforeRun,
+    timeoutMs:
+      overrideOptions?.timeoutMs == null ? existingOptions.timeoutMs : overrideOptions.timeoutMs,
   }
 }
 

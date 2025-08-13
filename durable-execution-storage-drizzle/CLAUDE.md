@@ -73,7 +73,7 @@ All implementations share the same logical schema:
 - Hierarchy: `rootTaskId`, `parentTaskId`, `parentExecutionId`
 - State: `status`, `retryAttempts`, `error`
 - Timing: `startAt`, `expiresAt`, `closingExpiresAt`
-- Data: `runInput`, `runOutput` (JSON)
+- Data: `input`, `runOutput`, `output` (JSON)
 - Child coordination: `childTaskProcessingOrder`, `finishedChildTaskExecutionIds`
 
 **Finished Child Tasks Table** (for parent tasks):

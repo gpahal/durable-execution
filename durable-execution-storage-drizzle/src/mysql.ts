@@ -58,7 +58,7 @@ export function createTaskExecutionsMySqlTable(tableName = 'task_executions') {
       sleepMsBeforeRun: bigint('sleep_ms_before_run', { mode: 'number' }).notNull(),
       timeoutMs: bigint('timeout_ms', { mode: 'number' }).notNull(),
       status: varchar('status', { length: 64 }).$type<TaskExecutionStatusStorageValue>().notNull(),
-      runInput: text('run_input').notNull(),
+      input: text('input').notNull(),
       runOutput: text('run_output'),
       output: text('output'),
       error: json('error').$type<DurableExecutionErrorStorageValue>(),

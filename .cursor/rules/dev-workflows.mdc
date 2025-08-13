@@ -1,28 +1,215 @@
 ---
-description: Common dev commands and workflows for the monorepo
+alwaysApply: true
 ---
-### Install and bootstrap
 
-- `pnpm i` (Node >= 20, `pnpm@10` per root `package.json`)
+# Development Workflows and Commands
 
-### Build, test, lint
+This document covers the development processes, testing strategies, and build commands used across the durable execution monorepo.
 
-- From repo root:
-  - `pnpm build` → builds all packages via Turbo
-  - `pnpm test` / `pnpm test-coverage`
-  - `pnpm type-check`
-  - `pnpm lint` / `pnpm lint-fix`
-  - `pnpm fmt` / `pnpm fmt-check`
+## Prerequisites
 
-### Per-package
+**System Requirements**:
 
-- Core `durable-execution`:
-  - `pnpm -F durable-execution build`
-  - `pnpm -F durable-execution test`
-  - `pnpm -F durable-execution build-docs`
+- Node.js ≥20.0.0
+- pnpm@10.14.0 (specified in package.json)
+- Git with hooks support
 
-- Drizzle storage, oRPC utils, test-utils: same pattern with `-F <package>`
+**Initial Setup**:
 
-### Changesets and publishing
+```bash
+pnpm install  # Install all dependencies across workspace
+```
 
-- `pnpm cs` to version locally, `pnpm cs-publish` to run lint+tests and publish
+## Build Workflows
+
+**Full Monorepo Build**:
+
+```bash
+pnpm build          # Build all packages with Turbo (respects dependencies)
+pnpm clean          # Clean all build artifacts
+pnpm build-docs     # Generate TypeDoc documentation for core package
+```
+
+**Package-Specific Builds**:
+
+```bash
+pnpm -F durable-execution build
+pnpm -F durable-execution-storage-drizzle build
+```
+
+**Build Process**:
+
+1. `premove build` - Clean existing build directory
+2. `tsup` - Bundle JavaScript with configuration from `tsup.config.ts`
+3. `tsc -p tsconfig.build.json` - Generate TypeScript declaration files
+4. Output: ESM modules in `build/` directory with source maps
+
+## Testing Strategy
+
+**Test Execution**:
+
+```bash
+pnpm test           # Run all tests across packages (Turbo orchestrated)
+pnpm test-coverage  # Run tests with coverage reporting
+
+# Package-specific testing
+pnpm -F durable-execution test
+pnpm -F durable-execution-storage-drizzle test
+
+# Specific test files
+pnpm vitest run tests/executor.test.ts
+pnpm vitest run tests/parent-task.test.ts
+```
+
+**Test Categories**:
+
+- **Unit Tests**: Individual component testing (`executor.test.ts`, `task.test.ts`)
+- **Integration Tests**: Full workflow testing (`examples.test.ts`)
+- **Concurrency Tests**: Multi-executor scenarios (`concurrent-scenarios.test.ts`)
+- **Storage Tests**: Database implementation validation (`index.test.ts` in storage packages)
+- **Parent-Child Tests**: Complex task hierarchies (`parent-task.test.ts`)
+
+**Test Infrastructure**:
+
+- **Vitest**: Fast test runner with ES module support
+- **In-Memory Storage**: Quick testing with `InMemoryStorage`
+- **Test Containers**: Database testing with real Docker instances
+- **Coverage**: V8 coverage reporting with `@vitest/coverage-v8`
+
+## Code Quality Workflows
+
+**Type Checking**:
+
+```bash
+pnpm type-check     # TypeScript validation across all packages
+```
+
+- Runs `tsc --noEmit` for type validation
+- Validates TypeDoc comments with `--emit none`
+- Ensures no type errors before commits
+
+**Linting and Formatting**:
+
+```bash
+pnpm lint           # ESLint across all packages
+pnpm lint-fix       # ESLint with automatic fixes
+pnpm fmt            # Prettier code formatting
+pnpm fmt-check      # Check formatting without changes
+```
+
+**Quality Tools**:
+
+- **ESLint**: Code quality with `@gpahal/eslint-config`
+- **Prettier**: Code formatting with import sorting via `@ianvs/prettier-plugin-sort-imports`
+- **TypeScript**: Strict type checking with shared `@gpahal/tsconfig`
+
+## Git Workflow
+
+**Git Hooks** (via `simple-git-hooks`):
+
+```bash
+# Pre-commit and pre-push hooks run:
+pnpm pre-commit     # type-check + lint + fmt-check + build
+```
+
+**Commit Validation**:
+
+- All packages must type-check successfully
+- No linting errors allowed
+- Code must be properly formatted
+- All packages must build successfully
+
+## Release Workflow
+
+**Version Management** (via Changesets):
+
+```bash
+pnpm cs             # Create changeset for version bumps
+pnpm cs-publish     # Publish packages after validation
+```
+
+**Release Process**:
+
+1. `run-p lint fmt-check` - Parallel quality checks
+2. `turbo run test` - Run all tests across packages
+3. `changeset publish` - Publish to npm
+4. Git tag cleanup for repository maintenance
+
+## Development Commands by Package
+
+**Core Package** (`durable-execution`):
+
+```bash
+pnpm build          # tsup + TypeScript declarations
+pnpm build-docs     # TypeDoc documentation generation
+pnpm test           # Vitest with comprehensive test suite
+pnpm type-check     # TypeScript + TypeDoc validation
+```
+
+**Storage Packages**:
+
+```bash
+pnpm test           # Storage implementation validation
+# Uses test containers for real database testing
+# Validates Storage interface compliance
+```
+
+**oRPC Utils Package**:
+
+```bash
+pnpm test           # oRPC client-server integration tests
+pnpm type-check     # Multiple entry point validation (server.ts, client.ts)
+```
+
+## Turbo Task Dependencies
+
+**Build Dependencies**:
+
+- Packages build in dependency order
+- Core package builds before dependent packages
+- Parallel builds where dependencies allow
+
+**Test Dependencies**:
+
+- Tests depend on builds of dependencies
+- Storage tests require core package build
+- Integration tests run after unit tests
+
+**Cache Strategy**:
+
+- Turbo caches build outputs in `build/**`
+- Test coverage cached in `coverage/**`
+- Cache invalidation on source changes
+
+## Development Best Practices
+
+**Local Development**:
+
+1. Use `pnpm` for all commands (not npm/yarn)
+2. Run `pnpm type-check` before commits
+3. Use package-specific commands for focused development
+4. Leverage Turbo caching for faster iteration
+
+**Testing Workflow**:
+
+1. Write tests alongside feature development
+2. Use in-memory storage for unit tests
+3. Use test containers for integration tests
+4. Maintain test coverage for critical paths
+
+**Pre-Commit Checklist**:
+
+- [ ] Code passes `pnpm type-check`
+- [ ] Code passes `pnpm lint`
+- [ ] Code is formatted with `pnpm fmt`
+- [ ] All tests pass with `pnpm test`
+- [ ] Build succeeds with `pnpm build`
+
+**Performance Optimization**:
+
+- Use Turbo for parallel task execution
+- Leverage build caching for unchanged packages
+- Run tests in watch mode during development
+- Use package filters (`-F`) for focused development
+
+This workflow ensures code quality, type safety, and reliable builds across the entire monorepo while enabling efficient parallel development.

@@ -1,4 +1,5 @@
 export { DurableExecutor } from './executor'
+export { DurableExecutorClient, type AnyTasks } from './executor-client'
 export type {
   Task,
   InferTaskInput,
@@ -25,6 +26,7 @@ export type {
   ChildTask,
   ChildTaskExecution,
   ChildTaskExecutionOutput,
+  CompletedChildTaskExecution,
   ChildTaskExecutionError,
   ChildTaskExecutionErrorStorageValue,
   TaskExecutionStatusStorageValue,
@@ -39,12 +41,13 @@ export type {
 } from './task'
 export {
   type Storage,
+  type StorageTx,
   type TaskExecutionStorageValue,
   type TaskExecutionStorageWhere,
   type TaskExecutionStorageUpdate,
   type FinishedChildTaskExecutionStorageValue,
 } from './storage'
-export { InMemoryStorage } from './in-memory-storage'
+export { InMemoryStorage, InMemoryStorageTx } from './in-memory-storage'
 export {
   type DurableExecutionErrorType,
   DurableExecutionError,

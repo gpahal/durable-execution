@@ -50,8 +50,8 @@ describe('server', () => {
       },
     })
 
-    const router = createTasksRouter(os, executor)
     const tasks = { add1 }
+    const router = createTasksRouter(os, executor, tasks)
 
     const client = createRouterClient(router, { context: {} })
     const handles = createTaskClientHandles(client, tasks)
@@ -70,7 +70,7 @@ describe('server', () => {
   })
 
   it('should handle invalid task id to enqueue', async () => {
-    const router = createTasksRouter(os, executor)
+    const router = createTasksRouter(os, executor, {})
     const client = createRouterClient(router, { context: {} })
 
     await expect(client.enqueueTask({ taskId: 'invalid', input: { n: 0 } })).rejects.toThrow(
@@ -79,7 +79,7 @@ describe('server', () => {
   })
 
   it('should handle invalid task id to get execution', async () => {
-    const router = createTasksRouter(os, executor)
+    const router = createTasksRouter(os, executor, {})
     const client = createRouterClient(router, { context: {} })
 
     await expect(
@@ -88,7 +88,7 @@ describe('server', () => {
   })
 
   it('should handle invalid execution id to get execution', async () => {
-    executor.task({
+    const add1 = executor.task({
       id: 'add1',
       timeoutMs: 5000,
       run: (_, input: { n: number }) => {
@@ -96,12 +96,13 @@ describe('server', () => {
       },
     })
 
-    const router = createTasksRouter(os, executor)
+    const tasks = { add1 }
+    const router = createTasksRouter(os, executor, tasks)
     const client = createRouterClient(router, { context: {} })
 
     await expect(
       client.getTaskExecution({ taskId: 'add1', executionId: 'invalid' }),
-    ).rejects.toThrow('Execution invalid not found')
+    ).rejects.toThrow('Task execution invalid not found')
   })
 
   it('should complete procedureClientTask', async () => {

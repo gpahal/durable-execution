@@ -13,6 +13,9 @@ import type { DurableExecutionErrorStorageValue } from './errors'
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export type Task<TInput, TOutput> = {
   id: string
+  retryOptions: TaskRetryOptions
+  sleepMsBeforeRun: number
+  timeoutMs: number
 }
 
 /**
@@ -158,7 +161,6 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
  * It is useful for combining the output of the runParent function and children tasks. It's input
  * has the following properties:
  *
- * - `input`: The input of the `finalizeTask` task. Same as the input of runParent function
  * - `output`: The output of the runParent function
  * - `childrenTaskExecutionsOutputs`: The outputs of the children tasks
  *
@@ -233,11 +235,11 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
  *     finalizeTask: {
  *       id: 'onUploadFileAndChildrenComplete',
  *       timeoutMs: 60_000, // 1 minute
- *       run: async (ctx, { input, output, childrenTaskExecutionsOutputs }) => {
+ *       run: async (ctx, { output, childrenTaskExecutionsOutputs }) => {
  *         // ... combine the output of the run function and children tasks
  *         return {
- *           filePath: input.filePath,
- *           uploadUrl: input.uploadUrl,
+ *           filePath: output.filePath,
+ *           uploadUrl: output.uploadUrl,
  *           fileSize: 100,
  *           title: 'File Title',
  *           summary: 'File summary',
@@ -283,7 +285,7 @@ export type ParentTaskOptions<
    * Task to run after the runParent function and children tasks complete. This is useful for
    * combining the output of the run function and children tasks.
    */
-  finalizeTask?: FinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>
+  finalizeTask?: FinalizeTaskOptions<TRunOutput, TOutput, TFinalizeTaskRunOutput>
 }
 
 /**
@@ -292,7 +294,6 @@ export type ParentTaskOptions<
  *
  * ```ts
  * {
- *   input: TRunInput,
  *   output: TRunOutput,
  *   childrenTaskExecutionsOutputs: Array<ChildTaskExecutionOutput>
  * }
@@ -304,37 +305,30 @@ export type ParentTaskOptions<
  * @category Task
  */
 export type FinalizeTaskOptions<
-  TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
   TFinalizeTaskRunOutput = unknown,
 > =
-  | TaskOptions<FinalizeTaskInput<TInput, TRunOutput>, TOutput>
-  | ParentTaskOptions<FinalizeTaskInput<TInput, TRunOutput>, TFinalizeTaskRunOutput, TOutput>
+  | TaskOptions<FinalizeTaskInput<TRunOutput>, TOutput>
+  | ParentTaskOptions<FinalizeTaskInput<TRunOutput>, TFinalizeTaskRunOutput, TOutput>
 
 export function isFinalizeTaskOptionsTaskOptions<
-  TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
   TFinalizeTaskRunOutput = unknown,
 >(
-  options: FinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
-): options is TaskOptions<FinalizeTaskInput<TInput, TRunOutput>, TOutput> {
+  options: FinalizeTaskOptions<TRunOutput, TOutput, TFinalizeTaskRunOutput>,
+): options is TaskOptions<FinalizeTaskInput<TRunOutput>, TOutput> {
   return 'run' in options && !('runParent' in options)
 }
 
 export function isFinalizeTaskOptionsParentTaskOptions<
-  TInput = unknown,
   TRunOutput = unknown,
   TOutput = unknown,
   TFinalizeTaskRunOutput = unknown,
 >(
-  options: FinalizeTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
-): options is ParentTaskOptions<
-  FinalizeTaskInput<TInput, TRunOutput>,
-  TFinalizeTaskRunOutput,
-  TOutput
-> {
+  options: FinalizeTaskOptions<TRunOutput, TOutput, TFinalizeTaskRunOutput>,
+): options is ParentTaskOptions<FinalizeTaskInput<TRunOutput>, TFinalizeTaskRunOutput, TOutput> {
   return 'runParent' in options && !('run' in options)
 }
 
@@ -343,8 +337,7 @@ export function isFinalizeTaskOptionsParentTaskOptions<
  *
  * @category Task
  */
-export type FinalizeTaskInput<TInput = unknown, TRunOutput = unknown> = {
-  input: TInput
+export type FinalizeTaskInput<TRunOutput = unknown> = {
   output: TRunOutput
   childrenTaskExecutionsOutputs: Array<ChildTaskExecutionOutput>
 }
@@ -439,7 +432,7 @@ export type ReadyTaskExecution = {
   sleepMsBeforeRun: number
   timeoutMs: number
   status: 'ready'
-  runInput: unknown
+  input: unknown
   error?: DurableExecutionErrorStorageValue
   retryAttempts: number
   createdAt: Date

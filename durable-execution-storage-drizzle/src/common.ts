@@ -21,7 +21,7 @@ export type TaskExecutionDBValue = {
   sleepMsBeforeRun: number
   timeoutMs: number
   status: TaskExecutionStatusStorageValue
-  runInput: string
+  input: string
   runOutput?: string | null
   output?: string | null
   error?: DurableExecutionErrorStorageValue | null
@@ -86,7 +86,7 @@ export function taskExecutionStorageValueToInsertValue(
     sleepMsBeforeRun: value.sleepMsBeforeRun,
     timeoutMs: value.timeoutMs,
     status: value.status,
-    runInput: value.runInput,
+    input: value.input,
     runOutput: value.runOutput,
     output: value.output,
     error: value.error,
@@ -118,7 +118,7 @@ export function taskExecutionSelectValueToStorageValue(
     sleepMsBeforeRun: row.sleepMsBeforeRun,
     timeoutMs: row.timeoutMs,
     status: row.status,
-    runInput: row.runInput,
+    input: row.input,
     needsPromiseCancellation: row.needsPromiseCancellation,
     retryAttempts: row.retryAttempts,
     startAt: row.startAt,

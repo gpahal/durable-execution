@@ -3,7 +3,6 @@ import z from 'zod'
 
 import { createCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
 import { getErrorMessage } from '@gpahal/std/errors'
-import { sleep } from '@gpahal/std/promises'
 
 import { createCancellablePromiseCustom } from './cancel'
 import {
@@ -16,7 +15,6 @@ import {
 import { createConsoleLogger, createLoggerWithDebugDisabled, type Logger } from './logger'
 import { createSuperjsonSerializer, WrappedSerializer, type Serializer } from './serializer'
 import {
-  convertTaskExecutionStorageValueToTaskExecution,
   createTaskExecutionStorageValue,
   getTaskExecutionStorageValueParentExecutionError,
   StorageInternal,
@@ -31,7 +29,6 @@ import {
   FINISHED_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
   type ChildTaskExecution,
   type ChildTaskExecutionOutput,
-  type FinishedTaskExecution,
   type InferTaskInput,
   type InferTaskOutput,
   type LastTaskElementInArray,
@@ -43,23 +40,54 @@ import {
   type TaskOptions,
   type TaskRunContext,
 } from './task'
-import { generateTaskExecutionId, TaskInternal } from './task-internal'
+import {
+  generateTaskExecutionId,
+  getTaskHandleInternal,
+  overrideTaskEnqueueOptions,
+  TaskInternal,
+  validateCommonTaskOptions,
+  validateEnqueueOptions,
+} from './task-internal'
 import { generateId, sleepWithJitter, summarizeStandardSchemaIssues } from './utils'
 
-const zDurableExecutorOptions = z.object({
+export const zDurableExecutorOptions = z.object({
   logger: z
     .object({
-      debug: z.function(),
-      info: z.function(),
-      warn: z.function(),
-      error: z.function(),
+      debug: z.custom<Logger['debug']>((val) => {
+        if (typeof val !== 'function') {
+          return false
+        }
+        return true
+      }),
+      info: z.custom<Logger['info']>((val) => {
+        if (typeof val !== 'function') {
+          return false
+        }
+        return true
+      }),
+      error: z.custom<Logger['error']>((val) => {
+        if (typeof val !== 'function') {
+          return false
+        }
+        return true
+      }),
     })
     .nullish()
     .transform((val) => val ?? createConsoleLogger('DurableExecutor')),
   serializer: z
     .object({
-      serialize: z.function(),
-      deserialize: z.function(),
+      serialize: z.custom<Serializer['serialize']>((val) => {
+        if (typeof val !== 'function') {
+          return false
+        }
+        return true
+      }),
+      deserialize: z.custom<Serializer['deserialize']>((val) => {
+        if (typeof val !== 'function') {
+          return false
+        }
+        return true
+      }),
     })
     .nullish()
     .transform((val) => val ?? createSuperjsonSerializer()),
@@ -180,11 +208,11 @@ const zDurableExecutorOptions = z.object({
  *     finalizeTask: {
  *       id: 'onUploadFileAndChildrenComplete',
  *       timeoutMs: 60_000, // 1 minute
- *       run: async (ctx, { input, output, childrenTaskExecutionsOutputs }) => {
+ *       run: async (ctx, { output, childrenTaskExecutionsOutputs }) => {
  *         // ... combine the output of the run function and children tasks
  *         return {
- *           filePath: input.filePath,
- *           uploadUrl: input.uploadUrl,
+ *           filePath: output.filePath,
+ *           uploadUrl: output.uploadUrl,
  *           fileSize: 100,
  *           title: 'File Title',
  *           summary: 'File summary',
@@ -226,6 +254,9 @@ export class DurableExecutor {
   private readonly maxChildrenTasksPerParent: number
   private readonly maxSerializedInputDataSize: number
   private readonly maxSerializedOutputDataSize: number
+  private readonly shutdownSignal: CancelSignal
+  private readonly cancelShutdownSignal: () => void
+  private backgroundProcessesPromise: Promise<void> | undefined
   private readonly taskInternalsMap: Map<string, TaskInternal>
   private readonly runningTaskExecutionsMap: Map<
     string,
@@ -234,9 +265,6 @@ export class DurableExecutor {
       cancel: () => void
     }
   >
-  private readonly shutdownSignal: CancelSignal
-  private readonly cancelShutdownSignal: () => void
-  private backgroundProcessesPromise: Promise<void> | undefined
 
   /**
    * Create a durable executor.
@@ -304,13 +332,13 @@ export class DurableExecutor {
       storageMaxRetryAttempts,
     } = parsedOptions.data
 
-    this.logger = logger as Logger
+    this.logger = logger
     if (!enableDebug) {
       this.logger = createLoggerWithDebugDisabled(this.logger)
     }
 
     this.storage = new StorageInternal(this.logger, storage, storageMaxRetryAttempts)
-    this.serializer = new WrappedSerializer(serializer as Serializer)
+    this.serializer = new WrappedSerializer(serializer)
     this.expireMs = expireMs
     this.backgroundProcessIntraBatchSleepMs = backgroundProcessIntraBatchSleepMs
     this.maxConcurrentTaskExecutions = maxConcurrentTaskExecutions
@@ -319,11 +347,11 @@ export class DurableExecutor {
     this.maxSerializedInputDataSize = maxSerializedInputDataSize
     this.maxSerializedOutputDataSize = maxSerializedOutputDataSize
 
-    this.taskInternalsMap = new Map()
-    this.runningTaskExecutionsMap = new Map()
     const [cancelSignal, cancel] = createCancelSignal()
     this.shutdownSignal = cancelSignal
     this.cancelShutdownSignal = cancel
+    this.taskInternalsMap = new Map()
+    this.runningTaskExecutionsMap = new Map()
   }
 
   private throwIfShutdown(): void {
@@ -345,11 +373,15 @@ export class DurableExecutor {
     taskOptions: TaskOptions<TInput, TOutput>,
   ): Task<TInput, TOutput> {
     this.throwIfShutdown()
+    const validatedCommonTaskOptions = validateCommonTaskOptions(taskOptions)
     const taskInternal = TaskInternal.fromTaskOptions(this.taskInternalsMap, taskOptions)
     this.logger.debug(`Added task ${taskOptions.id}`)
     return {
       id: taskInternal.id,
-    } as Task<TInput, TOutput>
+      retryOptions: validatedCommonTaskOptions.retryOptions,
+      sleepMsBeforeRun: validatedCommonTaskOptions.sleepMsBeforeRun,
+      timeoutMs: validatedCommonTaskOptions.timeoutMs,
+    }
   }
 
   /**
@@ -373,6 +405,7 @@ export class DurableExecutor {
     parentTaskOptions: ParentTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
   ): Task<TInput, TOutput> {
     this.throwIfShutdown()
+    const validatedCommonTaskOptions = validateCommonTaskOptions(parentTaskOptions)
     const taskInternal = TaskInternal.fromParentTaskOptions(
       this.taskInternalsMap,
       parentTaskOptions,
@@ -380,7 +413,10 @@ export class DurableExecutor {
     this.logger.debug(`Added parent task ${parentTaskOptions.id}`)
     return {
       id: taskInternal.id,
-    } as Task<TInput, TOutput>
+      retryOptions: validatedCommonTaskOptions.retryOptions,
+      sleepMsBeforeRun: validatedCommonTaskOptions.sleepMsBeforeRun,
+      timeoutMs: validatedCommonTaskOptions.timeoutMs,
+    }
   }
 
   validateInput<TRunInput, TInput>(
@@ -483,6 +519,7 @@ export class DurableExecutor {
     return {
       task: <TOutput>(taskOptions: TaskOptions<TRunInput, TOutput>): Task<TInput, TOutput> => {
         this.throwIfShutdown()
+        const validatedCommonTaskOptions = validateCommonTaskOptions(taskOptions)
         const taskInternal = TaskInternal.fromTaskOptions(
           this.taskInternalsMap,
           taskOptions,
@@ -491,7 +528,10 @@ export class DurableExecutor {
         this.logger.debug(`Added task ${taskOptions.id}`)
         return {
           id: taskInternal.id,
-        } as Task<TInput, TOutput>
+          retryOptions: validatedCommonTaskOptions.retryOptions,
+          sleepMsBeforeRun: validatedCommonTaskOptions.sleepMsBeforeRun,
+          timeoutMs: validatedCommonTaskOptions.timeoutMs,
+        }
       },
       parentTask: <
         TRunOutput = unknown,
@@ -509,6 +549,7 @@ export class DurableExecutor {
         >,
       ): Task<TInput, TOutput> => {
         this.throwIfShutdown()
+        const validatedCommonTaskOptions = validateCommonTaskOptions(parentTaskOptions)
         const taskInternal = TaskInternal.fromParentTaskOptions(
           this.taskInternalsMap,
           parentTaskOptions,
@@ -517,7 +558,10 @@ export class DurableExecutor {
         this.logger.debug(`Added parent task ${parentTaskOptions.id}`)
         return {
           id: taskInternal.id,
-        } as Task<TInput, TOutput>
+          retryOptions: validatedCommonTaskOptions.retryOptions,
+          sleepMsBeforeRun: validatedCommonTaskOptions.sleepMsBeforeRun,
+          timeoutMs: validatedCommonTaskOptions.timeoutMs,
+        }
       },
     }
   }
@@ -608,17 +652,16 @@ export class DurableExecutor {
     const task = rest[0]
     const input = rest.length > 1 ? rest[1]! : undefined
     const options = rest.length > 2 ? rest[2]! : undefined
-    const taskInternal = this.taskInternalsMap.get(task.id)
-    if (!taskInternal) {
+    if (!this.taskInternalsMap.has(task.id)) {
       throw new DurableExecutionNotFoundError(
-        `Task ${task.id} not found. Use DurableExecutor.task() to add it before enqueuing it.`,
+        `Task ${task.id} not found. Use DurableExecutor.task() to add it before enqueuing it`,
       )
     }
 
-    const runInput = await taskInternal.validateInput(input)
     const executionId = generateTaskExecutionId()
     const now = new Date()
-    const validatedOptions = taskInternal.validateEnqueueOptions(
+    const validatedEnqueueOptions = validateEnqueueOptions(
+      task.id,
       options
         ? {
             retryOptions: options.retryOptions,
@@ -627,23 +670,21 @@ export class DurableExecutor {
           }
         : undefined,
     )
-    const retryOptions = taskInternal.getRetryOptions(validatedOptions)
-    const sleepMsBeforeRun = taskInternal.getSleepMsBeforeRun(validatedOptions)
-    const timeoutMs = taskInternal.getTimeoutMs(validatedOptions)
+    const finalEnqueueOptions = overrideTaskEnqueueOptions(task, validatedEnqueueOptions)
     await (options?.tx ?? this.storage).insertTaskExecutions([
       createTaskExecutionStorageValue({
         now,
-        taskId: taskInternal.id,
+        taskId: task.id,
         executionId,
-        retryOptions,
-        sleepMsBeforeRun,
-        timeoutMs,
-        runInput: this.serializer.serialize(runInput, this.maxSerializedInputDataSize),
+        retryOptions: finalEnqueueOptions.retryOptions,
+        sleepMsBeforeRun: finalEnqueueOptions.sleepMsBeforeRun,
+        timeoutMs: finalEnqueueOptions.timeoutMs,
+        input: this.serializer.serialize(input, this.maxSerializedInputDataSize),
       }),
     ])
 
     this.logger.debug(`Enqueued task ${task.id} with execution id ${executionId}`)
-    return this.getTaskHandleInternal(taskInternal.id, executionId)
+    return getTaskHandleInternal(this.storage, this.serializer, this.logger, task.id, executionId)
   }
 
   /**
@@ -657,16 +698,15 @@ export class DurableExecutor {
     task: TTask,
     executionId: string,
   ): Promise<TaskExecutionHandle<InferTaskOutput<TTask>>> {
-    const taskInternal = this.taskInternalsMap.get(task.id)
-    if (!taskInternal) {
+    if (!this.taskInternalsMap.has(task.id)) {
       throw new DurableExecutionNotFoundError(
-        `Task ${task.id} not found. Use DurableExecutor.task() to add it before enqueuing it.`,
+        `Task ${task.id} not found. Use DurableExecutor.task() to add it before enqueuing it`,
       )
     }
 
     const execution = await this.storage.getTaskExecutionById(executionId)
     if (!execution) {
-      throw new DurableExecutionNotFoundError(`Execution ${executionId} not found`)
+      throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
     }
     if (execution.taskId !== task.id) {
       throw new DurableExecutionNotFoundError(
@@ -674,87 +714,7 @@ export class DurableExecutor {
       )
     }
 
-    return this.getTaskHandleInternal(task.id, executionId)
-  }
-
-  private getTaskHandleInternal<TOutput>(
-    taskId: string,
-    executionId: string,
-  ): TaskExecutionHandle<TOutput> {
-    return {
-      getTaskId: () => taskId,
-      getExecutionId: () => executionId,
-      getExecution: async () => {
-        const execution = await this.storage.getTaskExecutionById(executionId)
-        if (!execution) {
-          throw new DurableExecutionNotFoundError(`Execution ${executionId} not found`)
-        }
-        return convertTaskExecutionStorageValueToTaskExecution(execution, this.serializer)
-      },
-      waitAndGetFinishedExecution: async ({
-        signal,
-        pollingIntervalMs,
-      }: {
-        signal?: CancelSignal | AbortSignal
-        pollingIntervalMs?: number
-      } = {}) => {
-        const cancelSignal =
-          signal instanceof AbortSignal ? createCancelSignal({ abortSignal: signal })[0] : signal
-
-        const resolvedPollingIntervalMs =
-          pollingIntervalMs && pollingIntervalMs > 0 ? pollingIntervalMs : 1000
-        let isFirstIteration = true
-        while (true) {
-          if (cancelSignal?.isCancelled()) {
-            throw new DurableExecutionCancelledError()
-          }
-
-          if (isFirstIteration) {
-            isFirstIteration = false
-          } else {
-            await createCancellablePromiseCustom(sleep(resolvedPollingIntervalMs), cancelSignal)
-
-            if (cancelSignal?.isCancelled()) {
-              throw new DurableExecutionCancelledError()
-            }
-          }
-
-          const execution = await this.storage.getTaskExecutionById(executionId)
-          if (!execution) {
-            throw new DurableExecutionNotFoundError(`Execution ${executionId} not found`)
-          }
-
-          if (FINISHED_TASK_EXECUTION_STATUSES_STORAGE_VALUES.includes(execution.status)) {
-            return convertTaskExecutionStorageValueToTaskExecution(
-              execution,
-              this.serializer,
-            ) as FinishedTaskExecution<TOutput>
-          } else {
-            this.logger.debug(
-              `Waiting for task ${executionId} to be finished. Status: ${execution.status}`,
-            )
-          }
-        }
-      },
-      cancel: async () => {
-        const now = new Date()
-        await this.storage.updateAllTaskExecutions(
-          {
-            type: 'by_execution_ids',
-            executionIds: [executionId],
-            statuses: ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
-          },
-          {
-            status: 'cancelled',
-            error: convertDurableExecutionErrorToStorageValue(new DurableExecutionCancelledError()),
-            needsPromiseCancellation: true,
-            finishedAt: now,
-            updatedAt: now,
-          },
-        )
-        this.logger.debug(`Cancelled task execution ${executionId}`)
-      },
-    }
+    return getTaskHandleInternal(this.storage, this.serializer, this.logger, task.id, executionId)
   }
 
   /**
@@ -794,11 +754,7 @@ export class DurableExecutor {
   async shutdown(): Promise<void> {
     this.logger.info('Shutting down durable executor')
     if (!this.shutdownSignal.isCancelled()) {
-      try {
-        this.cancelShutdownSignal()
-      } catch (error) {
-        this.logger.error('Error in cancelling executor', error)
-      }
+      this.cancelShutdownSignal()
     }
     this.logger.info('Durable executor cancelled. Waiting for background processes to stop')
 
@@ -873,7 +829,7 @@ export class DurableExecutor {
         const waitTime = isRetryableError ? Math.min(backoffMs, 5000) : backoffMs
         if (consecutiveErrors >= maxConsecutiveErrors) {
           this.logger.error(
-            `Too many consecutive errors (${consecutiveErrors}) in ${processName}. Backing off for ${backoffMs}ms before retrying.`,
+            `Too many consecutive errors (${consecutiveErrors}) in ${processName}. Backing off for ${backoffMs}ms before retrying`,
           )
           await sleepWithJitter(waitTime)
           backoffMs = Math.min(backoffMs * 2, 30_000)
@@ -1061,7 +1017,7 @@ export class DurableExecutor {
     try {
       const result = await taskInternal.runParentWithTimeoutAndCancellation(
         ctx,
-        this.serializer.deserialize(execution.runInput),
+        this.serializer.deserialize(execution.input),
         execution.timeoutMs,
         cancelSignal,
       )
@@ -1082,23 +1038,18 @@ export class DurableExecutor {
       const now = new Date()
       if (childrenTasks.length === 0) {
         if (taskInternal.finalizeTask) {
-          const finalizeTaskTaskInternal = this.taskInternalsMap.get(taskInternal.finalizeTask.id)
-          if (!finalizeTaskTaskInternal) {
+          const finalizeTaskInternal = this.taskInternalsMap.get(taskInternal.finalizeTask.id)
+          if (!finalizeTaskInternal) {
             throw new DurableExecutionNotFoundError(
               `Finalize task ${taskInternal.finalizeTask.id} not found`,
             )
           }
 
           const finalizeTaskInput = {
-            input: this.serializer.deserialize(execution.runInput),
             output: runOutput,
             childrenTaskExecutionsOutputs: [],
           }
-          const runInput = await finalizeTaskTaskInternal.validateInput(finalizeTaskInput)
           const executionId = generateTaskExecutionId()
-          const retryOptions = finalizeTaskTaskInternal.getRetryOptions()
-          const sleepMsBeforeRun = finalizeTaskTaskInternal.getSleepMsBeforeRun()
-          const timeoutMs = finalizeTaskTaskInternal.getTimeoutMs()
           await this.storage.updateAllTaskExecutionsAndInsertTaskExecutionsIfAnyUpdated(
             {
               type: 'by_execution_ids',
@@ -1111,7 +1062,7 @@ export class DurableExecutor {
               unsetError: true,
               childrenTaskExecutions: [],
               finalizeTaskExecution: {
-                taskId: finalizeTaskTaskInternal.id,
+                taskId: finalizeTaskInternal.id,
                 executionId,
               },
               updatedAt: now,
@@ -1129,12 +1080,15 @@ export class DurableExecutor {
                   parentChildTaskExecutionIndex: 0,
                   isFinalizeTask: true,
                 },
-                taskId: finalizeTaskTaskInternal.id,
+                taskId: finalizeTaskInternal.id,
                 executionId,
-                retryOptions,
-                sleepMsBeforeRun,
-                timeoutMs,
-                runInput: this.serializer.serialize(runInput, this.maxSerializedInputDataSize),
+                retryOptions: finalizeTaskInternal.retryOptions,
+                sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
+                timeoutMs: finalizeTaskInternal.timeoutMs,
+                input: this.serializer.serialize(
+                  finalizeTaskInput,
+                  this.maxSerializedInputDataSize,
+                ),
               }),
             ],
           )
@@ -1173,11 +1127,8 @@ export class DurableExecutor {
             throw new DurableExecutionNotFoundError(`Child task ${child.task.id} not found`)
           }
 
-          const runInput = await childTaskInternal.validateInput(child.input)
           const executionId = generateTaskExecutionId()
-          const retryOptions = childTaskInternal.getRetryOptions(child.options)
-          const sleepMsBeforeRun = childTaskInternal.getSleepMsBeforeRun(child.options)
-          const timeoutMs = childTaskInternal.getTimeoutMs(child.options)
+          const finalEnqueueOptions = overrideTaskEnqueueOptions(childTaskInternal, child.options)
           childrenTaskExecutionsStorageValues.push(
             createTaskExecutionStorageValue({
               now,
@@ -1192,10 +1143,10 @@ export class DurableExecutor {
               },
               taskId: child.task.id,
               executionId,
-              retryOptions,
-              sleepMsBeforeRun,
-              timeoutMs,
-              runInput: this.serializer.serialize(runInput, this.maxSerializedInputDataSize),
+              retryOptions: finalEnqueueOptions.retryOptions,
+              sleepMsBeforeRun: finalEnqueueOptions.sleepMsBeforeRun,
+              timeoutMs: finalEnqueueOptions.timeoutMs,
+              input: this.serializer.serialize(child.input, this.maxSerializedInputDataSize),
             }),
           )
           childrenTaskExecutions.push({
@@ -1358,9 +1309,9 @@ export class DurableExecutor {
 
         if (completedChildrenTaskExecutions.length >= childrenTaskExecutions.length) {
           const taskInternal = this.taskInternalsMap.get(execution.taskId)
-          let finalizeTask: TaskInternal | undefined
+          let finalizeTaskInternal: TaskInternal | undefined
           if (taskInternal) {
-            finalizeTask = taskInternal.finalizeTask
+            finalizeTaskInternal = taskInternal.finalizeTask
           }
 
           const childExecutionIdToIndexMap = new Map<string, number>(
@@ -1378,18 +1329,12 @@ export class DurableExecutor {
           )
           childrenTaskExecutionsOutputs.sort((a, b) => a.index - b.index)
 
-          if (finalizeTask) {
+          if (finalizeTaskInternal) {
             const finalizeTaskInput = {
-              input: this.serializer.deserialize(execution.runInput),
               output: this.serializer.deserialize(execution.runOutput!),
               childrenTaskExecutionsOutputs,
             }
-            const finalizeTaskRunInput = await finalizeTask.validateInput(finalizeTaskInput)
             const executionId = generateTaskExecutionId()
-            const retryOptions = finalizeTask.getRetryOptions()
-            const sleepMsBeforeRun = finalizeTask.getSleepMsBeforeRun()
-            const timeoutMs = finalizeTask.getTimeoutMs()
-
             await tx.updateAllTaskExecutionsAndInsertTaskExecutionsIfAnyUpdated(
               {
                 type: 'by_execution_ids',
@@ -1400,7 +1345,7 @@ export class DurableExecutor {
                 status: 'waiting_for_finalize_task',
                 unsetError: true,
                 finalizeTaskExecution: {
-                  taskId: finalizeTask.id,
+                  taskId: finalizeTaskInternal.id,
                   executionId,
                 },
                 updatedAt: now,
@@ -1415,13 +1360,13 @@ export class DurableExecutor {
                     parentChildTaskExecutionIndex: 0,
                     isFinalizeTask: true,
                   },
-                  taskId: finalizeTask.id,
+                  taskId: finalizeTaskInternal.id,
                   executionId,
-                  retryOptions,
-                  sleepMsBeforeRun,
-                  timeoutMs,
-                  runInput: this.serializer.serialize(
-                    finalizeTaskRunInput,
+                  retryOptions: finalizeTaskInternal.retryOptions,
+                  sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
+                  timeoutMs: finalizeTaskInternal.timeoutMs,
+                  input: this.serializer.serialize(
+                    finalizeTaskInput,
                     this.maxSerializedInputDataSize,
                   ),
                 }),

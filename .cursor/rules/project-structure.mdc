@@ -1,46 +1,226 @@
 ---
 alwaysApply: true
 ---
-### Monorepo overview
 
-- **packages**:
-  - `durable-execution`: core durable task engine
-  - `durable-execution-orpc-utils`: oRPC server/client utilities for remote task enqueue/get
-  - `durable-execution-storage-drizzle`: Drizzle ORM storage impls (SQLite, Postgres)
-  - `durable-execution-storage-test-utils`: shared storage test harness
+# Project Structure and TypeScript Configuration
 
-### Key entry points
+This document outlines the file organization, naming conventions, and TypeScript setup patterns used across the durable execution monorepo.
 
-- **Core API**:
-  - [`durable-execution/src/index.ts`](mdc:durable-execution/src/index.ts): public exports
-  - [`durable-execution/src/executor.ts`](mdc:durable-execution/src/executor.ts): `DurableExecutor`
-  - [`durable-execution/src/task.ts`](mdc:durable-execution/src/task.ts): task types/contracts
-  - [`durable-execution/src/storage.ts`](mdc:durable-execution/src/storage.ts): `Storage` interface and helpers
-  - [`durable-execution/src/in-memory-storage.ts`](mdc:durable-execution/src/in-memory-storage.ts): in-memory impl
-  - [`durable-execution/src/errors.ts`](mdc:durable-execution/src/errors.ts), [`serializer.ts`](mdc:durable-execution/src/serializer.ts), [`logger.ts`](mdc:durable-execution/src/logger.ts)
+## Package Structure Pattern
 
-- **oRPC utilities**:
-  - [`durable-execution-orpc-utils/src/server.ts`](mdc:durable-execution-orpc-utils/src/server.ts): `createTasksRouter`, `convertClientProcedureToTask`
-  - [`durable-execution-orpc-utils/src/client.ts`](mdc:durable-execution-orpc-utils/src/client.ts): `createTaskClientHandles`
+Each package follows a consistent structure:
 
-- **Drizzle storage**:
-  - [`durable-execution-storage-drizzle/src/sqlite.ts`](mdc:durable-execution-storage-drizzle/src/sqlite.ts): SQLite table + storage
-  - [`durable-execution-storage-drizzle/src/pg.ts`](mdc:durable-execution-storage-drizzle/src/pg.ts): Postgres table + storage
-  - [`durable-execution-storage-drizzle/src/common.ts`](mdc:durable-execution-storage-drizzle/src/common.ts): mapping helpers
+```text
+package-name/
+├── src/                     # Source TypeScript files
+├── tests/                   # Test files (.test.ts)
+├── build/                   # Generated build output (gitignored)
+├── package.json             # Package configuration
+├── tsconfig.json            # Development TypeScript config
+├── tsconfig.build.json      # Build-specific TypeScript config
+├── tsup.config.ts           # tsup bundler configuration
+├── vitest.config.ts         # Vitest test configuration
+├── eslint.config.mjs        # ESLint configuration
+├── README.md                # Package documentation
+└── CLAUDE.md                # AI assistant guidance
+```
 
-- **Test utils**:
-  - [`durable-execution-storage-test-utils/src/index.ts`](mdc:durable-execution-storage-test-utils/src/index.ts): `runStorageTest` and temp file helpers
+## File Naming Conventions
 
-### Scripts and tooling
+**Source Files** (`src/`):
 
-- Run from repo root (`pnpm@10`, Node >= 20): see [`package.json`](mdc:package.json) and [`turbo.json`](mdc:turbo.json)
-  - `pnpm build` → `turbo build`
-  - `pnpm test` / `pnpm test-coverage` → `turbo test` / `turbo test-coverage`
-  - `pnpm type-check`, `pnpm lint`, `pnpm lint-fix`
-  - `pnpm fmt`, `pnpm fmt-check`
-  - `pnpm build-docs` builds docs for core via [`durable-execution/scripts/build-docs.ts`](mdc:durable-execution/scripts/build-docs.ts)
+- Use kebab-case for filenames: `task-internal.ts`, `in-memory-storage.ts`
+- Main exports: `index.ts` (barrel exports)
+- Core classes: `executor.ts`, `storage.ts`, `task.ts`
+- Utilities: `utils.ts`, `logger.ts`, `serializer.ts`
+- Error handling: `errors.ts`, `cancel.ts`
 
-### Conventions
+**Test Files** (`tests/`):
 
-- ESM modules, TypeScript across packages
-- Linting/formatting via shared configs; tests with Vitest in each package under `tests/*.test.ts`
+- Match source file names with `.test.ts`: `executor.test.ts`, `task.test.ts`
+- Descriptive test names: `concurrent-scenarios.test.ts`, `parent-task.test.ts`
+- Integration tests: `examples.test.ts`
+- Utilities: `in-memory-storage.ts` (shared test fixtures)
+
+**Configuration Files**:
+
+- TypeScript configs: `tsconfig.json`, `tsconfig.build.json`
+- Build config: `tsup.config.ts`
+- Test config: `vitest.config.ts`
+- Lint config: `eslint.config.mjs`
+
+## TypeScript Configuration
+
+**Base Configuration** (`tsconfig.json`):
+
+```json
+{
+  "extends": "@gpahal/tsconfig/base.json",
+  "compilerOptions": {
+    "outDir": "build",
+    "baseUrl": ".",
+    "types": ["vitest/globals"]
+  },
+  "include": ["src", "tests", "scripts", "vitest.config.ts", "tsup.config.ts"],
+  "exclude": ["node_modules", "build"]
+}
+```
+
+**Build Configuration** (`tsconfig.build.json`):
+
+```json
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "inlineSources": true,
+    "sourceMap": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}
+```
+
+**Key Patterns**:
+
+- Extends shared `@gpahal/tsconfig/base.json` for consistency
+- Separate build config focuses only on `src/` directory
+- Declaration files (.d.ts) generated for type distribution
+- Source maps enabled for debugging
+- Vitest globals enabled for test files
+
+## Build Configuration (tsup)
+
+**Standard tsup config** (`tsup.config.ts`):
+
+```typescript
+export default defineConfig((options: Options): Options => {
+  const env = process.env.ENV === 'production' || !!options.watch ? 'production' : 'development'
+  return {
+    entry: ['src/*'],
+    tsconfig: 'tsconfig.build.json',
+    outDir: 'build',
+    format: ['esm'],
+    splitting: false,
+    clean: true,
+    sourcemap: true,
+    dts: false,
+    minify: !isDevEnv,
+    onSuccess: 'tsc -p tsconfig.build.json'
+  }
+})
+```
+
+**Build Process**:
+
+1. tsup bundles JavaScript from TypeScript
+2. TypeScript compiler generates declaration files
+3. ESM-only output for modern Node.js
+4. Development builds include source maps, production minifies
+
+## Package.json Patterns
+
+**Core Package** (`durable-execution`):
+
+- Single entry point: `./build/index.js`
+- Types: `./build/index.d.ts`
+- ESM module type
+
+**Multi-Entry Package** (`durable-execution-orpc-utils`):
+
+- Split exports: `./server` and `./client`
+- Separate bundles for different use cases
+
+**Standard Scripts**:
+
+```json
+{
+  "build": "premove build && tsup",
+  "clean": "premove build",
+  "test": "vitest run",
+  "test-coverage": "vitest run --coverage",
+  "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none",
+  "lint": "eslint .",
+  "lint-fix": "eslint . --fix"
+}
+```
+
+## Source Organization
+
+**Core Package** (`durable-execution/src/`):
+
+- `index.ts`: Main exports barrel
+- `executor.ts`: Main DurableExecutor class
+- `task.ts`: Task type definitions and builders
+- `task-internal.ts`: Internal task utilities and validation
+- `storage.ts`: Storage interface and base implementations
+- `in-memory-storage.ts`: Simple storage for testing
+- `serializer.ts`: Input/output serialization
+- `errors.ts`: Error types and hierarchy
+- `utils.ts`: Shared utilities
+- `logger.ts`: Logging interface
+
+**Storage Package** (`durable-execution-storage-drizzle/src/`):
+
+- `index.ts`: Main exports
+- `common.ts`: Shared utilities across databases
+- `pg.ts`: PostgreSQL implementation
+- `mysql.ts`: MySQL implementation
+- `sqlite.ts`: SQLite implementation
+
+**oRPC Utils Package** (`durable-execution-orpc-utils/src/`):
+
+- `server.ts`: Server-side oRPC procedures
+- `client.ts`: Client-side handles and utilities
+
+## Import/Export Patterns
+
+**Barrel Exports** (`index.ts`):
+
+```typescript
+// Re-export main classes and types
+export { DurableExecutor } from './executor.js'
+export type { Task, TaskOptions } from './task.js'
+export type { Storage } from './storage.js'
+export * from './errors.js'
+```
+
+**Internal Imports**:
+
+- Use `.js` extensions in imports (for ESM compatibility)
+- Relative imports within package: `./task-internal.js`
+- External imports: `import { z } from 'zod'`
+
+## Testing Organization
+
+**Test Structure**:
+
+- `tests/` directory at package root
+- Test files mirror source file names
+- Shared utilities in `tests/` (e.g., `in-memory-storage.ts`)
+- Integration tests grouped by functionality
+
+**Test Naming**:
+
+- `executor.test.ts`: Core executor functionality
+- `parent-task.test.ts`: Parent-child task relationships
+- `concurrent-scenarios.test.ts`: Concurrency and edge cases
+- `examples.test.ts`: Documentation examples validation
+
+## Documentation Structure
+
+**Package Documentation**:
+
+- `README.md`: Usage examples and API overview
+- `CLAUDE.md`: AI assistant guidance for development
+- TypeDoc comments in source for API documentation
+
+**Code Documentation**:
+
+- JSDoc comments for all public APIs
+- `@category` tags for TypeDoc organization
+- Examples in docstrings match test cases
+
+This structure ensures consistency across packages while maintaining clear separation of concerns and enabling efficient development workflows.

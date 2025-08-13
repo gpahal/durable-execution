@@ -394,16 +394,19 @@ describe('examples', () => {
       timeoutMs: 1000,
       runParent: (ctx, input: { name: string }) => {
         return {
-          output: `Hello from task B, ${input.name}!`,
+          output: {
+            name: input.name,
+            taskBOutput: `Hello from task B, ${input.name}!`,
+          },
         }
       },
       finalizeTask: {
         id: 'taskBFinalize',
         timeoutMs: 1000,
-        runParent: (ctx, { input, output }) => {
+        runParent: (ctx, { output }) => {
           return {
-            output,
-            childrenTasks: [{ task: taskC, input: { name: input.name } }],
+            output: output.taskBOutput,
+            childrenTasks: [{ task: taskC, input: { name: output.name } }],
           }
         },
         finalizeTask: {
@@ -423,16 +426,19 @@ describe('examples', () => {
       timeoutMs: 1000,
       runParent: (ctx, input: { name: string }) => {
         return {
-          output: `Hello from task A, ${input.name}!`,
+          output: {
+            name: input.name,
+            taskAOutput: `Hello from task A, ${input.name}!`,
+          },
         }
       },
       finalizeTask: {
         id: 'taskAFinalize',
         timeoutMs: 1000,
-        runParent: (ctx, { input, output }) => {
+        runParent: (ctx, { output }) => {
           return {
-            output,
-            childrenTasks: [{ task: taskB, input: { name: input.name } }],
+            output: output.taskAOutput,
+            childrenTasks: [{ task: taskB, input: { name: output.name } }],
           }
         },
         finalizeTask: {
@@ -506,7 +512,10 @@ describe('examples', () => {
       timeoutMs: 1000,
       runParent: (ctx, input: { name: string }) => {
         return {
-          output: `Hello from task A, ${input.name}!`,
+          output: {
+            name: input.name,
+            taskAOutput: `Hello from task A, ${input.name}!`,
+          },
           childrenTasks: [
             { task: taskA1, input: { name: input.name } },
             { task: taskA2, input: { name: input.name } },
@@ -516,10 +525,10 @@ describe('examples', () => {
       finalizeTask: {
         id: 'taskAFinalize',
         timeoutMs: 1000,
-        run: (ctx, { input, output, childrenTaskExecutionsOutputs }) => {
+        run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
           return {
-            name: input.name,
-            taskAOutput: output,
+            name: output.name,
+            taskAOutput: output.taskAOutput,
             taskA1Output: childrenTaskExecutionsOutputs[0]!.output as string,
             taskA2Output: childrenTaskExecutionsOutputs[1]!.output as string,
           }
@@ -792,7 +801,10 @@ describe('examples', () => {
               output: {
                 isDone: true,
                 value,
-              } as { isDone: false; value: undefined } | { isDone: true; value: number },
+                prevCount: input.prevCount,
+              } as
+                | { isDone: false; value: undefined; prevCount: number }
+                | { isDone: true; value: number; prevCount: number },
             }
           }
 
@@ -800,17 +812,20 @@ describe('examples', () => {
             output: {
               isDone: false,
               value,
-            } as { isDone: false; value: undefined } | { isDone: true; value: number },
+              prevCount: input.prevCount,
+            } as
+              | { isDone: false; value: undefined; prevCount: number }
+              | { isDone: true; value: number; prevCount: number },
             childrenTasks: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
           }
         },
         finalizeTask: {
           id: 'pollingFinalize',
           timeoutMs: 1000,
-          run: (ctx, { input, output, childrenTaskExecutionsOutputs }) => {
+          run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
             if (output.isDone) {
               return {
-                count: input.prevCount + 1,
+                count: output.prevCount + 1,
                 value: output.value,
               }
             }

@@ -1,46 +1,203 @@
 ---
-description: How to use DurableExecutor, tasks, storage, and error types
-globs: *.ts,*.tsx
+alwaysApply: true
 ---
-### Core usage
 
-- **Imports**: see [`durable-execution/src/index.ts`](mdc:durable-execution/src/index.ts)
-- **Executor**: construct with a `Storage` and optional logger.
-- **Tasks**: define with `createTask` and run via `executor.enqueue`.
-- **Errors**: exported in [`durable-execution/src/errors.ts`](mdc:durable-execution/src/errors.ts); inspect by `.type`.
+# Durable Execution Core Usage Guide
 
-### Minimal example
+This codebase implements a durable execution engine for TypeScript that provides resilient task execution with built-in retry logic, process failure recovery, and complex workflow orchestration.
 
-```ts
-import { DurableExecutor, createTask, InMemoryStorage } from 'durable-execution'
+## Core Concepts
 
-// Define a task
-const add = createTask<{ a: number; b: number }, number>({
- id: 'add',
- run: async ({ a, b }) => a + b,
-})
+### DurableExecutor Lifecycle
 
-// Create executor
-const storage = new InMemoryStorage()
-const executor = new DurableExecutor({ storage })
+The main class is `DurableExecutor` in [durable-execution/src/executor.ts](mdc:durable-execution/src/executor.ts):
 
-// Enqueue and await
-const handle = await executor.enqueue(add, { a: 1, b: 2 })
-const result = await handle.result()
+```typescript
+const executor = new DurableExecutor(storage)
+
+// Start background processes for task execution
+executor.startBackgroundProcesses()
+
+// Create and enqueue tasks
+const handle = await executor.enqueueTask(task, input)
+
+// Graceful shutdown when done
+await executor.shutdown()
 ```
 
-### Cancellation and timeouts
+### Task Types and Patterns
 
-- Pass `timeoutMs` and `sleepMsBeforeRun` in enqueue options.
-- Call `handle.cancel()` to request cancellation; the engine sets `needsPromiseCancellation`.
+**Simple Tasks** - Single function execution:
 
-### Using Drizzle-backed storage
+```typescript
+const simpleTask = executor.task({
+  id: 'unique_task_id',
+  timeoutMs: 30_000,
+  run: async (ctx, input) => {
+    // Idempotent task logic here
+    return result
+  }
+})
+```
 
-- SQLite: [`durable-execution-storage-drizzle/src/sqlite.ts`](mdc:durable-execution-storage-drizzle/src/sqlite.ts)
-- Postgres: [`durable-execution-storage-drizzle/src/pg.ts`](mdc:durable-execution-storage-drizzle/src/pg.ts)
-- MySQL: [`durable-execution-storage-drizzle/src/mysql.ts`](mdc:durable-execution-storage-drizzle/src/mysql.ts)
+**Parent Tasks** - Spawn parallel children with optional coordination:
 
-### Key types
+```typescript
+const parentTask = executor.parentTask({
+  id: 'parent_task_id',
+  runParent: async (ctx, input) => ({
+    output: parentResult,
+    childrenTasks: [
+      { task: childTask1, input: childInput1 },
+      { task: childTask2, input: childInput2 }
+    ]
+  }),
+  finalizeTask: {
+    id: 'finalize_id',
+    run: async (ctx, { output, childrenTaskExecutionsOutputs }) => {
+      // Combine parent and children outputs
+      return combinedResult
+    }
+  }
+})
+```
 
-- `TaskExecutionStatus`, `TaskRetryOptions`, `DurableExecutionError` in core exports.
-- `Storage` contract in [`durable-execution/src/storage.ts`](mdc:durable-execution/src/storage.ts).
+**Sequential Tasks** - Chain tasks where output flows to next input:
+
+```typescript
+const sequentialTask = executor.sequentialTasks(taskA, taskB, taskC)
+```
+
+### Input Validation Patterns
+
+**Schema-based validation** (preferred for type safety):
+
+```typescript
+import { z } from 'zod'
+
+const task = executor
+  .inputSchema(z.object({
+    filePath: z.string(),
+    options: z.object({ timeout: z.number() }).optional()
+  }))
+  .task({
+    id: 'validated_task',
+    run: async (ctx, input) => {
+      // input is fully typed and validated
+    }
+  })
+```
+
+**Custom validation**:
+
+```typescript
+const task = executor
+  .validateInput(async (input: RawInput) => {
+    if (!isValid(input)) {
+      throw new Error('Validation failed')
+    }
+    return transformedInput
+  })
+  .task({ /* ... */ })
+```
+
+## Task Execution Context
+
+Every task receives a `TaskRunContext` with:
+
+- `taskId`: Unique task identifier
+- `executionId`: Unique execution instance ID
+- `attempt`: Current retry attempt (0-based)
+- `prevError`: Previous error if this is a retry
+- `shutdownSignal`: AbortSignal for graceful shutdown
+
+## Error Handling and Retry Logic
+
+**Built-in Error Types** from [durable-execution/src/errors.ts](mdc:durable-execution/src/errors.ts):
+
+- `DurableExecutionError`: Generic errors with retry control
+- `DurableExecutionTimedOutError`: Task timeout
+- `DurableExecutionCancelledError`: Task cancellation
+- `DurableExecutionNotFoundError`: Missing task/execution
+
+**Retry Configuration**:
+
+```typescript
+const task = executor.task({
+  id: 'retry_task',
+  retryOptions: {
+    maxAttempts: 5,
+    baseDelayMs: 100,
+    delayMultiplier: 1.5,
+    maxDelayMs: 10_000
+  },
+  run: async (ctx, input) => {
+    if (ctx.attempt < 2) {
+      throw new Error('Temporary failure')
+    }
+    return 'success'
+  }
+})
+```
+
+## Task State Machine
+
+Tasks transition through these states:
+
+- `ready` → `running` → `completed`/`failed`/`timed_out`
+- Parent tasks: `waiting_for_children_tasks` → `waiting_for_finalize_task`
+- Failed tasks retry based on configuration
+- Cancelled tasks do not retry
+
+## Storage and Persistence
+
+All task state persists through the `Storage` interface in [durable-execution/src/storage.ts](mdc:durable-execution/src/storage.ts). Tasks survive process crashes through:
+
+- Expiration monitoring for stuck executions
+- Atomic state transitions in transactions
+- Distributed execution across multiple executor instances
+
+## Idempotency Requirements
+
+**Critical**: All task logic must be idempotent since tasks may execute multiple times on:
+
+- Process failures during execution
+- Timeout and retry scenarios
+- Network issues causing state uncertainty
+
+Avoid side effects that can't be safely repeated.
+
+## Task ID Validation
+
+Task IDs must follow these rules (enforced in [durable-execution/src/task-internal.ts](mdc:durable-execution/src/task-internal.ts)):
+
+- Non-empty and ≤255 characters
+- Only alphanumeric characters and underscores
+- Unique within the executor instance
+
+## Task Handle Management
+
+When tasks are enqueued, you get a `TaskExecutionHandle` for:
+
+```typescript
+const handle = await executor.enqueueTask(task, input)
+
+// Get current status
+const execution = await handle.getExecution()
+
+// Wait for completion
+const finishedExecution = await handle.waitAndGetFinishedExecution()
+
+// Cancel if needed
+await handle.cancel()
+```
+
+## Common Patterns
+
+**Polling Tasks**: Use recursive parent tasks with `sleepMsBeforeRun`
+**Tree Workflows**: Combine parent and sequential tasks
+**Error Recovery**: Leverage retry options and error types
+**Resource Cleanup**: Use cancellation and shutdown signals
+**Type Safety**: Always use input schemas for validation
+
+The durable execution engine handles the complexity of distributed, resilient execution while you focus on business logic.

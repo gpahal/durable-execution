@@ -25,9 +25,12 @@ describe('taskHandle', () => {
   })
 
   it('should handle invalid task id', async () => {
-    await expect(executor.getTaskHandle({ id: 'invalid' }, 'invalid')).rejects.toThrow(
-      'Task invalid not found',
-    )
+    await expect(
+      executor.getTaskHandle(
+        { id: 'invalid', retryOptions: { maxAttempts: 1 }, sleepMsBeforeRun: 0, timeoutMs: 10_000 },
+        'invalid',
+      ),
+    ).rejects.toThrow('Task invalid not found')
   })
 
   it('should handle correct execution id', async () => {
@@ -70,22 +73,7 @@ describe('taskHandle', () => {
     })
 
     await expect(executor.getTaskHandle(task, 'invalid')).rejects.toThrow(
-      'Execution invalid not found',
-    )
-  })
-
-  it('should handle invalid execution id', async () => {
-    const task = executor.task({
-      id: 'test',
-      timeoutMs: 10_000,
-      run: async () => {
-        await sleep(1000)
-        return 'test'
-      },
-    })
-
-    await expect(executor.getTaskHandle(task, 'invalid')).rejects.toThrow(
-      'Execution invalid not found',
+      'Task execution invalid not found',
     )
   })
 

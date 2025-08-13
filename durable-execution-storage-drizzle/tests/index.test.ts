@@ -16,18 +16,16 @@ import {
   withTemporaryDirectory,
   withTemporaryFile,
 } from 'durable-execution-storage-test-utils'
-import {
-  createFinishedChildTaskExecutionsMySqlTable,
-  createMySqlStorage,
-  createTaskExecutionsMySqlTable,
-} from 'src/mysql'
 import { describe, it } from 'vitest'
 
 import {
+  createFinishedChildTaskExecutionsMySqlTable,
   createFinishedChildTaskExecutionsPgTable,
   createFinishedChildTaskExecutionsSQLiteTable,
+  createMySqlStorage,
   createPgStorage,
   createSQLiteStorage,
+  createTaskExecutionsMySqlTable,
   createTaskExecutionsPgTable,
   createTaskExecutionsSQLiteTable,
 } from '../src'

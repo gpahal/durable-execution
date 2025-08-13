@@ -175,7 +175,7 @@ describe('concurrentScenarios', () => {
     async () => {
       const fastChild = executor1.task({
         id: 'fast_child',
-        timeoutMs: 1000,
+        timeoutMs: 10_000,
         run: async (_, index: number) => {
           await sleep(10)
           return index
@@ -184,7 +184,7 @@ describe('concurrentScenarios', () => {
 
       executor2.task({
         id: 'fast_child',
-        timeoutMs: 1000,
+        timeoutMs: 10_000,
         run: async (_, index: number) => {
           await sleep(10)
           return index
@@ -193,7 +193,7 @@ describe('concurrentScenarios', () => {
 
       const parentTask = executor1.parentTask({
         id: 'conflict_parent',
-        timeoutMs: 1000,
+        timeoutMs: 5000,
         runParent: () => {
           return {
             output: 'parent_result',

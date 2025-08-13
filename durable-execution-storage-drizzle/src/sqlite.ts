@@ -53,7 +53,7 @@ export function createTaskExecutionsSQLiteTable(tableName = 'task_executions') {
       sleepMsBeforeRun: integer('sleep_ms_before_run').notNull(),
       timeoutMs: integer('timeout_ms').notNull(),
       status: text('status').$type<TaskExecutionStatusStorageValue>().notNull(),
-      runInput: text('run_input').notNull(),
+      input: text('input').notNull(),
       runOutput: text('run_output'),
       output: text('output'),
       error: text('error', { mode: 'json' }).$type<DurableExecutionErrorStorageValue>(),

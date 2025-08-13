@@ -17,6 +17,12 @@ pnpm clean          # Remove build directory
 ```bash
 pnpm test           # Run all tests with Vitest
 pnpm test-coverage  # Run tests with coverage reporting
+
+# Run specific test files
+pnpm vitest run tests/executor.test.ts
+pnpm vitest run tests/executor-client.test.ts
+pnpm vitest run tests/parent-task.test.ts
+pnpm vitest run tests/concurrent-scenarios.test.ts
 ```
 
 ### Type Checking and Linting
@@ -42,6 +48,13 @@ The main class that orchestrates task execution. It manages:
 - Background processes for task picking and monitoring
 - Storage interactions through the Storage interface
 - Serialization of task inputs/outputs
+
+**DurableExecutorClient** (`src/executor-client.ts`)
+A lightweight client for enqueuing tasks without background processes:
+
+- Allows task enqueuing from separate processes/services
+- Shares the same storage as DurableExecutor
+- Useful for distributed architectures where task submission and execution are separated
 
 **Task System** (`src/task.ts`, `src/task-internal.ts`)
 
@@ -92,16 +105,11 @@ The main class that orchestrates task execution. It manages:
 Tests are located in `tests/` and use Vitest. Key test files:
 
 - `executor.test.ts` - Core executor functionality
+- `executor-client.test.ts` - DurableExecutorClient functionality
 - `task.test.ts` - Task creation and execution
 - `parent-task.test.ts` - Parent-child task relationships
 - `concurrent-scenarios.test.ts` - Concurrency and race conditions
 - `executor-crash.test.ts` - Process failure resilience
-
-Run a specific test file:
-
-```bash
-pnpm vitest run tests/executor.test.ts
-```
 
 ## Important Notes
 

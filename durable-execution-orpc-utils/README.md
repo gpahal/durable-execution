@@ -83,7 +83,7 @@ const add2 = executor.task({
 const tasks = { add1, add2 }
 
 // Build oRPC router to enqueue tasks and fetch task executions
-export const tasksRouter = createTasksRouter(os, executor)
+export const tasksRouter = createTasksRouter(os, executor, tasks)
 
 async function server() {
   // ... start the long-running server (see oRPC server docs for more details)

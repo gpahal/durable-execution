@@ -420,9 +420,9 @@ export type TaskExecutionStorageValue = {
    */
   status: TaskExecutionStatusStorageValue
   /**
-   * The run input of the task execution.
+   * The input of the task execution.
    */
-  runInput: string
+  input: string
   /**
    * The run output of the task execution.
    */
@@ -515,7 +515,7 @@ export function createTaskExecutionStorageValue({
   retryOptions,
   sleepMsBeforeRun,
   timeoutMs,
-  runInput,
+  input,
 }: {
   now: Date
   rootTaskExecution?: {
@@ -533,7 +533,7 @@ export function createTaskExecutionStorageValue({
   retryOptions: TaskRetryOptions
   sleepMsBeforeRun: number
   timeoutMs: number
-  runInput: string
+  input: string
 }): TaskExecutionStorageValue {
   return {
     rootTaskExecution,
@@ -544,7 +544,7 @@ export function createTaskExecutionStorageValue({
     sleepMsBeforeRun,
     timeoutMs,
     status: 'ready',
-    runInput,
+    input,
     needsPromiseCancellation: false,
     retryAttempts: 0,
     startAt: new Date(now.getTime() + sleepMsBeforeRun),
@@ -630,7 +630,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
   execution: TaskExecutionStorageValue,
   serializer: WrappedSerializer,
 ): TaskExecution<TOutput> {
-  const runInput = serializer.deserialize(execution.runInput)
+  const input = serializer.deserialize(execution.input)
   const runOutput = execution.runOutput
     ? serializer.deserialize<unknown>(execution.runOutput)
     : undefined
@@ -703,7 +703,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
         status: 'ready',
-        runInput,
+        input,
         error,
         retryAttempts: execution.retryAttempts,
         createdAt: execution.createdAt,
@@ -720,7 +720,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
         status: 'running',
-        runInput,
+        input,
         error,
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
@@ -739,7 +739,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
         status: 'failed',
-        runInput,
+        input,
         error: error!,
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
@@ -759,7 +759,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
         status: 'timed_out',
-        runInput,
+        input,
         error: error!,
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
@@ -779,7 +779,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
         status: 'waiting_for_children_tasks',
-        runInput,
+        input,
         runOutput: runOutput!,
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
@@ -801,7 +801,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
         status: 'children_tasks_failed',
-        runInput,
+        input,
         runOutput: runOutput!,
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
@@ -825,7 +825,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
         status: 'waiting_for_finalize_task',
-        runInput,
+        input,
         runOutput: runOutput!,
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
@@ -848,7 +848,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
         status: 'finalize_task_failed',
-        runInput,
+        input,
         runOutput: runOutput!,
         retryAttempts: execution.retryAttempts,
         startedAt: execution.startedAt!,
@@ -873,7 +873,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
         status: 'completed',
-        runInput,
+        input,
         runOutput: runOutput!,
         output: output!,
         retryAttempts: execution.retryAttempts,
@@ -898,7 +898,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         sleepMsBeforeRun: execution.sleepMsBeforeRun,
         timeoutMs: execution.timeoutMs,
         status: 'cancelled',
-        runInput,
+        input,
         runOutput,
         error: error!,
         retryAttempts: execution.retryAttempts,

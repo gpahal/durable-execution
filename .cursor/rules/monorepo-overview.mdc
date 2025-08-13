@@ -1,47 +1,149 @@
 ---
 alwaysApply: true
 ---
-### Monorepo overview
 
-- **packages**:
-  - `durable-execution`: core durable task engine
-  - `durable-execution-orpc-utils`: oRPC server/client utilities for remote task enqueue/get
-  - `durable-execution-storage-drizzle`: Drizzle ORM storage implementations (SQLite, Postgres, MySQL)
-  - `durable-execution-storage-test-utils`: shared storage test harness
+# Durable Execution Monorepo Overview
 
-### Key entry points
+This is a pnpm workspace monorepo containing the durable execution engine and related packages. The architecture follows a modular design with clear separation of concerns.
 
-- **Core API**:
-  - [`durable-execution/src/index.ts`](mdc:durable-execution/src/index.ts): public exports
-  - [`durable-execution/src/executor.ts`](mdc:durable-execution/src/executor.ts): `DurableExecutor`
-  - [`durable-execution/src/task.ts`](mdc:durable-execution/src/task.ts): task types/contracts
-  - [`durable-execution/src/storage.ts`](mdc:durable-execution/src/storage.ts): `Storage` interface and helpers
-  - [`durable-execution/src/in-memory-storage.ts`](mdc:durable-execution/src/in-memory-storage.ts): in-memory impl
-  - [`durable-execution/src/errors.ts`](mdc:durable-execution/src/errors.ts), [`durable-execution/src/serializer.ts`](mdc:durable-execution/src/serializer.ts), [`durable-execution/src/logger.ts`](mdc:durable-execution/src/logger.ts)
+## Workspace Structure
 
-- **oRPC utilities**:
-  - [`durable-execution-orpc-utils/src/server.ts`](mdc:durable-execution-orpc-utils/src/server.ts): `createTasksRouter`, `convertClientProcedureToTask`
-  - [`durable-execution-orpc-utils/src/client.ts`](mdc:durable-execution-orpc-utils/src/client.ts): `createTaskClientHandles`
+**Root Configuration**:
 
-- **Drizzle storage**:
-  - [`durable-execution-storage-drizzle/src/sqlite.ts`](mdc:durable-execution-storage-drizzle/src/sqlite.ts): SQLite table + storage
-  - [`durable-execution-storage-drizzle/src/pg.ts`](mdc:durable-execution-storage-drizzle/src/pg.ts): Postgres table + storage
-  - [`durable-execution-storage-drizzle/src/mysql.ts`](mdc:durable-execution-storage-drizzle/src/mysql.ts): MySQL table + storage
-  - [`durable-execution-storage-drizzle/src/common.ts`](mdc:durable-execution-storage-drizzle/src/common.ts): mapping helpers
+- [pnpm-workspace.yaml](mdc:pnpm-workspace.yaml): Defines workspace packages and dependency catalogs
+- [turbo.json](mdc:turbo.json): Turborepo task orchestration and caching
+- [package.json](mdc:package.json): Root scripts, git hooks, and shared dev dependencies
 
-- **Test utils**:
-  - [`durable-execution-storage-test-utils/src/index.ts`](mdc:durable-execution-storage-test-utils/src/index.ts): `runStorageTest` and temp file helpers
+**Package Layout**:
 
-### Scripts and tooling
+```text
+durable-execution/           # Core execution engine
+durable-execution-orpc-utils/           # oRPC client-server utilities
+durable-execution-storage-drizzle/      # Drizzle ORM storage implementations
+durable-execution-storage-test-utils/   # Testing utilities for storage implementations
+```
 
-- Run from repo root (`pnpm@10`, Node >= 20): see [`package.json`](mdc:package.json) and [`turbo.json`](mdc:turbo.json)
-  - `pnpm build` → `turbo build`
-  - `pnpm test` / `pnpm test-coverage` → `turbo test` / `turbo test-coverage`
-  - `pnpm type-check`, `pnpm lint`, `pnpm lint-fix`
-  - `pnpm fmt`, `pnpm fmt-check`
-  - `pnpm build-docs` builds docs for core via [`durable-execution/scripts/build-docs.ts`](mdc:durable-execution/scripts/build-docs.ts)
+## Package Dependencies
 
-### Conventions
+**Core Package** - `durable-execution/`:
 
-- ESM modules, TypeScript across packages
-- Linting/formatting via shared configs; tests with Vitest in each package under `tests/*.test.ts`
+- Main library with `DurableExecutor`, task types, and storage interface
+- Exports: executor, task creation, storage interface, error types
+- Dependencies: `@gpahal/std`, `nanoid`, `superjson`, `zod`, standard-schema
+
+**Storage Implementation** - `durable-execution-storage-drizzle/`:
+
+- Production-ready storage for PostgreSQL, MySQL, SQLite via Drizzle ORM
+- Exports: `createPgStorage()`, `createMySqlStorage()`, `createSQLiteStorage()`
+- Peer dependency on `durable-execution`
+
+**oRPC Integration** - `durable-execution-orpc-utils/`:
+
+- Type-safe client-server communication for remote execution
+- Split exports: `./server` and `./client` entry points
+- Peer dependencies: `@orpc/*` packages and `durable-execution`
+
+**Test Utilities** - `durable-execution-storage-test-utils/`:
+
+- Comprehensive test suite for validating custom storage implementations
+- Exports: `runStorageTest()` function and related utilities
+- Used by storage implementation packages for validation
+
+## Build System and Tools
+
+**Turborepo Task Pipeline**:
+
+- `build`: TypeScript compilation with dependency ordering
+- `test`: Vitest test execution with build dependencies
+- `type-check`: TypeScript validation and TypeDoc validation
+- `lint`: ESLint across all packages
+- Cache optimization for faster builds
+
+**TypeScript Configuration**:
+
+- Shared base configs from `@gpahal/tsconfig`
+- Per-package `tsconfig.json` and `tsconfig.build.json`
+- ESM-only output with `.d.ts` generation
+
+**Build Tools**:
+
+- **tsup**: Fast TypeScript bundling with ESM output
+- **TypeDoc**: API documentation generation with Mermaid support
+- **Vitest**: Fast testing with coverage reporting
+- **ESLint**: Code quality with `@gpahal/eslint-config`
+- **Prettier**: Code formatting with import sorting
+
+## Dependency Management
+
+**Catalog System**: Uses pnpm catalogs for version management:
+
+- `catalog:prod`: Production dependencies (zod, nanoid, etc.)
+- `catalog:dev`: Development tools (vitest, tsup, etc.)
+- Ensures consistent versions across packages
+
+**Workspace Dependencies**:
+
+- `workspace:*` for internal package references
+- Peer dependencies for optional integrations (oRPC, Drizzle)
+- Minimal external dependencies in core package
+
+## Development Workflow
+
+**Package Scripts** (consistent across packages):
+
+```bash
+pnpm build          # Clean build with tsup + TypeScript
+pnpm test           # Run tests with Vitest
+pnpm type-check     # TypeScript validation + TypeDoc check
+pnpm lint           # ESLint with auto-fix option
+```
+
+**Root Commands**:
+
+```bash
+pnpm build          # Build all packages (turbo)
+pnpm test           # Test all packages (turbo)
+pnpm pre-commit     # Full validation pipeline
+pnpm build-docs     # Generate API docs for core package
+```
+
+**Git Hooks**: Pre-commit and pre-push hooks run full validation
+
+## Package Exports and Entry Points
+
+**durable-execution**:
+
+- Single entry: `./build/index.js` with types
+- Exports core executor and task creation utilities
+
+**durable-execution-orpc-utils**:
+
+- Split entries: `./server` and `./client`
+- Separate bundles for server-side and client-side code
+
+**durable-execution-storage-drizzle**:
+
+- Single entry with database-specific exports
+- Runtime selection of storage implementation
+
+**durable-execution-storage-test-utils**:
+
+- Single entry with test runner and utilities
+- Used by other storage implementation packages
+
+## Release Management
+
+Uses `@changesets/cli` for version management:
+
+- Semantic versioning across all packages
+- Coordinated releases with dependency updates
+- Automated changelog generation
+
+## Usage Patterns
+
+**For End Users**: Install `durable-execution` + storage implementation
+**For Server Apps**: Add `durable-execution-orpc-utils` for remote execution
+**For Storage Developers**: Use `durable-execution-storage-test-utils` for validation
+**For Contributors**: Use turbo commands for efficient development
+
+The monorepo enables independent versioning while maintaining consistency and enabling efficient development across all durable execution components.

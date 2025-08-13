@@ -358,10 +358,23 @@ describe('parentTask', () => {
       })
 
     // @ts-expect-error - Testing invalid input
-    await expect(executor.enqueueTask(task, { name: 0 })).rejects.toThrow(
-      'Invalid input to task test',
-    )
+    const handle = await executor.enqueueTask(task, { name: 0 })
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(executed).toBe(0)
+    expect(finishedExecution.status).toBe('failed')
+    assert(finishedExecution.status === 'failed')
+    expect(finishedExecution.taskId).toBe('test')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.error).toBeDefined()
+    expect(finishedExecution.error?.message).toContain('Invalid input to task test')
+    expect(finishedExecution.error?.errorType).toBe('generic')
+    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
   })
 
   it('should fail with one child failing', async () => {

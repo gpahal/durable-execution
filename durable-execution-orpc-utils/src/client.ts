@@ -1,14 +1,13 @@
 import type { ClientRest, FriendlyClientOptions } from '@orpc/client'
 import type { ErrorMap } from '@orpc/contract'
 import type { ClientContext, ProcedureClient, Schema } from '@orpc/server'
-import {
-  type InferTaskInput,
-  type InferTaskOutput,
-  type TaskEnqueueOptions,
-  type TaskExecution,
+import type {
+  AnyTasks,
+  InferTaskInput,
+  InferTaskOutput,
+  TaskEnqueueOptions,
+  TaskExecution,
 } from 'durable-execution'
-
-import type { AnyTasks } from './server'
 
 /**
  * A client for task procedures. Two procedures are created:
