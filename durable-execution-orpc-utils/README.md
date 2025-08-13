@@ -2,6 +2,7 @@
 
 [![NPM Version](https://img.shields.io/npm/v/durable-execution-orpc-utils)](https://www.npmjs.com/package/durable-execution-orpc-utils)
 [![License](https://img.shields.io/npm/l/durable-execution-orpc-utils)](https://github.com/gpahal/durable-execution/blob/main/LICENSE)
+[![Coverage](https://img.shields.io/codecov/c/github/gpahal/durable-execution/main?flag=durable-execution-orpc-utils)](https://codecov.io/gh/gpahal/durable-execution?flag=durable-execution-orpc-utils)
 
 oRPC utilities for [durable-execution](https://gpahal.github.io/durable-execution) to create a
 separate server process for durable execution.

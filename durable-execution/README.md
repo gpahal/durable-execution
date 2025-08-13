@@ -2,6 +2,7 @@
 
 [![NPM Version](https://img.shields.io/npm/v/durable-execution)](https://www.npmjs.com/package/durable-execution)
 [![License](https://img.shields.io/npm/l/durable-execution)](https://github.com/gpahal/durable-execution/blob/main/LICENSE)
+[![Coverage](https://img.shields.io/codecov/c/github/gpahal/durable-execution/main?flag=durable-execution)](https://codecov.io/gh/gpahal/durable-execution?flag=durable-execution)
 
 A durable execution engine for running tasks durably and resiliently.
 

@@ -2,6 +2,7 @@
 
 [![NPM Version](https://img.shields.io/npm/v/durable-execution-storage-drizzle)](https://www.npmjs.com/package/durable-execution-storage-drizzle)
 [![License](https://img.shields.io/npm/l/durable-execution-storage-drizzle)](https://github.com/gpahal/durable-execution/blob/main/LICENSE)
+[![Coverage](https://img.shields.io/codecov/c/github/gpahal/durable-execution/main?flag=durable-execution-storage-drizzle)](https://codecov.io/gh/gpahal/durable-execution?flag=durable-execution-storage-drizzle)
 
 A storage implementation for [durable-execution](https://github.com/gpahal/durable-execution)
 using [Drizzle ORM](https://orm.drizzle.team/).

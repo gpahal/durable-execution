@@ -2,6 +2,7 @@
 
 [![NPM Version](https://img.shields.io/npm/v/durable-execution-storage-test-utils)](https://www.npmjs.com/package/durable-execution-storage-test-utils)
 [![License](https://img.shields.io/npm/l/durable-execution-storage-test-utils)](https://github.com/gpahal/durable-execution/blob/main/LICENSE)
+[![Coverage](https://img.shields.io/codecov/c/github/gpahal/durable-execution/main?flag=durable-execution-storage-test-utils)](https://codecov.io/gh/gpahal/durable-execution?flag=durable-execution-storage-test-utils)
 
 Test utilities for [durable-execution](https://github.com/gpahal/durable-execution) storage implementations.
 

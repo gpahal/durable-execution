@@ -1,0 +1,45 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 80%
+    patch:
+      default:
+        target: auto
+        threshold: 80%
+
+flag_management:
+  default_rules:
+    carryforward: true
+    statuses:
+      - type: project
+        target: auto
+        threshold: 80%
+      - type: patch
+        target: auto
+        threshold: 80%
+
+  individual_flags:
+    - name: durable-execution
+      paths:
+        - durable-execution/
+
+    - name: durable-execution-orpc-utils
+      paths:
+        - durable-execution-orpc-utils/
+
+    - name: durable-execution-storage-test-utils
+      paths:
+        - durable-execution-storage-test-utils/
+
+    - name: durable-execution-storage-drizzle
+      paths:
+        - durable-execution-storage-drizzle/
+
+comment:
+  layout: 'reach,diff,flags,tree'
+  behavior: default
+  require_changes: false
+  require_base: no
+  require_head: yes

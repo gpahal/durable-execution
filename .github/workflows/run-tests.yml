@@ -48,6 +48,16 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+      - name: Upload durable-execution-storage-test-utils coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: durable-execution-storage-test-utils/coverage/coverage-final.json
+          flags: durable-execution-storage-test-utils
+          verbose: true
+          fail_ci_if_error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
       - name: Upload durable-execution-storage-drizzle coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
