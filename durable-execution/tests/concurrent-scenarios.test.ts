@@ -1,23 +1,20 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutor } from '../src'
-import { InMemoryStorage } from './in-memory-storage'
+import { DurableExecutor, InMemoryTaskExecutionsStorage } from '../src'
 
 describe('concurrentScenarios', () => {
-  let storage: InMemoryStorage
+  let storage: InMemoryTaskExecutionsStorage
   let executor1: DurableExecutor
   let executor2: DurableExecutor
 
   beforeEach(() => {
-    storage = new InMemoryStorage({ enableDebug: false })
+    storage = new InMemoryTaskExecutionsStorage()
     executor1 = new DurableExecutor(storage, {
-      enableDebug: false,
+      logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
     executor2 = new DurableExecutor(storage, {
-      enableDebug: false,
+      logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
     executor1.startBackgroundProcesses()
@@ -37,7 +34,7 @@ describe('concurrentScenarios', () => {
         id: 'concurrent_child1',
         timeoutMs: 1000,
         run: async () => {
-          await sleep(50)
+          await sleep(100)
           return 'child1_result'
         },
       })
@@ -46,7 +43,7 @@ describe('concurrentScenarios', () => {
         id: 'concurrent_child2',
         timeoutMs: 1000,
         run: async () => {
-          await sleep(60)
+          await sleep(100)
           return 'child2_result'
         },
       })
@@ -55,14 +52,35 @@ describe('concurrentScenarios', () => {
         id: 'concurrent_child3',
         timeoutMs: 1000,
         run: async () => {
-          await sleep(55)
+          await sleep(100)
           return 'child3_result'
         },
       })
 
-      executor2.task({ id: 'concurrent_child1', timeoutMs: 1000, run: () => 'child1_result' })
-      executor2.task({ id: 'concurrent_child2', timeoutMs: 1000, run: () => 'child2_result' })
-      executor2.task({ id: 'concurrent_child3', timeoutMs: 1000, run: () => 'child3_result' })
+      executor2.task({
+        id: 'concurrent_child1',
+        timeoutMs: 1000,
+        run: async () => {
+          await sleep(100)
+          return 'child1_result'
+        },
+      })
+      executor2.task({
+        id: 'concurrent_child2',
+        timeoutMs: 1000,
+        run: async () => {
+          await sleep(100)
+          return 'child2_result'
+        },
+      })
+      executor2.task({
+        id: 'concurrent_child3',
+        timeoutMs: 1000,
+        run: async () => {
+          await sleep(100)
+          return 'child3_result'
+        },
+      })
 
       const parentTask = executor1.parentTask({
         id: 'concurrent_parent',
@@ -70,11 +88,7 @@ describe('concurrentScenarios', () => {
         runParent: () => {
           return {
             output: 'parent_output',
-            childrenTasks: [
-              { task: child1, input: undefined },
-              { task: child2, input: undefined },
-              { task: child3, input: undefined },
-            ],
+            children: [{ task: child1 }, { task: child2 }, { task: child3 }],
           }
         },
       })
@@ -84,11 +98,7 @@ describe('concurrentScenarios', () => {
         timeoutMs: 2000,
         runParent: () => ({
           output: 'parent_output',
-          childrenTasks: [
-            { task: child1, input: undefined },
-            { task: child2, input: undefined },
-            { task: child3, input: undefined },
-          ],
+          children: [{ task: child1 }, { task: child2 }, { task: child3 }],
         }),
       })
 
@@ -97,8 +107,10 @@ describe('concurrentScenarios', () => {
       const result = await handle.waitAndGetFinishedExecution()
       expect(result.status).toBe('completed')
       assert(result.status === 'completed')
-      expect(result.output.childrenTaskExecutionsOutputs).toHaveLength(3)
-      const outputs = result.output.childrenTaskExecutionsOutputs.map((c) => c.output)
+      expect(result.output.children).toHaveLength(3)
+      const outputs = result.output.children.map((c) =>
+        c.status === 'completed' ? c.output : undefined,
+      )
       expect(outputs).toEqual(['child1_result', 'child2_result', 'child3_result'])
     },
   )
@@ -177,7 +189,7 @@ describe('concurrentScenarios', () => {
         id: 'fast_child',
         timeoutMs: 10_000,
         run: async (_, index: number) => {
-          await sleep(10)
+          await sleep(100)
           return index
         },
       })
@@ -186,7 +198,7 @@ describe('concurrentScenarios', () => {
         id: 'fast_child',
         timeoutMs: 10_000,
         run: async (_, index: number) => {
-          await sleep(10)
+          await sleep(100)
           return index
         },
       })
@@ -197,7 +209,7 @@ describe('concurrentScenarios', () => {
         runParent: () => {
           return {
             output: 'parent_result',
-            childrenTasks: Array.from({ length: 1000 }, (_, index) => ({
+            children: Array.from({ length: 1000 }, (_, index) => ({
               task: fastChild,
               input: index,
             })),
@@ -211,7 +223,7 @@ describe('concurrentScenarios', () => {
         runParent: () => {
           return {
             output: 'parent_result',
-            childrenTasks: Array.from({ length: 1000 }, (_, index) => ({
+            children: Array.from({ length: 1000 }, (_, index) => ({
               task: fastChild,
               input: index,
             })),
@@ -224,9 +236,13 @@ describe('concurrentScenarios', () => {
       const result = await handle.waitAndGetFinishedExecution()
       expect(result.status).toBe('completed')
       assert(result.status === 'completed')
-      expect(result.output.childrenTaskExecutionsOutputs).toHaveLength(1000)
+      expect(result.output.children).toHaveLength(1000)
 
-      const outputs = result.output.childrenTaskExecutionsOutputs.map((c) => c.output)
+      const outputs = result.output.children.map((c) =>
+        c.status === 'completed' ? c.output : undefined,
+      )
+      expect(outputs.some((o) => o == null)).toBe(false)
+
       const uniqueOutputs = new Set(outputs)
       expect(uniqueOutputs.size).toBe(1000)
     },

@@ -9,7 +9,7 @@ export type {
   TaskOptions,
   ParentTaskOptions,
   FinalizeTaskOptions,
-  FinalizeTaskInput,
+  DefaultParentTaskOutput,
   TaskRunContext,
   TaskExecution,
   FinishedTaskExecution,
@@ -18,21 +18,21 @@ export type {
   FailedTaskExecution,
   TimedOutTaskExecution,
   CancelledTaskExecution,
-  WaitingForChildrenTasksTaskExecution,
-  ChildrenTasksFailedTaskExecution,
-  WaitingForFinalizeTaskTaskExecution,
-  FinalizeTaskFailedTaskExecution,
+  WaitingForChildrenTaskExecution,
+  WaitingForFinalizeTaskExecution,
+  FinalizeFailedTaskExecution,
   CompletedTaskExecution,
   ChildTask,
-  ChildTaskExecution,
-  ChildTaskExecutionOutput,
+  FinishedChildTaskExecution,
   CompletedChildTaskExecution,
-  ChildTaskExecutionError,
-  ChildTaskExecutionErrorStorageValue,
-  TaskExecutionStatusStorageValue,
-  ALL_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
-  ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
-  FINISHED_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
+  ErroredChildTaskExecution,
+  TaskExecutionSummary,
+  TaskExecutionStatus,
+  ErroredTaskExecutionStatus,
+  ALL_TASK_EXECUTION_STATUSES,
+  ACTIVE_TASK_EXECUTION_STATUSES,
+  FINISHED_TASK_EXECUTION_STATUSES,
+  ERRORED_TASK_EXECUTION_STATUSES,
   TaskEnqueueOptions,
   TaskExecutionHandle,
   SequentialTasks,
@@ -40,14 +40,15 @@ export type {
   LastTaskElementInArray,
 } from './task'
 export {
-  type Storage,
-  type StorageTx,
+  type TaskExecutionsStorage,
   type TaskExecutionStorageValue,
-  type TaskExecutionStorageWhere,
+  type TaskExecutionOnChildrenFinishedProcessingStatus,
+  type TaskExecutionCloseStatus,
+  type TaskExecutionStorageGetByIdsFilters,
   type TaskExecutionStorageUpdate,
-  type FinishedChildTaskExecutionStorageValue,
+  TaskExecutionsStorageWithMutex,
 } from './storage'
-export { InMemoryStorage, InMemoryStorageTx } from './in-memory-storage'
+export { InMemoryTaskExecutionsStorage } from './in-memory-storage'
 export {
   type DurableExecutionErrorType,
   DurableExecutionError,
@@ -56,8 +57,8 @@ export {
   DurableExecutionCancelledError,
   type DurableExecutionErrorStorageValue,
 } from './errors'
-export { type Serializer, createSuperjsonSerializer, WrappedSerializer } from './serializer'
-export { type Logger, createConsoleLogger } from './logger'
+export { type Serializer, createSuperjsonSerializer } from './serializer'
+export { type Logger, type LogLevel, createConsoleLogger } from './logger'
 export {
   type CancelSignal,
   createCancelSignal,

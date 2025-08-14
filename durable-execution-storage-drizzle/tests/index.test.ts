@@ -16,18 +16,14 @@ import {
   withTemporaryDirectory,
   withTemporaryFile,
 } from 'durable-execution-storage-test-utils'
-import { describe, it } from 'vitest'
 
 import {
-  createFinishedChildTaskExecutionsMySqlTable,
-  createFinishedChildTaskExecutionsPgTable,
-  createFinishedChildTaskExecutionsSQLiteTable,
-  createMySqlStorage,
-  createPgStorage,
-  createSQLiteStorage,
-  createTaskExecutionsMySqlTable,
-  createTaskExecutionsPgTable,
-  createTaskExecutionsSQLiteTable,
+  createMySqlTaskExecutionsStorage,
+  createMySqlTaskExecutionsTable,
+  createPgTaskExecutionsStorage,
+  createPgTaskExecutionsTable,
+  createSQLiteTaskExecutionsStorage,
+  createSQLiteTaskExecutionsTable,
 } from '../src'
 
 const require = createRequire(import.meta.url)
@@ -44,16 +40,12 @@ describe('index', () => {
 
   it('should complete with pg storage', { timeout: 120_000 }, async () => {
     await withTemporaryDirectory(async (dirPath) => {
-      const taskExecutionsTable = createTaskExecutionsPgTable()
-      const finishedChildTaskExecutionsTable = createFinishedChildTaskExecutionsPgTable()
+      const taskExecutionsTable = createPgTaskExecutionsTable()
       const db = drizzlePglite(dirPath)
-      const { apply } = await pushSchema(
-        { taskExecutionsTable, finishedChildTaskExecutionsTable },
-        db,
-      )
+      const { apply } = await pushSchema({ taskExecutionsTable }, db)
       await apply()
 
-      const storage = createPgStorage(db, taskExecutionsTable, finishedChildTaskExecutionsTable)
+      const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable)
       await runStorageTest(storage)
     })
   })
@@ -61,8 +53,7 @@ describe('index', () => {
   it('should complete with mysql storage', { timeout: 300_000 }, async () => {
     const container = await new MySqlContainer('mysql:8.4').start()
     try {
-      const taskExecutionsTable = createTaskExecutionsMySqlTable()
-      const finishedChildTaskExecutionsTable = createFinishedChildTaskExecutionsMySqlTable()
+      const taskExecutionsTable = createMySqlTaskExecutionsTable()
       const db = drizzleMySql(
         `mysql://${container.getUsername()}:${container.getUserPassword()}@${container.getHost()}:${container.getPort()}/${container.getDatabase()}`,
       )
@@ -70,17 +61,15 @@ describe('index', () => {
       const emptyDrizzleJson = (await generateMySQLDrizzleJson({})) as Record<string, unknown>
       const drizzleJson = (await generateMySQLDrizzleJson({
         taskExecutionsTable,
-        finishedChildTaskExecutionsTable,
       })) as Record<string, unknown>
       const migration = await generateMySQLMigration(emptyDrizzleJson, drizzleJson)
       for (const statement of migration) {
         await db.execute(statement)
       }
 
-      const storage = createMySqlStorage(
+      const storage = createMySqlTaskExecutionsStorage(
         db,
         taskExecutionsTable,
-        finishedChildTaskExecutionsTable,
         (result) => result[0].affectedRows,
       )
       await runStorageTest(storage)
@@ -91,16 +80,12 @@ describe('index', () => {
 
   it('should complete with sqlite storage', { timeout: 120_000 }, async () => {
     await withTemporaryFile('test.db', async (filePath) => {
-      const taskExecutionsTable = createTaskExecutionsSQLiteTable()
-      const finishedChildTaskExecutionsTable = createFinishedChildTaskExecutionsSQLiteTable()
+      const taskExecutionsTable = createSQLiteTaskExecutionsTable()
       const db = drizzleLibsql(`file:${filePath}`)
-      const { apply } = await pushSQLiteSchema(
-        { taskExecutionsTable, finishedChildTaskExecutionsTable },
-        db,
-      )
+      const { apply } = await pushSQLiteSchema({ taskExecutionsTable }, db)
       await apply()
 
-      const storage = createSQLiteStorage(db, taskExecutionsTable, finishedChildTaskExecutionsTable)
+      const storage = createSQLiteTaskExecutionsStorage(db, taskExecutionsTable)
       await runStorageTest(storage)
     })
   })

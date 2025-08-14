@@ -3,10 +3,31 @@ import type { CancelSignal } from '@gpahal/std/cancel'
 import type { DurableExecutionErrorStorageValue } from './errors'
 
 /**
- * A task that can be run using a durable executor. See the
- * [usage](https://gpahal.github.io/durable-execution/index.html#usage) and
- * [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples) sections
- * for more details on creating and enqueuing tasks.
+ * Represents a durable task that can be executed with automatic retry, timeout and failure handling
+ * capabilities.
+ *
+ * Tasks are the fundamental unit of work in the durable execution system. They encapsulate business
+ * logic that needs to run reliably despite failures.
+ *
+ * ## Key Properties
+ *
+ * - **id**: Unique identifier for the task type
+ * - **retryOptions**: Configuration for automatic retry behavior
+ * - **sleepMsBeforeRun**: Optional delay before execution starts
+ * - **timeoutMs**: Maximum execution time before timeout
+ *
+ * @example
+ * ```ts
+ * const emailTask: Task<{to: string, subject: string}, {messageId: string}> = {
+ *   id: 'sendEmail',
+ *   retryOptions: { maxAttempts: 3, baseDelayMs: 1000 },
+ *   sleepMsBeforeRun: 0,
+ *   timeoutMs: 30000
+ * }
+ * ```
+ *
+ * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples) for
+ * more patterns and use cases.
  *
  * @category Task
  */
@@ -19,7 +40,13 @@ export type Task<TInput, TOutput> = {
 }
 
 /**
- * Infer the input type of a task.
+ * TypeScript utility type to extract the input type from a Task.
+ *
+ * @example
+ * ```ts
+ * type EmailInput = InferTaskInput<typeof emailTask>
+ * // Result: { to: string, subject: string }
+ * ```
  *
  * @category Task
  */
@@ -27,7 +54,13 @@ export type InferTaskInput<TTask extends Task<unknown, unknown>> =
   TTask extends Task<infer I, unknown> ? I : never
 
 /**
- * Infer the output type of a task.
+ * TypeScript utility type to extract the output type from a Task.
+ *
+ * @example
+ * ```ts
+ * type EmailOutput = InferTaskOutput<typeof emailTask>
+ * // Result: { messageId: string }
+ * ```
  *
  * @category Task
  */
@@ -51,20 +84,37 @@ export type CommonTaskOptions = {
    */
   retryOptions?: TaskRetryOptions
   /**
-   * The delay before running the task run function. If the value is < 0 or undefined, it will be
-   * treated as 0.
+   * The delay before running the task run function. If the value is undefined, it will be treated
+   * as 0.
    */
   sleepMsBeforeRun?: number
   /**
-   * The timeout for the task run function. If a value < 0 is returned, the task will be marked as
-   * failed and will not be retried.
+   * The timeout for the task run function.
    */
   timeoutMs: number
 }
 
 /**
- * The options for retrying a task. The delay after nth retry is calculated as:
- * `baseDelayMs * (delayMultiplier ** n)`. The delay is capped at `maxDelayMs` if provided.
+ * Configuration for automatic task retry behavior with exponential backoff.
+ *
+ * ## Retry Delay Calculation
+ *
+ * The delay between retries follows an exponential backoff pattern:
+ * ```
+ * delay = min(baseDelayMs * (delayMultiplier ^ attemptNumber), maxDelayMs)
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Retry up to 5 times with exponential backoff
+ * const retryOptions: TaskRetryOptions = {
+ *   maxAttempts: 5,
+ *   baseDelayMs: 1000,    // Start with 1 second
+ *   delayMultiplier: 2,   // Double each time
+ *   maxDelayMs: 30000     // Cap at 30 seconds
+ * }
+ * // Results in delays: 1s, 2s, 4s, 8s, 16s (capped)
+ * ```
  *
  * @category Task
  */
@@ -134,8 +184,7 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
    * The task run logic. It returns the output.
    *
    * Behavior on throwing errors:
-   * - If the task throws an error or a `{@link ExecutionError}`, the task will be marked as
-   * failed
+   * - If the task throws an error, it will be marked as failed
    * - If the task throws a `{@link DurableExecutionTimedOutError}`, it will be marked as timed out
    * - If the task throws a `{@link DurableExecutionCancelledError}`, it will be marked as cancelled
    * - Failed and timed out tasks might be retried based on the task's retry configuration
@@ -154,19 +203,23 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
  * function completes, along with the output of the parent task.
  *
  * The `runParent` function is similar to the `run` function in {@link TaskOptions}, but the
- * output is of the form `{ output: TRunOutput, childrenTasks: Array<ChildTask> }` where the
- * children are the tasks to be run in parallel after the run function completes.
+ * output is of the form `{ output: TRunOutput, children: Array<ChildTask> }` where the children
+ * are the tasks to be run in parallel after the run function completes.
  *
- * The `finalizeTask` task is run after the runParent function and all the children tasks complete.
- * It is useful for combining the output of the runParent function and children tasks. It's input
- * has the following properties:
+ * The `finalize` task is run after the runParent function and all the children tasks finish. It is
+ * useful for combining the output of the runParent function and children tasks. It is called even
+ * if the children tasks fail. Its input has the following properties:
  *
  * - `output`: The output of the runParent function
- * - `childrenTaskExecutionsOutputs`: The outputs of the children tasks
+ * - `children`: The finished children task executions (includes both successful and failed children)
  *
- * If `finalizeTask` is provided, the output of the whole task is the output of the `finalizeTask`
- * task. If it is not provided, the output of the whole task is the output of the form
- * `{ output: TRunOutput, childrenTaskExecutionsOutputs: Array<ChildTaskExecutionOutput> }`.
+ * **Important**: The `finalize` function receives outputs from ALL children, including those that
+ * have failed. This behaves similar to `Promise.allSettled()` - you get the results regardless of
+ * individual child success or failure. This allows you to implement custom error handling logic.
+ *
+ * If `finalize` is provided, the output of the whole task is the output of the `finalize` task. If
+ * it is not provided, the output of the whole task is the output of the form
+ * `{ output: TRunOutput, children: Array<FinishedChildTaskExecution> }`.
  *
  * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
  * section for more details on creating tasks.
@@ -220,7 +273,7 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
  *           uploadUrl: input.uploadUrl,
  *           fileSize: 100,
  *         },
- *         childrenTasks: [
+ *         children: [
  *           {
  *             task: extractFileTitle,
  *             input: { filePath: input.filePath },
@@ -232,10 +285,10 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
  *         ],
  *       }
  *     },
- *     finalizeTask: {
- *       id: 'onUploadFileAndChildrenComplete',
+ *     finalize: {
+ *       id: 'uploadFileFinalize',
  *       timeoutMs: 60_000, // 1 minute
- *       run: async (ctx, { output, childrenTaskExecutionsOutputs }) => {
+ *       run: async (ctx, { output, children }) => {
  *         // ... combine the output of the run function and children tasks
  *         return {
  *           filePath: output.filePath,
@@ -254,10 +307,7 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
 export type ParentTaskOptions<
   TInput = undefined,
   TRunOutput = unknown,
-  TOutput = {
-    output: TRunOutput
-    childrenTaskExecutionsOutputs: Array<ChildTaskExecutionOutput>
-  },
+  TOutput = DefaultParentTaskOutput<TRunOutput>,
   TFinalizeTaskRunOutput = unknown,
 > = CommonTaskOptions & {
   /**
@@ -275,32 +325,36 @@ export type ParentTaskOptions<
   ) =>
     | {
         output: TRunOutput
-        childrenTasks?: Array<ChildTask>
+        children?: Array<ChildTask>
       }
     | Promise<{
         output: TRunOutput
-        childrenTasks?: Array<ChildTask>
+        children?: Array<ChildTask>
       }>
   /**
-   * Task to run after the runParent function and children tasks complete. This is useful for
+   * Task to run after the runParent function and children tasks finish. This is useful for
    * combining the output of the run function and children tasks.
    */
-  finalizeTask?: FinalizeTaskOptions<TRunOutput, TOutput, TFinalizeTaskRunOutput>
+  finalize?: FinalizeTaskOptions<TRunOutput, TOutput, TFinalizeTaskRunOutput>
 }
 
 /**
- * Options for the `finalizeTask` property in {@link ParentTaskOptions}. It is similar to
+ * Options for the `finalize` property in {@link ParentTaskOptions}. It is similar to
  * {@link TaskOptions} or {@link ParentTaskOptions} but the input is of the form:
  *
  * ```ts
  * {
  *   output: TRunOutput,
- *   childrenTaskExecutionsOutputs: Array<ChildTaskExecutionOutput>
+ *   children: Array<FinishedChildTaskExecution>
  * }
  * ```
  *
+ * **Important**: The `children` array includes ALL children task executions, both successful and
+ * failed ones. This behaves similar to `Promise.allSettled()` - you get the results regardless of
+ * individual child success or failure, allowing you to implement custom error handling logic.
+ *
  * No validation is done on the input and the output of the parent task is the output of the
- * `finalizeTask` task.
+ * `finalize` task.
  *
  * @category Task
  */
@@ -309,8 +363,18 @@ export type FinalizeTaskOptions<
   TOutput = unknown,
   TFinalizeTaskRunOutput = unknown,
 > =
-  | TaskOptions<FinalizeTaskInput<TRunOutput>, TOutput>
-  | ParentTaskOptions<FinalizeTaskInput<TRunOutput>, TFinalizeTaskRunOutput, TOutput>
+  | TaskOptions<DefaultParentTaskOutput<TRunOutput>, TOutput>
+  | ParentTaskOptions<DefaultParentTaskOutput<TRunOutput>, TFinalizeTaskRunOutput, TOutput>
+
+/**
+ * The default output type for a parent task when no `finalize` task is provided.
+ *
+ * @category Task
+ */
+export type DefaultParentTaskOutput<TRunOutput = unknown> = {
+  output: TRunOutput
+  children: Array<FinishedChildTaskExecution>
+}
 
 export function isFinalizeTaskOptionsTaskOptions<
   TRunOutput = unknown,
@@ -318,7 +382,7 @@ export function isFinalizeTaskOptionsTaskOptions<
   TFinalizeTaskRunOutput = unknown,
 >(
   options: FinalizeTaskOptions<TRunOutput, TOutput, TFinalizeTaskRunOutput>,
-): options is TaskOptions<FinalizeTaskInput<TRunOutput>, TOutput> {
+): options is TaskOptions<DefaultParentTaskOutput<TRunOutput>, TOutput> {
   return 'run' in options && !('runParent' in options)
 }
 
@@ -328,26 +392,68 @@ export function isFinalizeTaskOptionsParentTaskOptions<
   TFinalizeTaskRunOutput = unknown,
 >(
   options: FinalizeTaskOptions<TRunOutput, TOutput, TFinalizeTaskRunOutput>,
-): options is ParentTaskOptions<FinalizeTaskInput<TRunOutput>, TFinalizeTaskRunOutput, TOutput> {
+): options is ParentTaskOptions<
+  DefaultParentTaskOutput<TRunOutput>,
+  TFinalizeTaskRunOutput,
+  TOutput
+> {
   return 'runParent' in options && !('run' in options)
 }
 
 /**
- * The input type for the finalize task.
+ * Runtime context provided to every task execution, containing metadata, signals and information
+ * about the execution environment.
  *
- * @category Task
- */
-export type FinalizeTaskInput<TRunOutput = unknown> = {
-  output: TRunOutput
-  childrenTaskExecutionsOutputs: Array<ChildTaskExecutionOutput>
-}
-
-/**
- * The context object passed to a task when it is run.
+ * ## Context Properties
+ *
+ * - **Identity**: `taskId`, `executionId` - Unique identifiers
+ * - **Hierarchy**: `root`, `parent` - Task relationship information
+ * - **Signals**: `shutdownSignal`, `cancelSignal` - For graceful termination
+ * - **Retry State**: `attempt`, `prevError` - Retry attempt information
+ *
+ * @example
+ * ```ts
+ * const task = executor.task({
+ *   id: 'processData',
+ *   timeoutMs: 60000,
+ *   run: async (ctx, input) => {
+ *     console.log(`Execution ${ctx.executionId}, attempt ${ctx.attempt}`)
+ *
+ *     // Check for executor shutdown or task cancellation
+ *     if (ctx.shutdownSignal.isCancelled() || ctx.cancelSignal.isCancelled()) {
+ *       throw new DurableExecutionCancelledError()
+ *     }
+ *
+ *     // Check previous error if retrying
+ *     if (ctx.prevError) {
+ *       console.log('Retrying after:', ctx.prevError.message)
+ *     }
+ *
+ *     // Process data...
+ *     return result
+ *   }
+ * })
+ * ```
  *
  * @category Task
  */
 export type TaskRunContext = {
+  /**
+   * The root task execution.
+   */
+  root?: {
+    taskId: string
+    executionId: string
+  }
+  /**
+   * The parent task execution.
+   */
+  parent?: {
+    taskId: string
+    executionId: string
+    indexInParentChildTaskExecutions: number
+    isFinalizeTaskOfParentTask?: boolean
+  }
   /**
    * The task id.
    */
@@ -357,15 +463,15 @@ export type TaskRunContext = {
    */
   executionId: string
   /**
-   * The cancel signal of the task. It can be used to gracefully shutdown the task run function
-   * when the task has been cancelled.
-   */
-  cancelSignal: CancelSignal
-  /**
    * The shutdown signal of the executor. It is cancelled when the executor is shutting down.
    * It can be used to gracefully shutdown the task when executor is shutting down.
    */
   shutdownSignal: CancelSignal
+  /**
+   * The cancel signal of the task. It can be used to gracefully shutdown the task run function
+   * when the task has been cancelled.
+   */
+  cancelSignal: CancelSignal
   /**
    * The attempt number of the task. The first attempt is 0, the second attempt is 1, etc.
    */
@@ -377,9 +483,16 @@ export type TaskRunContext = {
 }
 
 /**
- * An execution of a task. See
- * [Task execution](https://gpahal.github.io/durable-execution/index.html#task-execution) docs for
- * more details on how task executions work.
+ * Represents the current state and metadata of a task execution.
+ *
+ * Task executions transition through various states during their lifecycle:
+ * `ready` → `running` → `completed` (or `failed`/`timed_out`/`cancelled`)
+ *
+ * Parent tasks have additional states:
+ * `running` → `waiting_for_children` → `waiting_for_finalize` → `completed`
+ *
+ * @see [Task execution](https://gpahal.github.io/durable-execution/index.html#task-execution)
+ * for detailed state transitions.
  *
  * @category Task
  */
@@ -388,25 +501,30 @@ export type TaskExecution<TOutput = unknown> =
   | RunningTaskExecution
   | FailedTaskExecution
   | TimedOutTaskExecution
-  | WaitingForChildrenTasksTaskExecution
-  | ChildrenTasksFailedTaskExecution
-  | WaitingForFinalizeTaskTaskExecution
-  | FinalizeTaskFailedTaskExecution
+  | WaitingForChildrenTaskExecution
+  | WaitingForFinalizeTaskExecution
+  | FinalizeFailedTaskExecution
   | CompletedTaskExecution<TOutput>
   | CancelledTaskExecution
 
 /**
- * A finished execution of a task. See
- * [Task execution](https://gpahal.github.io/durable-execution/index.html#task-execution) docs for
- * more details on how task executions work.
+ * Represents a task execution that has reached a terminal state.
+ *
+ * Terminal states include:
+ * - `completed`: Successfully finished with output
+ * - `failed`: Execution failed (may have been retried)
+ * - `timed_out`: Exceeded timeout limit
+ * - `finalize_failed`: Parent task's finalize function failed
+ * - `cancelled`: Manually cancelled or parent failed
+ *
+ * Once in a terminal state, the task will not execute again.
  *
  * @category Task
  */
 export type FinishedTaskExecution<TOutput = unknown> =
   | FailedTaskExecution
   | TimedOutTaskExecution
-  | ChildrenTasksFailedTaskExecution
-  | FinalizeTaskFailedTaskExecution
+  | FinalizeFailedTaskExecution
   | CompletedTaskExecution<TOutput>
   | CancelledTaskExecution
 
@@ -416,12 +534,12 @@ export type FinishedTaskExecution<TOutput = unknown> =
  * @category Task
  */
 export type ReadyTaskExecution = {
-  rootTaskExecution?: {
+  root?: {
     taskId: string
     executionId: string
   }
 
-  parentTaskExecution?: {
+  parent?: {
     taskId: string
     executionId: string
   }
@@ -477,30 +595,10 @@ export type TimedOutTaskExecution = Omit<RunningTaskExecution, 'status' | 'error
  *
  * @category Task
  */
-export type WaitingForChildrenTasksTaskExecution = Omit<
-  RunningTaskExecution,
-  'status' | 'error'
-> & {
-  status: 'waiting_for_children_tasks'
-  runOutput: unknown
-  childrenTaskExecutions: Array<ChildTaskExecution>
-  completedChildrenTaskExecutionsCount: number
-  completedChildrenTaskExecutions: Array<CompletedChildTaskExecution>
-}
-
-/**
- * A task execution that failed while waiting for children tasks to complete because of one or more
- * child task executions failed.
- *
- * @category Task
- */
-export type ChildrenTasksFailedTaskExecution = Omit<
-  WaitingForChildrenTasksTaskExecution,
-  'status'
-> & {
-  status: 'children_tasks_failed'
-  childrenTaskExecutionsErrors: Array<ChildTaskExecutionError>
-  finishedAt: Date
+export type WaitingForChildrenTaskExecution = Omit<RunningTaskExecution, 'status' | 'error'> & {
+  status: 'waiting_for_children'
+  children: Array<TaskExecutionSummary>
+  activeChildrenCount: number
 }
 
 /**
@@ -508,12 +606,12 @@ export type ChildrenTasksFailedTaskExecution = Omit<
  *
  * @category Task
  */
-export type WaitingForFinalizeTaskTaskExecution = Omit<
-  WaitingForChildrenTasksTaskExecution,
+export type WaitingForFinalizeTaskExecution = Omit<
+  WaitingForChildrenTaskExecution,
   'status' | 'error'
 > & {
-  status: 'waiting_for_finalize_task'
-  finalizeTaskExecution: ChildTaskExecution
+  status: 'waiting_for_finalize'
+  finalize: TaskExecutionSummary
 }
 
 /**
@@ -522,12 +620,12 @@ export type WaitingForFinalizeTaskTaskExecution = Omit<
  *
  * @category Task
  */
-export type FinalizeTaskFailedTaskExecution = Omit<
-  WaitingForFinalizeTaskTaskExecution,
-  'status'
+export type FinalizeFailedTaskExecution = Omit<
+  WaitingForFinalizeTaskExecution,
+  'status' | 'error'
 > & {
-  status: 'finalize_task_failed'
-  finalizeTaskExecutionError: DurableExecutionErrorStorageValue
+  status: 'finalize_failed'
+  error: DurableExecutionErrorStorageValue
   finishedAt: Date
 }
 
@@ -537,16 +635,18 @@ export type FinalizeTaskFailedTaskExecution = Omit<
  * @category Task
  */
 export type CompletedTaskExecution<TOutput = unknown> = Omit<
-  WaitingForChildrenTasksTaskExecution,
+  WaitingForChildrenTaskExecution,
   'status' | 'output'
 > & {
   status: 'completed'
   output: TOutput
-  /**
-   * The finalize task execution. This is only present for tasks which have a finalize task.
-   */
-  finalizeTaskExecution?: ChildTaskExecution
   finishedAt: Date
+
+  /**
+   * The finalize task execution. This is only present for tasks which have a finalize task and
+   * whose run method completed successfully and children task finished.
+   */
+  finalize?: TaskExecutionSummary
 }
 
 /**
@@ -562,11 +662,6 @@ export type CancelledTaskExecution = Omit<ReadyTaskExecution, 'status' | 'error'
   finishedAt: Date
 
   /**
-   * The output of the task. This is only present for tasks whose run method completed
-   * successfully.
-   */
-  runOutput?: unknown
-  /**
    * The time the task execution started. This is only present for tasks which started running.
    */
   startedAt?: Date
@@ -578,21 +673,17 @@ export type CancelledTaskExecution = Omit<ReadyTaskExecution, 'status' | 'error'
    * The children task executions that were running when the task was cancelled. This is only present for
    * tasks whose run method completed successfully.
    */
-  childrenTaskExecutions?: Array<ChildTaskExecution>
+  children?: Array<TaskExecutionSummary>
   /**
-   * The number of children task executions that have been completed.
-   */
-  completedChildrenTaskExecutionsCount: number
-  /**
-   * The children task executions that were completed when the task was cancelled. This is only
-   * present for tasks whose run method completed successfully.
-   */
-  completedChildrenTaskExecutions?: Array<CompletedChildTaskExecution>
-  /**
-   * The finalize task execution. This is only present for tasks which have a finalize task and
+   * The number of children task executions that are still active. This is only present for tasks
    * whose run method completed successfully.
    */
-  finalizeTaskExecution?: ChildTaskExecution
+  activeChildrenCount: number
+  /**
+   * The finalize task execution. This is only present for tasks which have a finalize task and
+   * whose run method completed successfully and children task finished.
+   */
+  finalize?: TaskExecutionSummary
 }
 
 /**
@@ -600,135 +691,164 @@ export type CancelledTaskExecution = Omit<ReadyTaskExecution, 'status' | 'error'
  *
  * @category Task
  */
-export type ChildTask<TInput = unknown, TOutput = unknown> = {
-  task: Task<TInput, TOutput>
-  input: TInput
-  options?: TaskEnqueueOptions
-}
+export type ChildTask<TInput = unknown, TOutput = unknown> = undefined extends TInput
+  ? {
+      task: Task<TInput, TOutput>
+      input?: TInput
+      options?: TaskEnqueueOptions
+    }
+  : {
+      task: Task<TInput, TOutput>
+      input: TInput
+      options?: TaskEnqueueOptions
+    }
 
 /**
- * An execution of a child task.
+ * A finished child task execution.
+ *
+ * This type represents both successful and failed child task executions, similar to the result
+ * of `Promise.allSettled()`. The finalize function receives all children regardless of their
+ * completion status, allowing for custom error handling logic.
  *
  * @category Task
  */
-export type ChildTaskExecution = {
-  taskId: string
-  executionId: string
-}
-
-/**
- * A child task execution output.
- *
- * @category Task
- */
-export type ChildTaskExecutionOutput<TOutput = unknown> = {
-  index: number
-  taskId: string
-  executionId: string
-  output: TOutput
-}
+export type FinishedChildTaskExecution<TOutput = unknown> =
+  | CompletedChildTaskExecution<TOutput>
+  | ErroredChildTaskExecution
 
 /**
  * A completed child task execution.
  *
  * @category Task
  */
-export type CompletedChildTaskExecution = {
-  index: number
+export type CompletedChildTaskExecution<TOutput = unknown> = {
   taskId: string
   executionId: string
+  status: 'completed'
+  output: TOutput
 }
 
 /**
- * A child task execution error.
+ * An errored child task execution.
  *
  * @category Task
  */
-export type ChildTaskExecutionError = {
-  index: number
+export type ErroredChildTaskExecution = {
   taskId: string
   executionId: string
-  status: TaskExecutionStatusStorageValue
+  status: ErroredTaskExecutionStatus
   error: DurableExecutionErrorStorageValue
 }
 
 /**
- * A storage value for a child task execution error.
+ * A summary of a task execution.
  *
  * @category Task
  */
-export type ChildTaskExecutionErrorStorageValue = {
+export type TaskExecutionSummary = {
   taskId: string
   executionId: string
-  status: TaskExecutionStatusStorageValue
-  error: DurableExecutionErrorStorageValue
 }
 
 /**
- * A storage value for the status of a task.
+ * A status of a task execution.
  *
  * @category Task
  */
-export type TaskExecutionStatusStorageValue =
+export type TaskExecutionStatus =
   | 'ready'
   | 'running'
   | 'failed'
   | 'timed_out'
-  | 'waiting_for_children_tasks'
-  | 'children_tasks_failed'
-  | 'waiting_for_finalize_task'
-  | 'finalize_task_failed'
+  | 'waiting_for_children'
+  | 'waiting_for_finalize'
+  | 'finalize_failed'
   | 'completed'
   | 'cancelled'
 
 /**
- * The statuses of a task execution that are considered all.
+ * The statuses of a task execution that are considered errored.
  *
  * @category Task
  */
-export const ALL_TASK_EXECUTION_STATUSES_STORAGE_VALUES = [
+export type ErroredTaskExecutionStatus = 'failed' | 'timed_out' | 'finalize_failed' | 'cancelled'
+
+/**
+ * All possible statuses of a task execution.
+ *
+ * @category Task
+ */
+export const ALL_TASK_EXECUTION_STATUSES = [
   'ready',
   'running',
   'failed',
   'timed_out',
-  'waiting_for_children_tasks',
-  'children_tasks_failed',
-  'waiting_for_finalize_task',
-  'finalize_task_failed',
+  'waiting_for_children',
+  'waiting_for_finalize',
+  'finalize_failed',
   'completed',
   'cancelled',
-] as Array<TaskExecutionStatusStorageValue>
+] as Array<TaskExecutionStatus>
 
 /**
- * The statuses of a task execution that are considered active.
+ * All possible statuses of a task execution that are considered active.
  *
  * @category Task
  */
-export const ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_VALUES = [
+export const ACTIVE_TASK_EXECUTION_STATUSES = [
   'ready',
   'running',
-  'waiting_for_children_tasks',
-  'waiting_for_finalize_task',
-] as Array<TaskExecutionStatusStorageValue>
+  'waiting_for_children',
+  'waiting_for_finalize',
+] as Array<TaskExecutionStatus>
 
 /**
- * The statuses of a task execution that are considered finished.
+ * All possible statuses of a task execution that are considered finished.
  *
  * @category Task
  */
-export const FINISHED_TASK_EXECUTION_STATUSES_STORAGE_VALUES = [
+export const FINISHED_TASK_EXECUTION_STATUSES = [
   'failed',
   'timed_out',
-  'children_tasks_failed',
-  'finalize_task_failed',
+  'finalize_failed',
   'completed',
   'cancelled',
-] as Array<TaskExecutionStatusStorageValue>
+] as Array<TaskExecutionStatus>
 
 /**
- * The options for enqueuing a task. If provided, the task will be enqueued with the given
- * options. If not provided, the task will be enqueued with the default options provided in the
- * task options.
+ * All possible statuses of a task execution that are considered errored.
+ *
+ * @category Task
+ */
+export const ERRORED_TASK_EXECUTION_STATUSES = [
+  'failed',
+  'timed_out',
+  'finalize_failed',
+  'cancelled',
+] as Array<TaskExecutionStatus>
+
+/**
+ * Runtime options for enqueuing a task that override the task's default configuration.
+ *
+ * These options allow you to customize task behavior at enqueue time without
+ * changing the task definition. Useful for adjusting timeouts or retry behavior
+ * based on runtime conditions.
+ *
+ * @example
+ * ```ts
+ * // Enqueue with custom timeout for urgent processing
+ * const handle = await executor.enqueueTask(emailTask, input, {
+ *   timeoutMs: 60_000,  // 1 minute instead of default 30s
+ *   retryOptions: {
+ *     maxAttempts: 1,    // Don't retry urgent emails
+ *   }
+ * })
+ *
+ * // Enqueue with delay for rate limiting
+ * const handle = await executor.enqueueTask(apiTask, input, {
+ *   sleepMsBeforeRun: 5000  // Wait 5 seconds before starting
+ * })
+ * ```
  *
  * @category Task
  */
@@ -739,78 +859,181 @@ export type TaskEnqueueOptions = {
 }
 
 /**
- * A handle to a task execution. See
- * [Task execution](https://gpahal.github.io/durable-execution/index.html#task-execution) docs for
- * more details on how task executions work.
+ * A handle providing control and monitoring capabilities for a task execution.
  *
- * @example
+ * TaskExecutionHandle is returned when you enqueue a task and provides methods to:
+ * - Monitor execution progress and status
+ * - Wait for completion with polling
+ * - Cancel running or queued tasks
+ * - Access task metadata
+ *
+ * The handle is type-safe and provides strongly-typed access to the task's output.
+ *
+ * ## Common Patterns
+ *
+ * ### Fire-and-Forget
+ *
  * ```ts
- * const handle = await executor.enqueueTask(uploadFile, {filePath: 'file.txt'})
- * // Get the task execution
- * const execution = await handle.getExecution()
- *
- * // Wait for the task execution to be finished and get it
- * const finishedExecution = await handle.waitAndGetFinishedExecution()
- * if (finishedExecution.status === 'completed') {
- *   // Do something with the result
- * } else if (finishedExecution.status === 'failed') {
- *   // Do something with the error
- * } else if (finishedExecution.status === 'timed_out') {
- *   // Do something with the timeout
- * } else if (finishedExecution.status === 'cancelled') {
- *   // Do something with the cancellation
- * } else if (finishedExecution.status === 'children_tasks_failed') {
- *   // Do something with the children tasks failure
- * } else if (finishedExecution.status === 'finalize_task_failed') {
- *   // Do something with the finalize task failure
- * }
- *
- * // Cancel the task execution
- * await handle.cancel()
+ * await executor.enqueueTask(backgroundTask, input)
+ * // Don't wait for result, just enqueue and continue
  * ```
+ *
+ * ### Wait for Result
+ *
+ * ```ts
+ * const handle = await executor.enqueueTask(processingTask, input)
+ * const result = await handle.waitAndGetFinishedExecution()
+ *
+ * if (result.status === 'completed') {
+ *   console.log('Success:', result.output)
+ * } else {
+ *   console.error('Failed:', result.error?.message)
+ * }
+ * ```
+ *
+ * ### Polling with Cancellation
+ *
+ * ```ts
+ * const handle = await executor.enqueueTask(longTask, input)
+ *
+ * // Cancel after timeout
+ * setTimeout(() => handle.cancel(), 30_000)
+ *
+ * try {
+ *   const result = await handle.waitAndGetFinishedExecution({
+ *     pollingIntervalMs: 500  // Check every 500ms
+ *   })
+ * } catch (error) {
+ *   // Handle cancellation or other errors
+ * }
+ * ```
+ *
+ * ### Status Monitoring
+ *
+ * ```ts
+ * const handle = await executor.enqueueTask(batchTask, input)
+ *
+ * // Periodically check status
+ * const interval = setInterval(async () => {
+ *   const execution = await handle.getExecution()
+ *   console.log(`Status: ${execution.status}`)
+ *
+ *   if (execution.status === 'waiting_for_children') {
+ *     console.log(`Children: ${execution.activeChildrenCount} active`)
+ *   }
+ * }, 1000)
+ *
+ * await handle.waitAndGetFinishedExecution()
+ * clearInterval(interval)
+ * ```
+ *
+ * @see [Task execution](https://gpahal.github.io/durable-execution/index.html#task-execution)
+ * for detailed information about execution states.
  *
  * @category Task
  */
 export type TaskExecutionHandle<TOutput = unknown> = {
   /**
-   * Get the task id of the task.
+   * Get the unique identifier of the task definition.
    *
-   * @returns The task id of the task.
+   * @returns The task id (e.g., 'sendEmail', 'processFile')
    */
   getTaskId: () => string
   /**
-   * Get the execution id of the task execution.
+   * Get the unique identifier of this specific task execution instance.
    *
-   * @returns The execution id of the task execution.
+   * Each time a task is enqueued, it gets a new execution id for tracking.
+   *
+   * @returns The execution id (e.g., 'te_abc123')
    */
   getExecutionId: () => string
   /**
-   * Get the task execution.
+   * Get the current state and metadata of the task execution.
    *
-   * @returns The task execution.
+   * This provides a snapshot of the current execution state including status,
+   * timing information, error details, and child task information.
+   *
+   * @returns Promise resolving to the current task execution state
    */
   getExecution: () => Promise<TaskExecution<TOutput>>
   /**
-   * Wait for the task execution to be finished and get it.
+   * Wait for the task to reach a terminal state and return the final result.
    *
-   * @param options - The options for waiting for the task execution.
-   * @param options.signal - The signal to cancel the waiting.
-   * @param options.pollingIntervalMs - The polling interval in milliseconds. Defaults to 1000ms.
-   * @returns The task execution.
+   * This method polls the task execution status until it reaches a finished state
+   * (completed, failed, timed_out, finalize_failed, or cancelled).
+   *
+   * @param options - Configuration for the waiting behavior
+   * @param options.signal - Signal to cancel the waiting (not the task itself)
+   * @param options.pollingIntervalMs - How often to check status (default: 1000ms)
+   * @returns Promise resolving to the finished task execution with typed output
+   *
+   * @example
+   * ```ts
+   * const result = await handle.waitAndGetFinishedExecution({
+   *   pollingIntervalMs: 500,  // Check every 500ms
+   *   signal: abortController.signal  // Cancel waiting on user action
+   * })
+   * ```
    */
   waitAndGetFinishedExecution: (options?: {
     signal?: CancelSignal | AbortSignal
     pollingIntervalMs?: number
   }) => Promise<FinishedTaskExecution<TOutput>>
   /**
-   * Cancel the task execution.
+   * Request cancellation of the task execution.
+   *
+   * This marks the task as cancelled and signals any running execution to stop. The task can check
+   * `ctx.cancelSignal` to handle cancellation gracefully.
+   *
+   * - If the task is queued: It will be marked as cancelled without running
+   * - If the task is running: It receives a cancellation signal via `ctx.cancelSignal`
+   * - If the task has children: All child tasks are also cancelled
+   *
+   * @returns Promise that resolves when the cancellation request is processed
+   *
+   * @example
+   * ```ts
+   * const handle = await executor.enqueueTask(longRunningTask, input)
+   *
+   * // Cancel after 30 seconds
+   * setTimeout(() => handle.cancel(), 30_000)
+   *
+   * try {
+   *   await handle.waitAndGetFinishedExecution()
+   * } catch (error) {
+   *   // Task was cancelled
+   * }
+   * ```
    */
   cancel: () => Promise<void>
 }
 
 /**
- * The type of a sequence of tasks. Disallows empty sequences and sequences with tasks that have
- * different input and output types.
+ * Type constraint for sequential task execution where each task's output becomes the next task's
+ * input.
+ *
+ * This utility type ensures type safety in task pipelines by verifying that:
+ * - The sequence is not empty
+ * - Each task's output type matches the next task's input type
+ * - The overall pipeline type is valid
+ *
+ * Used internally by {@link DurableExecutor.sequentialTasks} to provide compile-time type checking
+ * for sequential task pipelines.
+ *
+ * @example
+ * ```ts
+ * // Valid sequential tasks
+ * const validSequence: SequentialTasks<[
+ *   Task<{name: string}, {id: number, name: string}>,
+ *   Task<{id: number, name: string}, {result: string}>
+ * ]> = [fetchUser, processUser]
+ *
+ * // Invalid: output/input types don't match
+ * const invalidSequence: SequentialTasks<[
+ *   Task<{name: string}, {id: number}>,
+ *   Task<{email: string}, {result: string}>  // Error: needs {id: number}
+ * ]> = [fetchUser, processEmail]  // TypeScript error
+ * ```
  *
  * @category Task
  */
@@ -819,8 +1042,12 @@ export type SequentialTasks<T extends ReadonlyArray<Task<unknown, unknown>>> = T
   : SequentialTasksHelper<T>
 
 /**
- * A helper type to create a sequence of tasks. See {@link SequentialTasks} for more details.
+ * Internal helper type for implementing sequential task type checking.
  *
+ * This type recursively validates that each task in the sequence can accept the output from the
+ * previous task as its input, ensuring type safety throughout the pipeline.
+ *
+ * @internal
  * @category Task
  */
 export type SequentialTasksHelper<T extends ReadonlyArray<Task<unknown, unknown>>> =
@@ -837,8 +1064,21 @@ export type SequentialTasksHelper<T extends ReadonlyArray<Task<unknown, unknown>
         : T
 
 /**
- * The type of the last element of an array of tasks.
+ * Utility type to extract the last task from a sequential task array.
  *
+ * Used to determine the final output type of a sequential task pipeline.
+ *
+ * @example
+ * ```ts
+ * type LastTask = LastTaskElementInArray<[
+ *   Task<string, number>,
+ *   Task<number, boolean>,
+ *   Task<boolean, string>
+ * ]>
+ * // Result: Task<boolean, string>
+ * ```
+ *
+ * @internal
  * @category Task
  */
 export type LastTaskElementInArray<T extends ReadonlyArray<Task<unknown, unknown>>> =

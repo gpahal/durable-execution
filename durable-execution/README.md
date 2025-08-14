@@ -11,12 +11,6 @@ logic failures, process failures, network connectivity issues, and other transie
 tasks logic should be idempotent as they may be executed multiple times if there is a process
 failure or if the task is retried.
 
-A durable executor can also be started as it's own separate server process. Tasks can be enqueued
-with api calls to the durable executor process. Utilities to create a typesafe implementation of
-the durable executor server are provided in the
-[durable-execution-orpc-utils](https://github.com/gpahal/durable-execution/tree/main/durable-execution-orpc-utils)
-package using the [oRPC](https://orpc.unnoq.com/) library.
-
 ## Properties of tasks
 
 - Tasks should be idempotent as they may be executed multiple times if there is a process failure
@@ -26,7 +20,36 @@ package using the [oRPC](https://orpc.unnoq.com/) library.
 - Tasks can execute children tasks in parallel and return output once all the children tasks are
   finished
 
-See the [Design](#design) section for more details on the internal workings.
+## Useful links
+
+- [Task examples](#task-examples) - examples of tasks
+- [DurableExecutionError](https://gpahal.github.io/durable-execution/classes/DurableExecutionError.html) -
+  details on error handling
+- [Design](#design) - details on the internal workings
+
+## Modes of operation
+
+### Embedded
+
+Use `DurableExecutor` directly to enqueue and execute tasks within the same process. This is the
+simplest way to use durable-execution for local or single-process scenarios.
+
+### Separate enqueueing and execution workers
+
+- `DurableExecutor` is used to execute tasks and is a long running process. Start as many as you
+  need based on the number of tasks you want to execute. These can also be used to enqueue tasks.
+- `DurableExecutorClient` is used to enqueue tasks and can be used from serverless functions or
+  other short lived processes. See
+  [DurableExecutorClient](https://gpahal.github.io/durable-execution/classes/DurableExecutorClient.html)
+  for more details.
+
+### Separate server process
+
+A durable executor can also be started as its own separate server process. Tasks can be enqueued
+with API calls to the durable executor process. Utilities to create a typesafe implementation of
+the durable executor server are provided in the
+[durable-execution-orpc-utils](https://github.com/gpahal/durable-execution/tree/main/durable-execution-orpc-utils)
+package using the [oRPC](https://orpc.unnoq.com/) library.
 
 ## Installation
 
@@ -47,21 +70,22 @@ pnpm add durable-execution
 ### Create a storage implementation
 
 Create a storage implementation that implements the
-[Storage](https://gpahal.github.io/durable-execution/types/Storage.html) type. The
-implementation should support async transactions that allow running multiple
+[TaskExecutionsStorage](https://gpahal.github.io/durable-execution/types/TaskExecutionsStorage.html)
+type. The implementation should support async transactions that allow running multiple
 transactions in parallel.
 
 - A storage implementation using Drizzle ORM is provided in the
   [durable-execution-storage-drizzle](https://github.com/gpahal/durable-execution/tree/main/durable-execution-storage-drizzle)
   package
 - A very simple in-memory implementation is provided in the
-  [src/storage.ts](https://github.com/gpahal/durable-execution/blob/main/durable-execution/src/storage.ts)
+  [`src/in-memory-storage.ts`](https://github.com/gpahal/durable-execution/blob/main/durable-execution/src/in-memory-storage.ts)
   file for testing and simple use cases
 
 ### Create a durable executor and manage its lifecycle
 
 ```ts
 import { DurableExecutor } from 'durable-execution'
+import { z } from 'zod'
 
 const executor = new DurableExecutor(storage)
 
@@ -83,7 +107,7 @@ await executor.shutdown()
 
 ```ts
 const extractFileTitle = executor
-  .inputSchema(v.object({ filePath: v.string() }))
+  .inputSchema(z.object({ filePath: z.string() }))
   .task({
     id: 'extractFileTitle',
     timeoutMs: 30_000, // 30 seconds
@@ -116,7 +140,7 @@ const summarizeFile = executor
   })
 
 const uploadFile = executor
-  .inputSchema(v.object({ filePath: v.string(), uploadUrl: v.string() }))
+  .inputSchema(z.object({ filePath: z.string(), uploadUrl: z.string() }))
   .parentTask({
     id: 'uploadFile',
     timeoutMs: 60_000, // 1 minute
@@ -129,7 +153,7 @@ const uploadFile = executor
           uploadUrl: input.uploadUrl,
           fileSize: 100,
         },
-        childrenTasks: [
+        children: [
           {
             task: extractFileTitle,
             input: { filePath: input.filePath },
@@ -141,10 +165,10 @@ const uploadFile = executor
         ],
       }
     },
-    finalizeTask: {
-      id: 'onUploadFileAndChildrenComplete',
+    finalize: {
+      id: 'uploadFileFinalize',
       timeoutMs: 60_000, // 1 minute
-      run: async (ctx, { output, childrenTaskExecutionsOutputs }) => {
+      run: async (ctx, { output, children }) => {
         // ... combine the output of the run function and children tasks
         return {
           filePath: output.filePath,
@@ -206,7 +230,9 @@ const taskA = executor.task({
 // Output: 'Hello, world!'
 ```
 
-### Validate input
+### Input Validation
+
+#### Custom Validation Function
 
 To validate input, use the `validateInput` method before the `task` method.
 
@@ -231,11 +257,9 @@ const taskA = executor
 // Output: 'Hello, world!'
 ```
 
-### Validate input with schema
+#### Schema-Based Validation
 
-To validate input with a schema, use the `inputSchema` method before the `task` method. Any
-[Standard Schema](https://standardschema.dev/) can be used as an input schema. In this example,
-zod is used as the input schema.
+The `inputSchema` method supports any [Standard Schema](https://standardschema.dev/) compatible validation library (Zod, Yup, Joi, etc.).
 
 ```ts
 import { z } from 'zod'
@@ -345,7 +369,7 @@ const parentTask = executor.parentTask({
   runParent: (ctx, input: { name: string }) => {
     return {
       output: `Hello from parent task, ${input.name}!`,
-      childrenTasks: [
+      children: [
         {
           task: taskA,
           input: { name: input.name },
@@ -377,9 +401,14 @@ flowchart TD
   parentTask --> taskB
 ```
 
-The `finalizeTask` task is run after the `runParent` function and all the children tasks complete.
-It is useful for combining the output of the `runParent` function and children tasks. The output
-of the `finalizeTask` task is the output of the parent task.
+The `finalize` task is run after the `runParent` function and all the children tasks complete. It
+is useful for combining the output of the `runParent` function and children tasks. The output of
+the `finalize` task is the output of the parent task.
+
+**Important**: The `finalize` function receives outputs from all children, including those that
+have failed. This behaves similar to `Promise.allSettled()` - you get the results regardless of
+individual child success or failure. This allows you to implement custom error handling logic, such
+as failing the parent only if critical children fail, or providing partial results.
 
 ```ts
 const taskA = executor.task({
@@ -403,7 +432,7 @@ const parentTask = executor.parentTask({
   runParent: (ctx, input: { name: string }) => {
     return {
       output: `Hello from parent task, ${input.name}!`,
-      childrenTasks: [
+      children: [
         {
           task: taskA,
           input: { name: input.name },
@@ -415,14 +444,23 @@ const parentTask = executor.parentTask({
       ],
     }
   },
-  finalizeTask: {
+  finalize: {
     id: 'onParentRunAndChildrenComplete',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+    run: (ctx, { output, children }) => {
+      const child1 = children[0]!
+      const child2 = children[1]!
+
+      // The finalize function receives all children executions, including failed ones.
+      // This allows you to implement custom error handling logic.
+      if (child1.status !== 'completed' || child2.status !== 'completed') {
+        throw DurableExecutionError.nonRetryable('Children failed')
+      }
+
       return {
         parentOutput: output,
-        taskAOutput: childrenTaskExecutionsOutputs[0]!.output as string,
-        taskBOutput: childrenTaskExecutionsOutputs[1]!.output as string,
+        taskAOutput: child1.output as string,
+        taskBOutput: child2.output as string,
       }
     },
   },
@@ -433,6 +471,140 @@ const parentTask = executor.parentTask({
 //   parentOutput: 'Hello from parent task, world!',
 //   taskAOutput: 'Hello from task A, world!',
 //   taskBOutput: 'Hello from task B, world!',
+// }
+```
+
+### Handling failed children in finalize (Promise.allSettled pattern)
+
+The `finalize` function receives results from all children, including failed ones, similar to
+`Promise.allSettled()`. This allows you to implement custom error handling logic.
+
+```ts
+const taskA = executor.task({
+  id: 'a',
+  timeoutMs: 1000,
+  run: (ctx, input: { name: string }) => {
+    return `Hello from task A, ${input.name}!`
+  },
+})
+const taskB = executor.task({
+  id: 'b',
+  timeoutMs: 1000,
+  run: () => {
+    throw new Error('Failed')
+  },
+})
+
+const parentTask = executor.parentTask({
+  id: 'parent',
+  timeoutMs: 1000,
+  runParent: (ctx, input: { name: string }) => {
+    return {
+      output: `Hello from parent task, ${input.name}!`,
+      children: [
+        {
+          task: taskA,
+          input: { name: input.name },
+        },
+        {
+          task: taskB,
+        },
+      ],
+    }
+  },
+  finalize: {
+    id: 'onParentRunAndChildrenComplete',
+    timeoutMs: 1000,
+    run: (ctx, { output, children }) => {
+      const child1 = children[0]!
+      const child2 = children[1]!
+
+      // The finalize function receives all children executions, including failed ones.
+      // This allows you to implement custom error handling logic.
+      if (child1.status !== 'completed' || child2.status !== 'completed') {
+        throw DurableExecutionError.nonRetryable('Children failed')
+      }
+
+      return {
+        parentOutput: output,
+        taskAOutput: child1.output as string,
+        taskBOutput: child2.output as string,
+      }
+    },
+  },
+})
+
+// Input: { name: 'world' }
+// Finished execution: {
+//   status: 'finalize_failed',
+//   error: {
+//     message: 'Children failed',
+//     errorType: 'generic',
+//     isRetryable: false,
+//   },
+//   ... other fields
+// }
+```
+
+#### Alternative: Partial success handling
+
+```ts
+const taskA = executor.task({
+  id: 'a',
+  timeoutMs: 1000,
+  run: (ctx, input: { name: string }) => {
+    return `Hello from task A, ${input.name}!`
+  },
+})
+const taskB = executor.task({
+  id: 'b',
+  timeoutMs: 1000,
+  run: () => {
+    throw new Error('Failed')
+  },
+})
+
+const resilientParentTask = executor.parentTask({
+  id: 'resilientParent',
+  timeoutMs: 1000,
+  runParent: (ctx, input: { name: string }) => {
+    return {
+      output: `Hello from parent task, ${input.name}!`,
+      children: [
+        { task: taskA, input: { name: input.name } },
+        { task: taskB },
+      ],
+    }
+  },
+  finalize: {
+    id: 'resilientFinalize',
+    timeoutMs: 1000,
+    run: (ctx, { output, children }) => {
+      const results = children.map((child, index) => ({
+        index,
+        success: child.status === 'completed',
+        result: child.status === 'completed' ? child.output : child.error?.message
+      }))
+
+      const successfulResults = results.filter(r => r.success)
+
+      // Continue even if some children failed.
+      return {
+        parentOutput: output,
+        successfulCount: successfulResults.length,
+        totalCount: children.length,
+        results
+      }
+    },
+  },
+})
+
+// Input: { name: 'world' }
+// Output: {
+//   parentOutput: 'Hello from parent task, world!',
+//   successfulCount: 1,
+//   totalCount: 2,
+//   results: [{ index: 0, success: true, result: 'Hello from task A, world!' }, { index: 1, success: false, result: 'Failed' }],
 // }
 ```
 
@@ -510,9 +682,9 @@ The sequential tasks can also be created manually just by using the `parentTask`
 the `sequentialTasks` method is more convenient, it is useful to know how to create sequential
 tasks manually.
 
-The `finalizeTask` task can itself be a parent task with parallel children. This property can be
-used to spawn parallel children from the task `runParent` function and then using the
-`finalizeTask` task to run a sequential task.
+The `finalize` task can itself be a parent task with parallel children. This property can be used
+to spawn parallel children from the task `runParent` function and then using the `finalize` task
+to run a sequential task.
 
 ```ts
 const taskC = executor.task({
@@ -533,22 +705,27 @@ const taskB = executor.parentTask({
       },
     }
   },
-  finalizeTask: {
+  finalize: {
     id: 'taskBFinalize',
     timeoutMs: 1000,
     runParent: (ctx, { output }) => {
       return {
         output: output.taskBOutput,
-        childrenTasks: [{ task: taskC, input: { name: output.name } }],
+        children: [{ task: taskC, input: { name: output.name } }],
       }
     },
-    finalizeTask: {
+    finalize: {
       id: 'taskBFinalizeNested',
       timeoutMs: 1000,
-      run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+      run: (ctx, { output, children }) => {
+        const child = children[0]!
+        if (child.status !== 'completed') {
+          throw DurableExecutionError.nonRetryable('Child failed')
+        }
+
         return {
           taskBOutput: output,
-          taskCOutput: childrenTaskExecutionsOutputs[0]!.output as string,
+          taskCOutput: child.output as string,
         }
       },
     },
@@ -565,20 +742,25 @@ const taskA = executor.parentTask({
       },
     }
   },
-  finalizeTask: {
+  finalize: {
     id: 'taskAFinalize',
     timeoutMs: 1000,
     runParent: (ctx, { output }) => {
       return {
         output: output.taskAOutput,
-        childrenTasks: [{ task: taskB, input: { name: output.name } }],
+        children: [{ task: taskB, input: { name: output.name } }],
       }
     },
-    finalizeTask: {
+    finalize: {
       id: 'taskAFinalizeNested',
       timeoutMs: 1000,
-      run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
-        const taskBOutput = childrenTaskExecutionsOutputs[0]!.output as {
+      run: (ctx, { output, children }) => {
+        const child = children[0]!
+        if (child.status !== 'completed') {
+          throw DurableExecutionError.nonRetryable('Child failed')
+        }
+
+        const taskBOutput = child.output as {
           taskBOutput: string
           taskCOutput: string
         }
@@ -655,21 +837,27 @@ const taskA = executor.parentTask({
         name: input.name,
         taskAOutput: `Hello from task A, ${input.name}!`,
       },
-      childrenTasks: [
+      children: [
         { task: taskA1, input: { name: input.name } },
         { task: taskA2, input: { name: input.name } },
       ],
     }
   },
-  finalizeTask: {
+  finalize: {
     id: 'taskAFinalize',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+    run: (ctx, { output, children }) => {
+      const child1 = children[0]!
+      const child2 = children[1]!
+      if (child1.status !== 'completed' || child2.status !== 'completed') {
+        throw DurableExecutionError.nonRetryable('Children failed')
+      }
+
       return {
         name: output.name,
         taskAOutput: output.taskAOutput,
-        taskA1Output: childrenTaskExecutionsOutputs[0]!.output as string,
-        taskA2Output: childrenTaskExecutionsOutputs[1]!.output as string,
+        taskA1Output: child1.output as string,
+        taskA2Output: child2.output as string,
       }
     },
   },
@@ -688,20 +876,26 @@ const taskB = executor.parentTask({
         taskA2Output: input.taskA2Output,
         taskBOutput: `Hello from task B, ${input.name}!`,
       },
-      childrenTasks: [
+      children: [
         { task: taskB1, input: { name: input.name } },
         { task: taskB2, input: { name: input.name } },
       ],
     }
   },
-  finalizeTask: {
+  finalize: {
     id: 'taskBFinalize',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+    run: (ctx, { output, children }) => {
+      const child1 = children[0]!
+      const child2 = children[1]!
+      if (child1.status !== 'completed' || child2.status !== 'completed') {
+        throw DurableExecutionError.nonRetryable('Children failed')
+      }
+
       return {
         ...output,
-        taskB1Output: childrenTaskExecutionsOutputs[0]!.output as string,
-        taskB2Output: childrenTaskExecutionsOutputs[1]!.output as string,
+        taskB1Output: child1.output as string,
+        taskB2Output: child2.output as string,
       }
     },
   },
@@ -795,22 +989,33 @@ const taskA = executor.parentTask({
   runParent: (ctx, input: { name: string }) => {
     return {
       output: `Hello from task A, ${input.name}!`,
-      childrenTasks: [
+      children: [
         { task: taskA1, input: { name: input.name } },
         { task: taskA2, input: { name: input.name } },
         { task: taskA3, input: { name: input.name } },
       ],
     }
   },
-  finalizeTask: {
+  finalize: {
     id: 'taskAFinalize',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+    run: (ctx, { output, children }) => {
+      const child1 = children[0]!
+      const child2 = children[1]!
+      const child3 = children[2]!
+      if (
+        child1.status !== 'completed' ||
+        child2.status !== 'completed' ||
+        child3.status !== 'completed'
+      ) {
+        throw DurableExecutionError.nonRetryable('Children failed')
+      }
+
       return {
         taskAOutput: output,
-        taskA1Output: childrenTaskExecutionsOutputs[0]!.output as string,
-        taskA2Output: childrenTaskExecutionsOutputs[1]!.output as string,
-        taskA3Output: childrenTaskExecutionsOutputs[2]!.output as string,
+        taskA1Output: child1.output as string,
+        taskA2Output: child2.output as string,
+        taskA3Output: child3.output as string,
       }
     },
   },
@@ -822,23 +1027,29 @@ const rootTask = executor.parentTask({
   runParent: (ctx, input: { name: string }) => {
     return {
       output: `Hello from root task, ${input.name}!`,
-      childrenTasks: [
+      children: [
         { task: taskA, input: { name: input.name } },
         { task: taskB, input: { name: input.name } },
       ],
     }
   },
-  finalizeTask: {
+  finalize: {
     id: 'rootFinalize',
     timeoutMs: 1000,
-    run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
-      const taskAOutput = childrenTaskExecutionsOutputs[0]!.output as {
+    run: (ctx, { output, children }) => {
+      const child1 = children[0]!
+      const child2 = children[1]!
+      if (child1.status !== 'completed' || child2.status !== 'completed') {
+        throw DurableExecutionError.nonRetryable('Children failed')
+      }
+
+      const taskAOutput = child1.output as {
         taskAOutput: string
         taskA1Output: string
         taskA2Output: string
         taskA3Output: string
       }
-      const taskBOutput = childrenTaskExecutionsOutputs[1]!.output as {
+      const taskBOutput = child2.output as {
         taskB1Output: string
         taskB2Output: string
         taskB3Output: string
@@ -873,7 +1084,7 @@ const rootTask = executor.parentTask({
 ### Recursive task
 
 Recursive tasks require some type annotations to be able to infer the input and output types, since
-we are using the same variable inside the `runParent` function. Use the `finalizeTask` task to
+we are using the same variable inside the `runParent` function. Use the `finalize` task to
 coordinate the output of the recursive task and children tasks.
 
 ```ts
@@ -886,19 +1097,23 @@ const recursiveTask: Task<{ index: number }, { count: number }> = executor
       await sleep(1)
       return {
         output: undefined,
-        childrenTasks:
+        children:
           input.index >= 9 ? [] : [{ task: recursiveTask, input: { index: input.index + 1 } }],
       }
     },
-    finalizeTask: {
+    finalize: {
       id: 'recursiveFinalize',
       timeoutMs: 1000,
-      run: (ctx, { childrenTaskExecutionsOutputs }) => {
+      run: (ctx, { children }) => {
+        if (children.some((child) => child.status !== 'completed')) {
+          throw DurableExecutionError.nonRetryable('Children failed')
+        }
+
         return {
           count:
             1 +
-            childrenTaskExecutionsOutputs.reduce(
-              (acc, childOutput) => acc + (childOutput.output as { count: number }).count,
+            (children as Array<CompletedChildTaskExecution>).reduce(
+              (acc, child) => acc + (child.output as { count: number }).count,
               0,
             ),
         }
@@ -914,10 +1129,9 @@ const recursiveTask: Task<{ index: number }, { count: number }> = executor
 
 ### Polling task
 
-Polling tasks are useful when you want to wait for a value to be available. The
-`sleepMsBeforeRun` option is used to wait for a certain amount of time before attempting to
-get the value again. The `finalizeTask` task is used to combine the output of the polling task and
-children tasks.
+Polling tasks are useful when you want to wait for a value to be available. The `sleepMsBeforeRun`
+option is used to wait for a certain amount of time before attempting to get the value again. The
+`finalize` task is used to combine the output of the polling task and children tasks.
 
 ```ts
 let value: number | undefined
@@ -952,13 +1166,13 @@ const pollingTask: Task<{ prevCount: number }, { count: number; value: number }>
         } as
           | { isDone: false; value: undefined; prevCount: number }
           | { isDone: true; value: number; prevCount: number },
-        childrenTasks: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
+        children: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
       }
     },
-    finalizeTask: {
+    finalize: {
       id: 'pollingFinalize',
       timeoutMs: 1000,
-      run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+      run: (ctx, { output, children }) => {
         if (output.isDone) {
           return {
             count: output.prevCount + 1,
@@ -966,7 +1180,12 @@ const pollingTask: Task<{ prevCount: number }, { count: number; value: number }>
           }
         }
 
-        return childrenTaskExecutionsOutputs[0]!.output as {
+        const child = children[0]!
+        if (child.status !== 'completed') {
+          throw DurableExecutionError.nonRetryable('Child failed')
+        }
+
+        return child.output as {
           count: number
           value: number
         }
@@ -993,10 +1212,11 @@ flowchart TD
   A[Enqueue task]-->B[status=ready<br/>isClosed=false]
   B-->C[status=running]
   C-->|run function failed| D[status=failed]
-  C-->|run function timed out| E[status=timed_out]
+  C-->|run function timed_out| E[status=timed_out]
   C-->|run function completed| F(See the diagram below)
-  D-->|close| Z[isClosed=true]
-  E-->|close| Z
+  D-->|close| Y[close_status=closing]
+  E-->|close| Y
+  Y-->|complete closing| Z[close_status=closed]
 ```
 
 The following diagram shows the internal state transition of the task execution once it's run
@@ -1005,17 +1225,16 @@ function completes.
 ```mermaid
 flowchart TD
   A[Run function completed]-->B{Did task return children?}
-  B-->|Yes| C[status=waiting_for_children_tasks]
-  C-->|One or more children failed| D[status=children_tasks_failed]
-  C-->|All children completed| E{Does task have finalizeTask?}
-  E-->|Yes| F[status=waiting_for_finalize_task]
-  E-->|No| G[status=completed]
-  F-->|finalizeTask failed| H[status=finalize_task_failed]
-  F-->|finalizeTask completed| G
-  B-->|No| E
-  D-->|close| Z[isClosed=true]
-  G-->|close| Z
-  H-->|close| Z
+  B-->|Yes| C[status=waiting_for_children]
+  C-->|All children completed| D{Does task have finalize?}
+  D-->|Yes| E[status=waiting_for_finalize]
+  D-->|No| F[status=completed]
+  E-->|finalize failed| G[status=finalize_failed]
+  E-->|finalize completed| F
+  B-->|No| D
+  F-->|close| Y[close_status=closing]
+  G-->|close| Y
+  Y-->|complete closing| Z[close_status=closed]
 ```
 
 A task is considered finished when it's in one of the following states:
@@ -1023,8 +1242,7 @@ A task is considered finished when it's in one of the following states:
 - completed
 - failed
 - timed_out
-- children_tasks_failed
-- finalize_task_failed
+- finalize_failed
 - cancelled
 
 If a task is in any other state, it can be cancelled. The task will be marked as cancelled and
@@ -1036,17 +1254,17 @@ the steps that happen during the closure process:
 #### If the task completed successfully
 
 - If the task has a parent task, and all other siblings of the current task have also completed,
-  the parent task is marked as completed if it doesn't have a finalizeTask task. If the parent task
-  has a `finalizeTask` task, the parent task is marked as `waiting_for_finalize_task` and the
-  `finalizeTask` task is enqueued
-- If the task was a `finalizeTask` task, the parent task is marked as completed
+  the parent task is marked as completed if it doesn't have a `finalize` task. If the parent task
+  has a `finalize` task, the parent task is marked as `waiting_for_finalize` and the `finalize`
+  task is enqueued
+- If the task was a `finalize` task, the parent task is marked as completed
 
-#### If the task failed for any reason
+#### If the task errored for any reason
 
 - If the task has a parent task and the parent task is still waiting for children to complete, the
   parent task is marked as failed. If the parent task has already failed, nothing happens
 - If the task has children, all of children which haven't finished are cancelled
-- If the task was a `finalizeTask` task, the parent task is marked as `finalize_task_failed`
+- If the task was a `finalize` task, the parent task is marked as `finalize_failed`
 
 ### Cancellation
 
@@ -1068,7 +1286,7 @@ marked as ready to run again.
 
 This ensures that the task execution is resilient to process failures. If a process never fails
 during the execution, the task execution will end up in a finished state. Only in the case of a
-process failure, the task execution will be in running state beyong it's timeout.
+process failure, the task execution will be in running state beyond its timeout.
 
 ### Shutdown
 
@@ -1081,8 +1299,9 @@ On shutdown, these happen in this order:
 
 ## Links
 
-- Durable Execution docs: <https://gpahal.github.io/durable-execution>
-- Repository: <https://github.com/gpahal/durable-execution>
+- [Durable Execution docs](https://gpahal.github.io/durable-execution)
+- [GitHub](https://github.com/gpahal/durable-execution)
+- [NPM package](https://www.npmjs.com/package/durable-execution)
 
 ## License
 

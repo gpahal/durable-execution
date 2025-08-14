@@ -2,7 +2,22 @@ import type { StandardSchemaV1 } from '@standard-schema/spec'
 import { getDotPath } from '@standard-schema/utils'
 import { customAlphabet } from 'nanoid'
 
+import { createCancellablePromise, type CancelSignal } from '@gpahal/std/cancel'
 import { sleep } from '@gpahal/std/promises'
+
+import { DurableExecutionCancelledError } from './errors'
+
+export async function createCancellablePromiseCustom<T>(
+  promise: Promise<T>,
+  signal?: CancelSignal,
+  error?: Error,
+): Promise<T> {
+  return await createCancellablePromise(
+    promise,
+    signal,
+    error ?? new DurableExecutionCancelledError(),
+  )
+}
 
 /**
  * Sleep with jitter.

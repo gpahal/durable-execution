@@ -1,6 +1,6 @@
 import type { ClientRest, FriendlyClientOptions } from '@orpc/client'
-import type { ErrorMap } from '@orpc/contract'
-import type { ClientContext, ProcedureClient, Schema } from '@orpc/server'
+import type { ErrorMap, Meta } from '@orpc/contract'
+import type { ClientContext, Context, ProcedureClient, Schema } from '@orpc/server'
 import type {
   AnyTasks,
   InferTaskInput,
@@ -9,42 +9,94 @@ import type {
   TaskExecution,
 } from 'durable-execution'
 
-/**
- * A client for task procedures. Two procedures are created:
- * - `enqueueTask` - Enqueues a task
- * - `getTaskExecution` - Gets the execution of a task
- *
- * Calling these procedures will make a request to the server.
- */
-export type TasksRouterClient<
-  TClientContext extends ClientContext,
-  TErrorMap extends ErrorMap,
-  TTasks extends AnyTasks,
-> = {
-  enqueueTask: ProcedureClient<
-    TClientContext,
-    Schema<
-      { taskId: keyof TTasks & string; input: unknown; options?: TaskEnqueueOptions },
-      { taskId: keyof TTasks & string; input: unknown; options?: TaskEnqueueOptions }
-    >,
-    Schema<string, string>,
-    TErrorMap
-  >
-  getTaskExecution: ProcedureClient<
-    TClientContext,
-    Schema<
-      { taskId: keyof TTasks & string; executionId: string },
-      { taskId: keyof TTasks & string; executionId: string }
-    >,
-    Schema<TaskExecution, TaskExecution>,
-    TErrorMap
-  >
-}
+import type { TasksRouter } from './server'
 
 /**
- * A handle for a task. It can be used to enqueue a task or get the execution of a task execution
- * by making a request to the server. It is created by the {@link createTaskClientHandles}
- * function.
+ * Client type for interacting with a durable executor server's task procedures.
+ *
+ * Provides typed access to:
+ * - `enqueueTask` - Submit tasks for execution
+ * - `getTaskExecution` - Get task execution status
+ *
+ * @example
+ * ```ts
+ * import type { TasksRouterClient } from 'durable-execution-orpc-utils/client'
+ * import { createORPCClient } from '@orpc/client'
+ *
+ * import type { tasksRouter } from './executor-server'
+ *
+ * // Create typed client
+ * const client: TasksRouterClient<typeof tasksRouter> =
+ *   createORPCClient(link)
+ *
+ * // Enqueue a task
+ * const executionId = await client.enqueueTask({
+ *   taskId: 'sendEmail',
+ *   input: { to: 'user@example.com', subject: 'Hello' },
+ *   options: { delayMs: 5000 } // Optional delay
+ * })
+ *
+ * // Check execution status
+ * const execution = await client.getTaskExecution({
+ *   taskId: 'sendEmail',
+ *   executionId
+ * })
+ * ```
+ */
+export type TasksRouterClient<
+  TTasksRouter extends TasksRouter<AnyTasks, Context, Context, ErrorMap, Meta>,
+  TClientContext extends ClientContext = Record<never, never>,
+> =
+  TTasksRouter extends TasksRouter<infer TTasks, Context, Context, infer TErrorMap, Meta>
+    ? {
+        enqueueTask: ProcedureClient<
+          TClientContext,
+          Schema<
+            { taskId: keyof TTasks & string; input: unknown; options?: TaskEnqueueOptions },
+            { taskId: keyof TTasks & string; input: unknown; options?: TaskEnqueueOptions }
+          >,
+          Schema<string, string>,
+          TErrorMap
+        >
+        getTaskExecution: ProcedureClient<
+          TClientContext,
+          Schema<
+            { taskId: keyof TTasks & string; executionId: string },
+            { taskId: keyof TTasks & string; executionId: string }
+          >,
+          Schema<TaskExecution, TaskExecution>,
+          TErrorMap
+        >
+      }
+    : never
+
+/**
+ * Type-safe handle for a specific task.
+ *
+ * Methods:
+ * - `enqueue` - Submit task with typed input
+ * - `getExecution` - Get execution status
+ *
+ * @example
+ * ```ts
+ * // Given a handle for a 'sendEmail' task
+ * const emailHandle: TaskClientHandle<
+ *   { to: string; subject: string },
+ *   { messageId: string }
+ * > = handles.sendEmail
+ *
+ * // Enqueue with type-safe input
+ * const executionId = await emailHandle.enqueue({
+ *   to: 'user@example.com',
+ *   subject: 'Welcome!'
+ * })
+ *
+ * // Get typed execution result
+ * const execution = await emailHandle.getExecution(executionId)
+ * if (execution.status === 'completed') {
+ *   console.log('Message id:', execution.output.messageId)
+ * }
+ * ```
  */
 export type TaskClientHandle<TInput, TOutput> = {
   enqueue: (
@@ -56,29 +108,85 @@ export type TaskClientHandle<TInput, TOutput> = {
 }
 
 /**
- * A record of task client handles. It is created by the {@link createTaskClientHandles}
- * function.
+ * Record mapping task ids to their typed client handles.
+ *
+ * @example
+ * ```ts
+ * type MyHandles = InferTaskClientHandles<{
+ *   sendEmail: Task<{ to: string }, { messageId: string }>,
+ *   processPayment: Task<{ amount: number }, { transactionId: string }>
+ * }>
+ *
+ * // MyHandles will be:
+ * // {
+ * //   sendEmail: TaskClientHandle<{ to: string }, { messageId: string }>,
+ * //   processPayment: TaskClientHandle<{ amount: number }, { transactionId: string }>
+ * // }
+ * ```
  */
 export type InferTaskClientHandles<TTasks extends AnyTasks> = {
   [K in keyof TTasks]: TaskClientHandle<InferTaskInput<TTasks[K]>, InferTaskOutput<TTasks[K]>>
 }
 
 /**
- * Creates a record of task client handles based on a record of tasks received from the server. The
- * client handles can be used to enqueue a task or get the execution of a task execution by making
- * a request to the server.
+ * Creates type-safe handles for all tasks on a durable executor server.
  *
- * @param client - The client to use.
- * @param tasks - The tasks to create handles for.
- * @param rest - The client options.
- * @returns A record of task client handles.
+ * Each handle provides typed `enqueue` and `getExecution` methods, eliminating the need to specify
+ * task ids repeatedly.
+ *
+ * @example
+ * ```ts
+ * import { createTaskClientHandles } from 'durable-execution-orpc-utils/client'
+ * import { createORPCClient } from '@orpc/client'
+ * import { RPCLink } from '@orpc/client/fetch'
+ *
+ * import { tasks, type tasksRouter } from './executor-server'
+ *
+ * // Create client for the tasks router
+ * const link = new RPCLink({
+ *   url: 'http://localhost:3000/rpc',
+ *   headers: () => ({ authorization: 'Bearer token' }),
+ * })
+ * const client: TasksRouterClient<typeof tasksRouter> = createORPCClient(link)
+ *
+ * // Create handles with optional default options
+ * const handles = createTaskClientHandles(
+ *   client,
+ *   tasks,
+ *   {
+ *     headers: () => ({ 'x-request-id': generateId() })
+ *   }
+ * )
+ *
+ * // Use handles with full type safety
+ * const emailId = await handles.sendEmail.enqueue({
+ *   to: 'user@example.com',
+ *   subject: 'Hello',
+ *   body: 'Welcome to our service!'
+ * })
+ *
+ * // Check status
+ * const emailExecution = await handles.sendEmail.getExecution(emailId)
+ *
+ * // Different task, different types
+ * const paymentId = await handles.processPayment.enqueue({
+ *   amount: 99.99,
+ *   currency: 'USD',
+ *   customerId: 'cust_123'
+ * })
+ * ```
+ *
+ * @param client - The TasksRouterClient connected to your durable executor server
+ * @param tasks - The record of tasks available on the server (used for type inference)
+ * @param rest - Optional client configuration (headers, auth, etc.) applied to all requests
+ * @returns A record where each key is a task id and each value is a TaskClientHandle
  */
 export function createTaskClientHandles<
-  TClientContext extends ClientContext,
-  TErrorMap extends ErrorMap,
   TTasks extends AnyTasks,
+  TTasksRouter extends TasksRouter<TTasks, Context, Context, ErrorMap, Meta>,
+  TClientContext extends ClientContext = Record<never, never>,
 >(
-  client: TasksRouterClient<TClientContext, TErrorMap, TTasks>,
+  client: TasksRouterClient<TTasksRouter, TClientContext>,
   tasks: TTasks,
   ...rest: Record<never, never> extends TClientContext
     ? [options?: FriendlyClientOptions<TClientContext>]

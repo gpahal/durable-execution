@@ -1,21 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-
 import {
   DurableExecutionError,
   DurableExecutionNotFoundError,
   DurableExecutor,
   DurableExecutorClient,
+  InMemoryTaskExecutionsStorage,
 } from '../src'
-import { InMemoryStorage } from './in-memory-storage'
 
 describe('executorClient', () => {
-  let storage: InMemoryStorage
+  let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
   beforeEach(() => {
-    storage = new InMemoryStorage({ enableDebug: false })
+    storage = new InMemoryTaskExecutionsStorage()
     executor = new DurableExecutor(storage, {
-      enableDebug: false,
+      logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
     executor.startBackgroundProcesses()
@@ -105,22 +103,6 @@ describe('executorClient', () => {
         maxSerializedInputDataSize: 'invalid',
       })
     }).toThrow('Invalid options')
-  })
-
-  it('should disable debug logging when enableDebug is false', () => {
-    const testTask = executor.task({
-      id: 'test',
-      timeoutMs: 10_000,
-      run: () => 'test',
-    })
-
-    const tasks = { test: testTask }
-
-    const executorClient = new DurableExecutorClient(storage, tasks, {
-      enableDebug: false,
-    })
-
-    expect(executorClient).toBeDefined()
   })
 
   it('should throw when enqueuing unknown task', async () => {

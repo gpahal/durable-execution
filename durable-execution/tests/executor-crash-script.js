@@ -1,7 +1,6 @@
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutor } from '../src'
-import { InMemoryStorage } from './in-memory-storage'
+import { DurableExecutor, InMemoryTaskExecutionsStorage } from '../src'
 
 async function main() {
   if (process.argv.length < 3) {
@@ -10,7 +9,7 @@ async function main() {
   }
 
   const filename = process.argv[2]
-  const storage = new InMemoryStorage({ enableDebug: false })
+  const storage = new InMemoryTaskExecutionsStorage()
   const onCrash = () => {
     void storage.saveToFile(filename).then(() => {
       // eslint-disable-next-line unicorn/no-process-exit
@@ -21,7 +20,6 @@ async function main() {
   process.on('SIGTERM', onCrash)
 
   const executor = new DurableExecutor(storage, {
-    enableDebug: false,
     backgroundProcessIntraBatchSleepMs: 50,
   })
   executor.startBackgroundProcesses()

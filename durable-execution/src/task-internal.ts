@@ -7,7 +7,6 @@ import {
 } from '@gpahal/std/cancel'
 import { sleep } from '@gpahal/std/promises'
 
-import { createCancellablePromiseCustom } from './cancel'
 import {
   convertDurableExecutionErrorToStorageValue,
   DurableExecutionCancelledError,
@@ -16,11 +15,14 @@ import {
   DurableExecutionTimedOutError,
 } from './errors'
 import type { Logger } from './logger'
-import type { WrappedSerializer } from './serializer'
-import { convertTaskExecutionStorageValueToTaskExecution, type StorageInternal } from './storage'
+import type { SerializerInternal } from './serializer'
 import {
-  ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
-  FINISHED_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
+  convertTaskExecutionStorageValueToTaskExecution,
+  type TaskExecutionsStorageInternal,
+} from './storage'
+import {
+  ACTIVE_TASK_EXECUTION_STATUSES,
+  FINISHED_TASK_EXECUTION_STATUSES,
   isFinalizeTaskOptionsParentTaskOptions,
   isFinalizeTaskOptionsTaskOptions,
   type ChildTask,
@@ -33,23 +35,23 @@ import {
   type TaskRetryOptions,
   type TaskRunContext,
 } from './task'
-import { generateId } from './utils'
+import { createCancellablePromiseCustom, generateId } from './utils'
 
 export type TaskOptionsInternal = {
+  isParentTaskOptions: boolean
   id: string
   retryOptions: TaskRetryOptions | undefined
   sleepMsBeforeRun: number | undefined
   timeoutMs: number
   validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
-  disableChildrenTaskExecutionsOutputsInOutput: boolean
   runParent: (
     ctx: TaskRunContext,
     input: unknown,
   ) => Promise<{
     output: unknown
-    childrenTasks: Array<ChildTask>
+    children: Array<ChildTask>
   }>
-  finalizeTask: TaskOptionsInternal | undefined
+  finalize: TaskOptionsInternal | undefined
 }
 
 function convertTaskOptionsOptionsInternal(
@@ -57,20 +59,20 @@ function convertTaskOptionsOptionsInternal(
   validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
 ): TaskOptionsInternal {
   return {
+    isParentTaskOptions: false,
     id: taskOptions.id,
     retryOptions: taskOptions.retryOptions,
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
     timeoutMs: taskOptions.timeoutMs,
     validateInputFn,
-    disableChildrenTaskExecutionsOutputsInOutput: true,
     runParent: async (ctx, input) => {
       const output = await taskOptions.run(ctx, input)
       return {
         output,
-        childrenTasks: [],
+        children: [],
       }
     },
-    finalizeTask: undefined,
+    finalize: undefined,
   }
 }
 
@@ -79,28 +81,28 @@ function convertParentTaskOptionsOptionsInternal(
   validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
 ): TaskOptionsInternal {
   return {
+    isParentTaskOptions: true,
     id: taskOptions.id,
     retryOptions: taskOptions.retryOptions,
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
     timeoutMs: taskOptions.timeoutMs,
     validateInputFn,
-    disableChildrenTaskExecutionsOutputsInOutput: false,
     runParent: async (ctx, input) => {
       const runParentOutput = await taskOptions.runParent(ctx, input)
       return {
         output: runParentOutput.output,
-        childrenTasks: runParentOutput.childrenTasks ?? [],
+        children: runParentOutput.children ?? [],
       }
     },
-    finalizeTask: taskOptions.finalizeTask
-      ? isFinalizeTaskOptionsParentTaskOptions(taskOptions.finalizeTask)
+    finalize: taskOptions.finalize
+      ? isFinalizeTaskOptionsParentTaskOptions(taskOptions.finalize)
         ? convertParentTaskOptionsOptionsInternal(
-            taskOptions.finalizeTask as ParentTaskOptions<unknown, unknown, unknown, unknown>,
+            taskOptions.finalize as ParentTaskOptions<unknown, unknown, unknown, unknown>,
             undefined,
           )
-        : isFinalizeTaskOptionsTaskOptions(taskOptions.finalizeTask)
+        : isFinalizeTaskOptionsTaskOptions(taskOptions.finalize)
           ? convertTaskOptionsOptionsInternal(
-              taskOptions.finalizeTask as TaskOptions<unknown, unknown>,
+              taskOptions.finalize as TaskOptions<unknown, unknown>,
               undefined,
             )
           : undefined
@@ -174,6 +176,7 @@ const zRetryOptions = z
 const zSleepMsBeforeRun = z
   .number()
   .int()
+  .min(0)
   .nullish()
   .transform((val) => {
     if (val == null || val <= 0) {
@@ -185,45 +188,45 @@ const zSleepMsBeforeRun = z
 const zTimeoutMs = z.number().int().min(1).max(3_600_000) // 1 hour
 
 export class TaskInternal {
+  readonly isParentTask: boolean
   readonly id: string
   readonly retryOptions: TaskRetryOptions
   readonly sleepMsBeforeRun: number
   readonly timeoutMs: number
   private readonly validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
-  readonly disableChildrenTaskExecutionsOutputsInOutput: boolean
   private readonly runParent: (
     ctx: TaskRunContext,
     input: unknown,
   ) => Promise<{
     output: unknown
-    childrenTasks: Array<ChildTask>
+    children: Array<ChildTask>
   }>
-  readonly finalizeTask: TaskInternal | undefined
+  readonly finalize: TaskInternal | undefined
 
   constructor(
+    isParentTask: boolean,
     id: string,
     retryOptions: TaskRetryOptions,
     sleepMsBeforeRun: number,
     timeoutMs: number,
     validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
-    disableChildrenTaskExecutionsOutputsInOutput: boolean,
     runParent: (
       ctx: TaskRunContext,
       input: unknown,
     ) => Promise<{
       output: unknown
-      childrenTasks: Array<ChildTask>
+      children: Array<ChildTask>
     }>,
-    finalizeTask: TaskInternal | undefined,
+    finalize: TaskInternal | undefined,
   ) {
+    this.isParentTask = isParentTask
     this.id = id
     this.retryOptions = retryOptions
     this.sleepMsBeforeRun = sleepMsBeforeRun
     this.timeoutMs = timeoutMs
     this.validateInputFn = validateInputFn
-    this.disableChildrenTaskExecutionsOutputsInOutput = disableChildrenTaskExecutionsOutputsInOutput
     this.runParent = runParent
-    this.finalizeTask = finalizeTask
+    this.finalize = finalize
   }
 
   static fromTaskOptionsInternal(
@@ -232,25 +235,24 @@ export class TaskInternal {
   ): TaskInternal {
     const validatedCommonTaskOptions = validateCommonTaskOptions(taskOptions)
     if (taskInternalsMap.has(taskOptions.id)) {
-      throw new DurableExecutionError(
+      throw DurableExecutionError.nonRetryable(
         `Task ${taskOptions.id} already exists. Use unique ids for tasks`,
-        false,
       )
     }
 
-    const finalizeTask = taskOptions.finalizeTask
-      ? TaskInternal.fromTaskOptionsInternal(taskInternalsMap, taskOptions.finalizeTask)
+    const finalize = taskOptions.finalize
+      ? TaskInternal.fromTaskOptionsInternal(taskInternalsMap, taskOptions.finalize)
       : undefined
 
     const taskInternal = new TaskInternal(
+      taskOptions.isParentTaskOptions,
       taskOptions.id,
       validatedCommonTaskOptions.retryOptions,
       validatedCommonTaskOptions.sleepMsBeforeRun,
       validatedCommonTaskOptions.timeoutMs,
       taskOptions.validateInputFn,
-      taskOptions.disableChildrenTaskExecutionsOutputsInOutput,
       taskOptions.runParent,
-      finalizeTask,
+      finalize,
     )
     taskInternalsMap.set(taskInternal.id, taskInternal)
     return taskInternal
@@ -297,7 +299,7 @@ export class TaskInternal {
     cancelSignal: CancelSignal,
   ): Promise<{
     output: unknown
-    childrenTasks: Array<ChildTask>
+    children: Array<ChildTask>
   }> {
     if (this.validateInputFn) {
       input = await this.validateInputFn(this.id, input)
@@ -316,8 +318,8 @@ export class TaskInternal {
 }
 
 export function getTaskHandleInternal<TOutput>(
-  storage: StorageInternal,
-  serializer: WrappedSerializer,
+  storage: TaskExecutionsStorageInternal,
+  serializer: SerializerInternal,
   logger: Logger,
   taskId: string,
   executionId: string,
@@ -326,7 +328,7 @@ export function getTaskHandleInternal<TOutput>(
     getTaskId: () => taskId,
     getExecutionId: () => executionId,
     getExecution: async () => {
-      const execution = await storage.getTaskExecutionById(executionId)
+      const execution = await storage.getById(executionId, {})
       if (!execution) {
         throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
       }
@@ -360,12 +362,12 @@ export function getTaskHandleInternal<TOutput>(
           }
         }
 
-        const execution = await storage.getTaskExecutionById(executionId)
+        const execution = await storage.getById(executionId, {})
         if (!execution) {
           throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
         }
 
-        if (FINISHED_TASK_EXECUTION_STATUSES_STORAGE_VALUES.includes(execution.status)) {
+        if (FINISHED_TASK_EXECUTION_STATUSES.includes(execution.status)) {
           return convertTaskExecutionStorageValueToTaskExecution(
             execution,
             serializer,
@@ -379,18 +381,16 @@ export function getTaskHandleInternal<TOutput>(
     },
     cancel: async () => {
       const now = new Date()
-      await storage.updateAllTaskExecutions(
+      await storage.updateById(
+        now,
+        executionId,
         {
-          type: 'by_execution_ids',
-          executionIds: [executionId],
-          statuses: ACTIVE_TASK_EXECUTION_STATUSES_STORAGE_VALUES,
+          statuses: ACTIVE_TASK_EXECUTION_STATUSES,
         },
         {
           status: 'cancelled',
           error: convertDurableExecutionErrorToStorageValue(new DurableExecutionCancelledError()),
           needsPromiseCancellation: true,
-          finishedAt: now,
-          updatedAt: now,
         },
       )
       logger.debug(`Cancelled task execution ${executionId}`)
@@ -407,25 +407,22 @@ export function validateCommonTaskOptions(taskOptions: CommonTaskOptions): {
 
   const parsedRetryOptions = zRetryOptions.safeParse(taskOptions.retryOptions)
   if (!parsedRetryOptions.success) {
-    throw new DurableExecutionError(
+    throw DurableExecutionError.nonRetryable(
       `Invalid retry options for task ${taskOptions.id}: ${z.prettifyError(parsedRetryOptions.error)}`,
-      false,
     )
   }
 
   const parsedSleepMsBeforeRun = zSleepMsBeforeRun.safeParse(taskOptions.sleepMsBeforeRun)
   if (!parsedSleepMsBeforeRun.success) {
-    throw new DurableExecutionError(
+    throw DurableExecutionError.nonRetryable(
       `Invalid sleep ms before run for task ${taskOptions.id}: ${z.prettifyError(parsedSleepMsBeforeRun.error)}`,
-      false,
     )
   }
 
   const parsedTimeoutMs = zTimeoutMs.safeParse(taskOptions.timeoutMs)
   if (!parsedTimeoutMs.success) {
-    throw new DurableExecutionError(
+    throw DurableExecutionError.nonRetryable(
       `Invalid timeout value for task ${taskOptions.id}: ${z.prettifyError(parsedTimeoutMs.error)}`,
-      false,
     )
   }
 
@@ -445,9 +442,8 @@ export function validateEnqueueOptions(
   if (options?.retryOptions) {
     const parsedRetryOptions = zRetryOptions.safeParse(options.retryOptions)
     if (!parsedRetryOptions.success) {
-      throw new DurableExecutionError(
+      throw DurableExecutionError.nonRetryable(
         `Invalid retry options for task ${taskId}: ${z.prettifyError(parsedRetryOptions.error)}`,
-        false,
       )
     }
 
@@ -457,9 +453,8 @@ export function validateEnqueueOptions(
   if (options?.sleepMsBeforeRun != null) {
     const parsedSleepMsBeforeRun = zSleepMsBeforeRun.safeParse(options.sleepMsBeforeRun)
     if (!parsedSleepMsBeforeRun.success) {
-      throw new DurableExecutionError(
+      throw DurableExecutionError.nonRetryable(
         `Invalid sleep ms before run for task ${taskId}: ${z.prettifyError(parsedSleepMsBeforeRun.error)}`,
-        false,
       )
     }
 
@@ -469,9 +464,8 @@ export function validateEnqueueOptions(
   if (options?.timeoutMs != null) {
     const parsedTimeoutMs = zTimeoutMs.safeParse(options.timeoutMs)
     if (!parsedTimeoutMs.success) {
-      throw new DurableExecutionError(
+      throw DurableExecutionError.nonRetryable(
         `Invalid timeout value for task ${taskId}: ${z.prettifyError(parsedTimeoutMs.error)}`,
-        false,
       )
     }
 
@@ -508,17 +502,6 @@ export function overrideTaskEnqueueOptions(
 }
 
 /**
- * Generate a task id.
- *
- * @returns A task id.
- *
- * @category Task
- */
-export function generateTaskId(): string {
-  return `t_${generateId(24)}`
-}
-
-/**
  * Generate a task execution id.
  *
  * @returns A task execution id.
@@ -542,15 +525,14 @@ const _TASK_ID_REGEX = /^\w+$/
  */
 export function validateTaskId(id: string): void {
   if (id.length === 0) {
-    throw new DurableExecutionError('Task id cannot be empty', false)
+    throw DurableExecutionError.nonRetryable('Task id cannot be empty')
   }
   if (id.length > 255) {
-    throw new DurableExecutionError('Task id cannot be longer than 255 characters', false)
+    throw DurableExecutionError.nonRetryable('Task id cannot be longer than 255 characters')
   }
   if (!_TASK_ID_REGEX.test(id)) {
-    throw new DurableExecutionError(
+    throw DurableExecutionError.nonRetryable(
       'Task id can only contain alphanumeric characters and underscores',
-      false,
     )
   }
 }

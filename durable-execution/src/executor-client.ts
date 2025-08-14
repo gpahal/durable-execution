@@ -4,9 +4,13 @@ import { createCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
 
 import { DurableExecutionError, DurableExecutionNotFoundError } from './errors'
 import { zDurableExecutorOptions } from './executor'
-import { createLoggerWithDebugDisabled, type Logger } from './logger'
-import { WrappedSerializer, type Serializer } from './serializer'
-import { createTaskExecutionStorageValue, StorageInternal, type Storage } from './storage'
+import { LoggerInternal, type Logger, type LogLevel } from './logger'
+import { SerializerInternal, type Serializer } from './serializer'
+import {
+  createTaskExecutionStorageValue,
+  TaskExecutionsStorageInternal,
+  type TaskExecutionsStorage,
+} from './storage'
 import {
   type InferTaskInput,
   type InferTaskOutput,
@@ -22,23 +26,56 @@ import {
 } from './task-internal'
 
 const zDurableExecutorClientOptions = zDurableExecutorOptions.pick({
-  logger: true,
   serializer: true,
-  enableDebug: true,
+  logger: true,
+  logLevel: true,
   maxSerializedInputDataSize: true,
   storageMaxRetryAttempts: true,
 })
 
 /**
- * A durable executor client. It is used to enqueue tasks to a durable executor without any of the
- * background processes.
+ * A lightweight client for enqueuing tasks to a durable execution system without running background
+ * processing.
+ *
+ * Use `DurableExecutorClient` when you want to:
+ * - Enqueue tasks from a web server or API endpoint
+ * - Separate task submission from task execution
+ * - Build a distributed system with dedicated worker processes
+ *
+ * The client shares the same storage as {@link DurableExecutor} instances but doesn't run any
+ * background processes for task execution.
+ *
+ * @example
+ * ```ts
+ * // Define task types (shared between client and executor)
+ * const tasks = {
+ *   sendEmail: emailTask,
+ *   processFile: fileTask,
+ *   generateReport: reportTask
+ * } as const
+ *
+ * // In your API server
+ * const client = new DurableExecutorClient(storage, tasks)
+ *
+ * app.post('/api/send-email', async (req, res) => {
+ *   const handle = await client.enqueueTask('sendEmail', {
+ *     to: req.body.email,
+ *     subject: 'Welcome!'
+ *   })
+ *   res.json({ executionId: handle.executionId })
+ * })
+ *
+ * // In your worker process
+ * const executor = new DurableExecutor(storage)
+ * // Register the same tasks and start processing
+ * ```
  *
  * @category ExecutorClient
  */
 export class DurableExecutorClient<TTasks extends AnyTasks> {
-  private readonly logger: Logger
-  private readonly storage: StorageInternal
-  private readonly serializer: WrappedSerializer
+  private readonly logger: LoggerInternal
+  private readonly storage: TaskExecutionsStorageInternal
+  private readonly serializer: SerializerInternal
   private readonly maxSerializedInputDataSize: number
   private readonly shutdownSignal: CancelSignal
   private readonly cancelShutdownSignal: () => void
@@ -50,57 +87,53 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
    * @param storage - The storage to use for the durable executor client.
    * @param tasks - The tasks to use for the durable executor client.
    * @param options - The options for the durable executor client.
-   * @param options.logger - The logger to use for the durable executor client. If not provided, a
-   *   console logger will be used.
    * @param options.serializer - The serializer to use for the durable executor client. If not provided, a
    *   default serializer using superjson will be used.
-   * @param options.enableDebug - Whether to enable debug logging. If `true`, debug logging will
-   *   be enabled.
+   * @param options.logger - The logger to use for the durable executor client. If not provided, a
+   *   console logger will be used.
+   * @param options.logLevel - The log level to use for the durable executor client. If not provided,
+   *   defaults to `info`.
    * @param options.maxSerializedInputDataSize - The maximum size of serialized input data in
    *   bytes. If not provided, defaults to 1MB.
    * @param options.storageMaxRetryAttempts - The maximum number of times to retry a storage
    *   operation. If not provided, defaults to 1.
    */
   constructor(
-    storage: Storage,
+    storage: TaskExecutionsStorage,
     tasks: TTasks,
     options: {
-      logger?: Logger
       serializer?: Serializer
-      enableDebug?: boolean
+      logger?: Logger
+      logLevel?: LogLevel
       maxSerializedInputDataSize?: number
       storageMaxRetryAttempts?: number
     } = {},
   ) {
     const parsedOptions = zDurableExecutorClientOptions.safeParse(options)
     if (!parsedOptions.success) {
-      throw new DurableExecutionError(
+      throw DurableExecutionError.nonRetryable(
         `Invalid options: ${z.prettifyError(parsedOptions.error)}`,
-        false,
       )
     }
 
-    const { logger, serializer, enableDebug, maxSerializedInputDataSize, storageMaxRetryAttempts } =
+    const { serializer, logger, logLevel, maxSerializedInputDataSize, storageMaxRetryAttempts } =
       parsedOptions.data
 
-    this.logger = logger
-    if (!enableDebug) {
-      this.logger = createLoggerWithDebugDisabled(this.logger)
-    }
-
-    this.storage = new StorageInternal(this.logger, storage, storageMaxRetryAttempts)
-    this.serializer = new WrappedSerializer(serializer)
+    this.serializer = new SerializerInternal(serializer)
+    this.logger = new LoggerInternal(logger, logLevel)
     this.maxSerializedInputDataSize = maxSerializedInputDataSize
+    this.storage = new TaskExecutionsStorageInternal(this.logger, storage, storageMaxRetryAttempts)
 
     const [cancelSignal, cancel] = createCancelSignal()
     this.shutdownSignal = cancelSignal
     this.cancelShutdownSignal = cancel
+
     this.tasks = tasks
   }
 
   private throwIfShutdown(): void {
     if (this.shutdownSignal.isCancelled()) {
-      throw new DurableExecutionError('Durable executor shutdown', false)
+      throw DurableExecutionError.nonRetryable('Durable executor client shutdown')
     }
   }
 
@@ -116,14 +149,14 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
           taskId: TTaskId,
           input?: InferTaskInput<TTasks[TTaskId]>,
           options?: TaskEnqueueOptions & {
-            tx?: Pick<Storage, 'insertTaskExecutions'>
+            taskExecutionsStorageTransaction?: Pick<TaskExecutionsStorage, 'insert'>
           },
         ]
       : [
           taskId: TTaskId,
           input: InferTaskInput<TTasks[TTaskId]>,
           options?: TaskEnqueueOptions & {
-            tx?: Pick<Storage, 'insertTaskExecutions'>
+            taskExecutionsStorageTransaction?: Pick<TaskExecutionsStorage, 'insert'>
           },
         ]
   ): Promise<TaskExecutionHandle<InferTaskOutput<TTasks[TTaskId]>>> {
@@ -150,7 +183,7 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
         : undefined,
     )
     const finalEnqueueOptions = overrideTaskEnqueueOptions(task, validatedEnqueueOptions)
-    await (options?.tx ?? this.storage).insertTaskExecutions([
+    await (options?.taskExecutionsStorageTransaction ?? this.storage).insert([
       createTaskExecutionStorageValue({
         now,
         taskId: task.id,
@@ -181,7 +214,7 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
       throw new DurableExecutionNotFoundError(`Task ${taskId} not found`)
     }
 
-    const execution = await this.storage.getTaskExecutionById(executionId)
+    const execution = await this.storage.getById(executionId, {})
     if (!execution) {
       throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
     }
@@ -208,14 +241,30 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
 }
 
 /**
- * A record of tasks. This type signals to the client which tasks are available to be enqueued.
+ * Type-safe record of available tasks for a DurableExecutorClient.
+ *
+ * This type ensures compile-time safety when enqueuing tasks, providing autocomplete for task names
+ * and type checking for inputs/outputs.
  *
  * @example
  * ```ts
+ * // Define your tasks with proper types
+ * const emailTask = executor.task<{to: string}, {messageId: string}>({...})
+ * const reportTask = executor.task<{userId: string}, {reportUrl: string}>({...})
+ *
+ * // Create task registry
  * const tasks = {
- *   task1: task1,
- *   task2: task2,
- * }
+ *   sendEmail: emailTask,
+ *   generateReport: reportTask,
+ * } as const  // Use 'as const' for better type inference
+ *
+ * // Client gets full type safety
+ * const client = new DurableExecutorClient(storage, tasks)
+ *
+ * // TypeScript knows available tasks and their types
+ * await client.enqueueTask('sendEmail', { to: 'user@example.com' })
+ * // Error: 'invalidTask' doesn't exist
+ * // await client.enqueueTask('invalidTask', {})
  * ```
  *
  * @category ExecutorClient

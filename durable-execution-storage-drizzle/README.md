@@ -4,8 +4,8 @@
 [![License](https://img.shields.io/npm/l/durable-execution-storage-drizzle)](https://github.com/gpahal/durable-execution/blob/main/LICENSE)
 [![Coverage](https://img.shields.io/codecov/c/github/gpahal/durable-execution/main?flag=durable-execution-storage-drizzle)](https://codecov.io/gh/gpahal/durable-execution?flag=durable-execution-storage-drizzle)
 
-A storage implementation for [durable-execution](https://github.com/gpahal/durable-execution)
-using [Drizzle ORM](https://orm.drizzle.team/).
+A storage implementation for [durable-execution](https://github.com/gpahal/durable-execution) using
+[Drizzle ORM](https://orm.drizzle.team/).
 
 ## Installation
 
@@ -36,22 +36,17 @@ pnpm add durable-execution durable-execution-storage-drizzle drizzle-orm
 ```ts
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { DurableExecutor } from 'durable-execution'
-import {
-  createTaskExecutionsPgTable,
-  createFinishedChildTaskExecutionsPgTable,
-  createPgStorage,
-} from 'durable-execution-storage-drizzle'
+import { createPgTaskExecutionsTable, createPgTaskExecutionsStorage } from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
 const db = drizzle(process.env.DATABASE_URL!)
 
 // Create the schema - you can customize the table name by passing a string to the function
-const taskExecutionsTable = createTaskExecutionsPgTable()
-const finishedChildTaskExecutionsTable = createFinishedChildTaskExecutionsPgTable()
+const taskExecutionsTable = createPgTaskExecutionsTable()
 // Export the table from your schema file
 
 // Create the storage instance
-const storage = createPgStorage(db, taskExecutionsTable, finishedChildTaskExecutionsTable)
+const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable)
 
 // Create and use the executor
 const executor = new DurableExecutor(storage)
@@ -86,27 +81,17 @@ await executor.shutdown()
 ```ts
 import { drizzle } from 'drizzle-orm/mysql2'
 import { DurableExecutor } from 'durable-execution'
-import {
-  createTaskExecutionsMySqlTable,
-  createFinishedChildTaskExecutionsMySqlTable,
-  createMySqlStorage,
-} from 'durable-execution-storage-drizzle'
+import { createMySqlTaskExecutionsTable, createMySqlTaskExecutionsStorage } from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
 const db = drizzle(process.env.DATABASE_URL!)
 
 // Create the schema - you can customize the table name by passing a string to the function
-const taskExecutionsTable = createTaskExecutionsMySqlTable()
-const finishedChildTaskExecutionsTable = createFinishedChildTaskExecutionsMySqlTable()
+const taskExecutionsTable = createMySqlTaskExecutionsTable()
 // Export the table from your schema file
 
 // Create the storage instance
-const storage = createMySqlStorage(
-  db,
-  taskExecutionsTable,
-  finishedChildTaskExecutionsTable,
-  (result) => result[0].affectedRows,
-)
+const storage = createMySqlTaskExecutionsStorage(db, taskExecutionsTable, (result) => result[0].affectedRows)
 
 // Create and use the executor
 const executor = new DurableExecutor(storage)
@@ -141,22 +126,17 @@ await executor.shutdown()
 ```ts
 import { drizzle } from 'drizzle-orm/libsql'
 import { DurableExecutor } from 'durable-execution'
-import {
-  createTaskExecutionsSQLiteTable,
-  createFinishedChildTaskExecutionsSQLiteTable,
-  createSQLiteStorage,
-} from 'durable-execution-storage-drizzle'
+import { createSQLiteTaskExecutionsTable, createSQLiteTaskExecutionsStorage } from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
 const db = drizzle(process.env.DATABASE_URL!)
 
-// Create the table - you can customize the table name by passing a string to the function
-const taskExecutionsTable = createTaskExecutionsSQLiteTable()
-const finishedChildTaskExecutionsTable = createFinishedChildTaskExecutionsSQLiteTable()
+// Create the schema - you can customize the table name by passing a string to the function
+const taskExecutionsTable = createSQLiteTaskExecutionsTable()
 // Export the table from your schema file
 
 // Create the storage instance
-const storage = createSQLiteStorage(db, taskExecutionsTable, finishedChildTaskExecutionsTable)
+const storage = createSQLiteTaskExecutionsStorage(db, taskExecutionsTable)
 
 // Create and use the executor
 const executor = new DurableExecutor(storage)
@@ -193,8 +173,10 @@ your schema file. Once that is done, you can use Drizzle Kit to create the table
 
 ## Links
 
-- Durable Execution docs: <https://gpahal.github.io/durable-execution>
-- Repository: <https://github.com/gpahal/durable-execution>
+- [Durable Execution docs](https://gpahal.github.io/durable-execution)
+- [GitHub](https://github.com/gpahal/durable-execution)
+- [NPM package](https://www.npmjs.com/package/durable-execution-storage-drizzle)
+- [Drizzle ORM](https://orm.drizzle.team/)
 
 ## License
 

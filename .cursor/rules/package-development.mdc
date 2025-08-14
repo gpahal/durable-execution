@@ -1,0 +1,190 @@
+---
+description: Guidelines for developing and maintaining packages in the monorepo
+---
+
+# Package Development Guidelines
+
+## Monorepo Management
+
+### Workspace Structure
+
+- Use pnpm workspaces defined in [pnpm-workspace.yaml](mdc:pnpm-workspace.yaml)
+- Catalog-based dependency management for consistent versions
+- Turbo orchestration for parallel builds and task execution
+
+### Development Workflow
+
+```bash
+# From monorepo root
+pnpm install             # Install all dependencies
+pnpm build               # Build all packages in dependency order
+pnpm test                # Run all tests
+pnpm lint                # Lint all packages
+pnpm fmt                 # Format all code
+
+# Package-specific commands
+pnpm -F durable-execution build    # Build specific package
+pnpm -F durable-execution test     # Test specific package
+```
+
+### Inter-Package Dependencies
+
+- Use workspace dependencies for internal packages
+- Reference packages by name, not relative paths
+- Maintain proper dependency graphs in [turbo.json](mdc:turbo.json)
+
+## Package Standards
+
+### Required Files
+
+Each package must include:
+
+- `package.json` - Package metadata with catalog dependencies
+- `tsconfig.json` - TypeScript config extending `@gpahal/tsconfig/base.json`
+- `tsup.config.ts` - Build configuration
+- `vitest.config.ts` - Test configuration
+- `eslint.config.mjs` - Linting configuration
+- `CLAUDE.md` - Package-specific development guidance
+- `README.md` - Package documentation
+
+### Package.json Standards
+
+```json
+{
+  "name": "package-name",
+  "version": "0.x.x",
+  "description": "Brief description",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": "./build/index.js",
+      "types": "./build/index.d.ts"
+    }
+  },
+  "files": ["package.json", "src", "build"],
+  "dependencies": {
+    "some-dep": "catalog:prod"
+  },
+  "devDependencies": {
+    "some-dev-dep": "catalog:dev"
+  }
+}
+```
+
+### Build Configuration
+
+- Use tsup for TypeScript compilation
+- Generate both JS and declaration files
+- ESM output only
+- Tree-shakeable builds with `sideEffects: false`
+
+### Version Management
+
+- Use Changesets for coordinated releases
+- Follow semantic versioning
+- Update all dependent packages together
+- Tag releases in git
+
+## Documentation Standards
+
+### API Documentation
+
+- Use TypeDoc for API documentation generation
+- Include comprehensive TSDoc comments
+- Provide usage examples in docstrings
+- Link to related concepts and external docs
+
+### Package Documentation
+
+- Write clear README with installation and usage examples
+- Include CLAUDE.md for AI assistant guidance
+- Document breaking changes in changelogs
+- Provide migration guides for major versions
+
+### Code Examples
+
+- Include runnable examples in documentation
+- Test examples as part of CI pipeline
+- Show both simple and advanced usage patterns
+- Cover error handling scenarios
+
+## Testing Strategy
+
+### Package-Level Testing
+
+- Unit tests for all public APIs
+- Integration tests for cross-package functionality
+- Use `durable-execution-storage-test-utils` for storage implementations
+- Performance tests for critical paths
+
+### Test Utilities
+
+- Create reusable test utilities in shared packages
+- Export test helpers for downstream consumers
+- Provide mock implementations for testing
+- Document testing best practices
+
+## Release Process
+
+### Pre-Release Checklist
+
+- All tests passing
+- Documentation updated
+- Breaking changes documented
+- Changelog entries added
+- Version bumps coordinated
+
+### Release Commands
+
+```bash
+pnpm cs                 # Create changeset
+pnpm cs-publish         # Publish packages
+```
+
+### Post-Release
+
+- Update documentation site
+- Notify consumers of breaking changes
+- Monitor for issues in production
+- Update example repositories
+
+## Package-Specific Guidelines
+
+### Core Package (durable-execution)
+
+- Maintain backward compatibility
+- Extensive documentation and examples
+- Performance benchmarks
+- Comprehensive test coverage
+
+### Storage Implementations
+
+- Implement full `TaskExecutionsStorage` interface
+- Pass all tests from `durable-execution-storage-test-utils`
+- Include database migration examples
+- Document performance characteristics
+
+### Utility Packages
+
+- Focus on single responsibility
+- Minimal dependencies
+- Clear API boundaries
+- Extensive usage examples
+
+## Dependency Management
+
+### Adding Dependencies
+
+- Use catalog references for shared dependencies
+- Minimize dependency footprint
+- Prefer peer dependencies for optional features
+- Document runtime requirements
+
+### Updating Dependencies
+
+- Coordinate updates across all packages
+- Test compatibility thoroughly
+- Update catalog entries centrally
+- Monitor for breaking changes

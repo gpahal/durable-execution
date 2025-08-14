@@ -12,11 +12,11 @@
     },
     "test": {
       "dependsOn": ["^build", "^test"],
-      "inputs": ["$TURBO_DEFAULT$", "vitest.config.ts"]
+      "inputs": ["$TURBO_DEFAULT$", "vitest.config.ts", "!**/.tmp_*", "!**/.tmp_*/**"]
     },
     "test-coverage": {
       "dependsOn": ["^build", "^test-coverage"],
-      "inputs": ["$TURBO_DEFAULT$", "vitest.config.ts"],
+      "inputs": ["$TURBO_DEFAULT$", "vitest.config.ts", "!**/.tmp_*", "!**/.tmp_*/**"],
       "outputs": ["coverage/**"]
     },
     "type-check": {

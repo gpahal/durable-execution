@@ -1,6 +1,6 @@
 {
   "name": "durable-execution-orpc-utils",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "oRPC utilities for durable-execution to create a separate server process for durable execution",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
@@ -14,6 +14,9 @@
     "url": "https://github.com/gpahal/durable-execution/issues"
   },
   "keywords": [
+    "orpc",
+    "orpc-server",
+    "orpc-client",
     "durable-execution",
     "durable-tasks",
     "durable-functions",
@@ -53,9 +56,9 @@
     "lint-fix": "eslint . --fix"
   },
   "peerDependencies": {
-    "@orpc/client": "^catalog:dev",
-    "@orpc/contract": "^catalog:dev",
-    "@orpc/server": "^catalog:dev",
+    "@orpc/client": "catalog:dev",
+    "@orpc/contract": "catalog:dev",
+    "@orpc/server": "catalog:dev",
     "durable-execution": "workspace:*"
   },
   "dependencies": {

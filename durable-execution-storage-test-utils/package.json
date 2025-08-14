@@ -1,7 +1,7 @@
 {
   "name": "durable-execution-storage-test-utils",
-  "version": "0.22.0",
-  "description": "Test utilities for durable-execution storage implementations",
+  "version": "0.23.0",
+  "description": "Test utilities for validating durable-execution storage implementations",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
   "repository": {
@@ -15,6 +15,9 @@
   },
   "keywords": [
     "storage",
+    "test",
+    "testing",
+    "test-utils",
     "durable-execution",
     "durable-tasks",
     "durable-functions",

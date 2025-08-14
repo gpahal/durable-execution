@@ -1,0 +1,237 @@
+---
+description: Core concepts and patterns for durable execution domain
+---
+
+# Durable Execution Domain Concepts
+
+## Core Architecture
+
+### Task System
+
+Tasks are created using the DurableExecutor's fluent API:
+
+- **Task Creation**: Use `executor.task()`, `executor.parentTask()`, or `executor.sequentialTasks()`
+- **Input Validation**: Use `executor.inputSchema()` or `executor.validateInput()` for validation
+- **Task Execution**: Stateful execution tracking with comprehensive status management
+- **Task Hierarchy**: Parent-child relationships with finalization tasks
+
+### Execution States
+
+Task executions follow this lifecycle (see `TaskExecutionStatus`):
+
+- `ready` → `running` → `completed` | `failed` | `timed_out` | `cancelled`
+- `waiting_for_children` → `waiting_for_finalize` → final state
+- `finalize_failed` for finalization task failures
+
+### Storage Layer
+
+Implemented via [storage.ts](mdc:durable-execution/src/storage.ts) interface:
+
+- `TaskExecutionsStorage` - Core persistence interface
+- `TaskExecutionStorageValue` - Serializable execution state
+- Atomic operations for state transitions
+- Mutex support for concurrent access
+
+### Executor Engine
+
+The [DurableExecutor](mdc:durable-execution/src/executor.ts) orchestrates:
+
+```ts
+import { DurableExecutor } from 'durable-execution'
+
+const executor = new DurableExecutor(storage)
+
+// Start background processes
+executor.startBackgroundProcesses()
+
+// Enqueue tasks
+const handle = await executor.enqueueTask(myTask, input)
+const result = await handle.waitAndGetFinishedExecution()
+
+// Graceful shutdown
+await executor.shutdown()
+```
+
+- Task enqueueing and execution
+- Retry logic with exponential backoff
+- Timeout and cancellation handling
+- Parent-child task coordination
+- Graceful shutdown and cleanup
+
+## Key Patterns
+
+### Task Definition Pattern
+
+```ts
+const emailTask = executor
+  .inputSchema(z.object({ to: z.string(), subject: z.string() }))
+  .task({
+    id: 'sendEmail',
+    retryOptions: {
+      maxAttempts: 3,
+      baseDelayMs: 1000,
+      delayMultiplier: 1.5,
+      maxDelayMs: 30000,
+    },
+    timeoutMs: 30000,
+    run: async (ctx, input) => {
+      // Send email logic
+      return { messageId: 'msg_123' }
+    },
+  })
+```
+
+### Sequential Task Pattern
+
+Use `sequentialTasks` method for ordered execution:
+
+```ts
+const taskA = executor.task({
+  id: 'a',
+  timeoutMs: 1000,
+  run: (ctx, input: { name: string }) => ({
+    name: input.name,
+    taskAOutput: `Hello from task A, ${input.name}!`,
+  }),
+})
+
+const taskB = executor.task({
+  id: 'b',
+  timeoutMs: 1000,
+  run: (ctx, input: { name: string; taskAOutput: string }) => ({
+    taskAOutput: input.taskAOutput,
+    taskBOutput: `Hello from task B, ${input.name}!`,
+  }),
+})
+
+const sequentialTask = executor.sequentialTasks(taskA, taskB)
+```
+
+### Parent Task Pattern
+
+For workflows with child tasks and finalization:
+
+```ts
+const parentTask = executor.parentTask({
+  id: 'workflow',
+  timeoutMs: 60000,
+  runParent: (ctx, input: { name: string }) => ({
+    output: `Parent output for ${input.name}`,
+    children: [
+      { task: childTaskA, input: { name: input.name } },
+      { task: childTaskB, input: { name: input.name } },
+    ],
+  }),
+  finalize: {
+    id: 'workflowFinalize',
+    timeoutMs: 30000,
+    run: (ctx, { output, children }) => {
+      // Combine parent and children outputs
+      return {
+        parentOutput: output,
+        childrenResults: children.map(child => child.output)
+      }
+    },
+  },
+})
+```
+
+## Implementation Guidelines
+
+### Error Handling
+
+- Use `DurableExecutionError` hierarchy for domain-specific errors
+- Create retryable vs non-retryable errors using static methods
+- Include serializable error context for debugging
+
+```ts
+import { DurableExecutionError } from 'durable-execution'
+
+// Non-retryable error
+throw DurableExecutionError.nonRetryable('Invalid input data')
+
+// Retryable error
+throw DurableExecutionError.retryable('Network timeout, please retry')
+
+// Check error in finalize function
+if (child.status !== 'completed') {
+  throw DurableExecutionError.nonRetryable('Child task failed')
+}
+```
+
+### Serialization
+
+- Use `createSuperjsonSerializer()` for complex object serialization
+- Ensure all task inputs/outputs are serializable
+- Store execution state as JSON-compatible structures
+
+```ts
+import { createSuperjsonSerializer } from 'durable-execution'
+
+const serializer = createSuperjsonSerializer()
+const executor = new DurableExecutor(storage, { serializer })
+```
+
+### Concurrency
+
+- Tasks execute concurrently by default within the executor
+- Use storage mutex for atomic state updates
+- Implement proper cancellation signal handling
+
+### Testing
+
+- Use [durable-execution-storage-test-utils](mdc:durable-execution-storage-test-utils/) for storage validation
+- Test with realistic concurrency scenarios (250+ tasks)
+- Verify parent-child task relationships and finalization
+- Test retry mechanisms and timeout handling
+
+## Storage Implementations
+
+### In-Memory Storage
+
+Default implementation in [in-memory-storage.ts](mdc:durable-execution/src/in-memory-storage.ts):
+
+```ts
+import { InMemoryTaskExecutionsStorage } from 'durable-execution'
+
+const storage = new InMemoryTaskExecutionsStorage()
+const executor = new DurableExecutor(storage)
+```
+
+- Suitable for development and testing
+- No persistence across process restarts
+- Built-in mutex support
+
+### Database Storage
+
+Use [durable-execution-storage-drizzle](mdc:durable-execution-storage-drizzle/) for production:
+
+- PostgreSQL, MySQL, SQLite support
+- Optimized indexes for query performance
+- Transaction support for atomicity
+- Proper data type mapping and serialization
+
+## Integration Points
+
+### Client Libraries
+
+Use [DurableExecutorClient](mdc:durable-execution/src/executor-client.ts) for remote execution:
+
+```ts
+import { DurableExecutorClient } from 'durable-execution'
+
+const client = new DurableExecutorClient(tasks, storage)
+const handle = await client.enqueueTask(emailTask, { to: 'user@example.com', subject: 'Hello' })
+const result = await handle.waitAndGetFinishedExecution()
+```
+
+- Type-safe task invocation
+- Network resilience and retry logic
+- Integration with oRPC for RPC-style APIs
+
+### Monitoring and Logging
+
+- Implement custom `Logger` interface for structured logging
+- Monitor task execution metrics and failure rates
+- Track execution duration and resource usage
+- Set up alerts for high failure rates or timeouts

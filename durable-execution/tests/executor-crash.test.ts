@@ -3,12 +3,10 @@ import { rm } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { describe, expect, it } from 'vitest'
-
 import { sleep } from '@gpahal/std/promises'
 
 import { DurableExecutor } from '../src'
-import { InMemoryStorage } from './in-memory-storage'
+import { loadInMemoryTaskExecutionsStorageFromFile } from './in-memory-storage-utils'
 
 const testsDir = path.dirname(fileURLToPath(import.meta.url))
 
@@ -28,20 +26,19 @@ describe('executorCrash', () => {
       })
     })
 
-    const storage = new InMemoryStorage({ enableDebug: false })
-    await storage.loadFromFile(storageFilePath)
+    const storage = await loadInMemoryTaskExecutionsStorageFromFile(storageFilePath)
     const executor = new DurableExecutor(storage, {
-      enableDebug: false,
+      logLevel: 'error',
       expireMs: 1000,
       backgroundProcessIntraBatchSleepMs: 50,
     })
 
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       timeoutMs: 100_000,
       run: async () => {
-        executed++
+        executionCount++
         await sleep(1)
       },
     })
@@ -62,7 +59,7 @@ describe('executorCrash', () => {
           const finishedExecution = await handle.waitAndGetFinishedExecution()
           console.log('Task finished', finishedExecution)
 
-          expect(executed).toBe(1)
+          expect(executionCount).toBe(1)
           expect(finishedExecution.status).toBe('completed')
           assert(finishedExecution.status === 'completed')
           expect(finishedExecution.taskId).toBe('test')

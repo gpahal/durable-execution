@@ -1,16 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { DurableExecutor, InMemoryTaskExecutionsStorage } from '../src'
+import {
+  loadInMemoryTaskExecutionsStorageFromFile,
+  saveInMemoryTaskExecutionsStorageToFile,
+} from './in-memory-storage-utils'
 
-import { DurableExecutor } from '../src'
-import { InMemoryStorage } from './in-memory-storage'
-
-describe('inMemoryStorage', () => {
-  let storage: InMemoryStorage
+describe('InMemoryTaskExecutionsStorage', () => {
+  let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
   beforeEach(() => {
-    storage = new InMemoryStorage({ enableDebug: false })
+    storage = new InMemoryTaskExecutionsStorage()
     executor = new DurableExecutor(storage, {
-      enableDebug: false,
+      logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
     executor.startBackgroundProcesses()
@@ -41,8 +42,15 @@ describe('inMemoryStorage', () => {
     expect(savedData).toBeDefined()
     expect(typeof savedData).toBe('string')
 
-    const newStorage = new InMemoryStorage({ enableDebug: false })
+    const newStorage = new InMemoryTaskExecutionsStorage()
     await newStorage.load(() => Promise.resolve(savedData))
+
+    expect(newStorage).toBeDefined()
+  })
+
+  it('should handle empty load operations', async () => {
+    const newStorage = new InMemoryTaskExecutionsStorage()
+    await newStorage.load(() => Promise.resolve(''))
 
     expect(newStorage).toBeDefined()
   })
@@ -56,15 +64,14 @@ describe('inMemoryStorage', () => {
 
     const handle = await executor.enqueueTask(testTask)
     await handle.waitAndGetFinishedExecution()
+    expect(storage.getById(handle.getExecutionId(), {})).toBeDefined()
 
     const tempFile = '/tmp/test-storage.json'
+    await saveInMemoryTaskExecutionsStorageToFile(storage, tempFile)
 
-    await storage.saveToFile(tempFile)
-
-    const newStorage = new InMemoryStorage({ enableDebug: false })
-    await newStorage.loadFromFile(tempFile)
-
+    const newStorage = await loadInMemoryTaskExecutionsStorageFromFile(tempFile)
     expect(newStorage).toBeDefined()
+    expect(newStorage.getById(handle.getExecutionId(), {})).toBeDefined()
   })
 
   it('should handle task execution status transitions', async () => {
@@ -105,5 +112,42 @@ describe('inMemoryStorage', () => {
       assert(result.status === 'completed')
       expect(result.output).toBe('result')
     }
+  })
+
+  it('should handle logAllTaskExecutions', async () => {
+    let infoStr = ''
+    const logger = {
+      debug: () => {
+        // Do nothing
+      },
+      info: (message: string) => {
+        infoStr += message
+      },
+      error: () => {
+        // Do nothing
+      },
+    }
+
+    const newStorage = new InMemoryTaskExecutionsStorage({ logger })
+
+    await executor.shutdown()
+    executor = new DurableExecutor(newStorage, {
+      logLevel: 'error',
+      backgroundProcessIntraBatchSleepMs: 50,
+    })
+    executor.startBackgroundProcesses()
+
+    const testTask = executor.task({
+      id: 'test',
+      timeoutMs: 10_000,
+      run: () => 'result',
+    })
+
+    const handle = await executor.enqueueTask(testTask)
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+
+    await newStorage.logAllTaskExecutions()
+    expect(infoStr).toContain(finishedExecution.taskId)
+    expect(infoStr).toContain(finishedExecution.executionId)
   })
 })

@@ -1,0 +1,155 @@
+---
+globs: *.test.ts,*.test.tsx,tests/**
+---
+
+# Testing Conventions
+
+## Test Framework Setup
+
+- Use Vitest for all testing with 120-second timeouts for storage tests
+- Configuration in [vitest.config.ts](mdc:durable-execution/vitest.config.ts)
+- Coverage reporting with `@vitest/coverage-v8`
+- Global test setup for common utilities
+
+## Test File Organization
+
+```text
+tests/
+├── unit/              # Unit tests for individual components
+├── integration/       # Integration tests with real dependencies
+├── examples.test.ts   # Example usage patterns and documentation
+└── *.test.ts         # Test files co-located by feature
+```
+
+## Testing Patterns
+
+### Storage Implementation Testing
+
+Use [durable-execution-storage-test-utils](mdc:durable-execution-storage-test-utils/) for comprehensive storage validation:
+
+```ts
+import { runStorageTest } from 'durable-execution-storage-test-utils'
+
+describe('MyStorage', () => {
+  it('should pass comprehensive storage tests', async () => {
+    const storage = createMyStorage()
+    await runStorageTest(storage, async () => {
+      // Cleanup logic
+    })
+  })
+})
+```
+
+### Executor Testing
+
+Test executor functionality with realistic scenarios:
+
+- Concurrent task execution (250+ tasks)
+- Parent-child task hierarchies
+- Retry mechanisms and error handling
+- Timeout and cancellation scenarios
+- Graceful shutdown behavior
+
+### Database Testing
+
+For storage implementations with real databases:
+
+- Use Testcontainers for MySQL testing
+- Use PGlite for PostgreSQL testing
+- Use in-memory SQLite for lightweight tests
+- Clean up database state between tests
+
+### Example Test Structure
+
+```ts
+describe('TaskExecution', () => {
+  let executor: DurableExecutor
+  let storage: TaskExecutionsStorage
+
+  beforeEach(async () => {
+    storage = new InMemoryTaskExecutionsStorage()
+    executor = new DurableExecutor(createTaskMap(), storage)
+    await executor.start()
+  })
+
+  afterEach(async () => {
+    await executor.shutdown()
+  })
+
+  it('should handle task retry on failure', async () => {
+    // Test implementation
+  })
+})
+```
+
+## Test Data Management
+
+### Temporary Resources
+
+Use utility functions for temporary file/directory management:
+
+```ts
+import { withTemporaryDirectory, withTemporaryFile } from 'durable-execution-storage-test-utils'
+
+it('should work with temporary files', () => {
+  return withTemporaryFile(async (filePath) => {
+    // Test with temporary file
+  })
+})
+```
+
+### Task Factory Patterns
+
+Create reusable task definitions for testing:
+
+```ts
+const createTestTask = <TInput, TOutput>(id: string, overrides?: Partial<Task<TInput, TOutput>>) => ({
+  id,
+  retryOptions: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0, backoffMultiplier: 1 },
+  sleepMsBeforeRun: 0,
+  timeoutMs: 1000,
+  ...overrides
+})
+```
+
+## Test Coverage Requirements
+
+- Aim for >90% code coverage on core functionality
+- Test error paths and edge cases thoroughly
+- Include integration tests for cross-package functionality
+- Validate serialization/deserialization of complex objects
+
+## Performance Testing
+
+- Test with realistic concurrency levels
+- Measure execution time for bulk operations
+- Validate memory usage doesn't grow unbounded
+- Test timeout behavior under load
+
+## Mocking Strategies
+
+- Mock external dependencies (databases, network calls)
+- Use dependency injection for testability
+- Preserve type safety when mocking
+- Test both success and failure scenarios
+
+## Assertion Patterns
+
+```ts
+// Task execution assertions
+expect(execution.status).toBe('completed')
+expect(execution.output).toEqual(expectedOutput)
+expect(execution.error).toBeUndefined()
+
+// Storage assertions
+const storedExecution = await storage.getByIds([execution.id])
+expect(storedExecution).toHaveLength(1)
+expect(storedExecution[0]).toMatchObject(expectedStorageValue)
+```
+
+## Test Documentation
+
+- Include descriptive test names that explain the scenario
+- Add comments for complex test setup or assertions
+- Use `it.skip` or `it.todo` for incomplete tests
+- Group related tests with `describe` blocks

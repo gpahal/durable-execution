@@ -5,40 +5,27 @@
 [![Coverage](https://img.shields.io/codecov/c/github/gpahal/durable-execution/main?flag=durable-execution-orpc-utils)](https://codecov.io/gh/gpahal/durable-execution?flag=durable-execution-orpc-utils)
 
 oRPC utilities for [durable-execution](https://gpahal.github.io/durable-execution) to create a
-separate server process for durable execution.
+separate server process for durable task execution.
 
-The usecase of this package is to help create a long-running durable executor server process that
-runs separately from a client web app. The durable executor server process manages the tasks and
-the state of task executions. The tasks can be local tasks or remote calls to the web application.
-The web application no longer needs to be long running - it can be serverless like a Next.js app
-with all the business logic. You get durability, resilience and persistence with the durable
-executor server process that orchestrated the business logic as a thin layer. The following
-diagram shows the flow of a task execution.
+## What does this library do?
+
+Separates your business logic from execution orchestration:
+
+- **Durable Executor Server**: Long-running process that manages task execution, retries, and
+  persistence
+- **Client Application**: Your app (Next.js, serverless functions, etc.) with business logic
 
 ```mermaid
 sequenceDiagram
-    participant A as Web app (serverless)
-    participant B as Durable execution server
-    Note right of B: Tasks defined before start of<br/>durable executor. The tasks<br/> might be api calls to the<br/>web app
-    A->>B: enqueueTask(task1)
-    B->>A: executionId
-    Note over A,B: Start of task execution
-    B-->>A: task.run(webAppClient.call(...))
-    A-->>B: taskResult
-    Note over A,B: Task execution completed
-    A->>B: getTaskExecution(executionId)
-    B->>A: execution(status=completed, ...)
+    participant App as Web App
+    participant Server as Executor Server
+    App->>Server: enqueueTask(taskId, input)
+    Server->>App: executionId
+    Server-->>App: Execute task (optional callback)
+    App-->>Server: Result
+    App->>Server: getTaskExecution(executionId)
+    Server->>App: execution status & output
 ```
-
-This package exposes:
-
-- Server-side oRPC procedures to enqueue tasks and fetch task executions
-- Clients for the server-side procedures. When a task is enqueued or execution is fetched, an API
-  call is made to the durable executor server internally
-- A utility to wrap a client oRPC procedure as a task. When this task is executed on the server,
-  the client oRPC procedure is called. This is useful when all the business logic is in the client
-  web app and you want to use the durable executor server process just to manage the state of task
-  executions.
 
 ## Installation
 
@@ -54,147 +41,247 @@ npm install durable-execution durable-execution-orpc-utils @orpc/client @orpc/co
 pnpm add durable-execution durable-execution-orpc-utils @orpc/client @orpc/contract @orpc/server
 ```
 
-## Usage
+## Basic Usage
 
-### Expose tasks router from the durable executor server
+### 1. Create Executor Server
 
 ```ts
-// durable-executor-server.ts
-
+// executor-server.ts
 import { os } from '@orpc/server'
-import { DurableExecutor, InMemoryStorage } from 'durable-execution'
+import { DurableExecutor, InMemoryTaskExecutionsStorage } from 'durable-execution'
 import { createTasksRouter } from 'durable-execution-orpc-utils/server'
 
-// Create executor (use any Storage implementation)
-const executor = new DurableExecutor(new InMemoryStorage())
+// Create executor (use persistent storage in production)
+const executor = new DurableExecutor(new InMemoryTaskExecutionsStorage())
 
-// Register tasks
-const add1 = executor.task({
-  id: 'add1',
-  timeoutMs: 5000,
-  run: async (_, input: { n: number }) => ({ n: input.n + 1 }),
+// Define tasks
+const sendEmail = executor.task({
+  id: 'sendEmail',
+  timeoutMs: 30_000,
+  retryOptions: {
+    maxAttempts: 3,
+    baseDelayMs: 1000,
+  },
+  run: async (ctx, input: { to: string; subject: string; body: string }) => {
+    // Send email logic
+    return { messageId: `msg_${Date.now()}` }
+  },
 })
-const add2 = executor.task({
-  id: 'add2',
-  timeoutMs: 5000,
-  run: async (_, input: { n: number }) => ({ n: input.n + 2 }),
-})
 
-// Tasks to expose to the client
-const tasks = { add1, add2 }
+export const tasks = { sendEmail }
 
-// Build oRPC router to enqueue tasks and fetch task executions
+// Create router
 export const tasksRouter = createTasksRouter(os, executor, tasks)
 
-async function server() {
-  // ... start the long-running server (see oRPC server docs for more details)
-}
-
-// Start the durable executor background processes
+// Start server
 executor.startBackgroundProcesses()
-
-// Run the server
-await server()
-
-// Shutdown the durable executor when the app is done
-await executor.shutdown()
+// ... mount tasksRouter with your oRPC server
 ```
 
-### Use the tasks router from the client web app
+### 2. Use from Client App
 
 ```ts
-// web-app.ts
-
+// app.ts
 import { createORPCClient } from '@orpc/client'
 import { RPCLink } from '@orpc/client/fetch'
-import type { RouterClient } from '@orpc/server'
+import { createTaskClientHandles, type TasksRouterClient } from 'durable-execution-orpc-utils/client'
+import { tasks, type tasksRouter } from './executor-server'
 
-import { tasks, type tasksRouter } from './durable-executor-server'
+// Create client
+const link = new RPCLink({ url: 'http://localhost:3000/rpc' })
+const client: TasksRouterClient<typeof tasksRouter> = createORPCClient(link)
 
-// Create a client for the tasks router. This will be used to enqueue tasks.
-const tasksRouterLink = new RPCLink({
-  url: 'http://localhost:3000/rpc',
-  headers: () => ({
-    authorization: 'TOKEN',
-  }),
+// Create handles
+const handles = createTaskClientHandles(client, tasks)
+
+// Enqueue task
+const executionId = await handles.sendEmail.enqueue({
+  to: 'user@example.com',
+  subject: 'Welcome',
+  body: 'Thanks for signing up!',
 })
-const tasksRouterClient: RouterClient<typeof tasksRouter> = createORPCClient(tasksRouterLink)
 
-// Enqueue a task and get execution
-const executionId = await tasksRouterClient.enqueueTask({ taskId: 'add1', input: { n: 0 } })
-const execution = await tasksRouterClient.getTaskExecution({ taskId: 'add1', executionId })
-
-// Create handles for the tasks for type-safe enqueue and get execution
-const handles = createTaskClientHandles(tasksRouterClient, tasks)
-const executionId = await handles.add1.enqueue({ n: 0 })
-const execution = await handles.add1.getExecution(executionId)
+// Check status
+const execution = await handles.sendEmail.getExecution(executionId)
+if (execution.status === 'completed') {
+  console.log('Email sent:', execution.output.messageId)
+}
 ```
 
-### Expose client procedures to the server and use them as tasks on the server
+## Advanced: Remote Task Execution
 
-On the client web app, define the procedures as usual and create an oRPC router and expose it using
-an oRPC server.
+Keep business logic in your app, let the executor handle orchestration.
+
+### 1. Expose procedures from your app
 
 ```ts
-// web-app.ts
-
+// app/api/rpc.ts
 import { os } from '@orpc/server'
+import { z } from 'zod'
 
-// Define a client procedure
-const add1 = os
-  .input(type<{ n: number }>())
-  .output(type<{ n: number }>())
-  .handler(({ input }) => ({ n: input.n + 1 }))
+const processOrder = os
+  .input(z.object({
+    orderId: z.string(),
+    amount: z.number(),
+  }))
+  .output(z.object({
+    transactionId: z.string(),
+  }))
+  .handler(async ({ input }) => {
+    // Business logic here
+    return { transactionId: 'txn_123' }
+  })
 
-const webAppRouter = { add1 }
-
-// ... expose the client web app router using an oRPC server
+export const appRouter = { processOrder }
 ```
 
-On the server, create a client for the web app router and use the
-`convertClientProcedureToTask` utility to wrap the client procedures as tasks.
+### 2. Convert to durable task
 
 ```ts
-// durable-executor-server.ts
+// executor-server.ts
+import { createORPCClient } from '@orpc/client'
+import { RPCLink } from '@orpc/client/fetch'
+import { convertProcedureClientToTask } from 'durable-execution-orpc-utils/server'
 
-import { convertClientProcedureToTask } from 'durable-execution-orpc-utils/server'
+const appClient = createORPCClient(new RPCLink({
+  url: 'https://your-app.com/api/rpc'
+}))
 
-import { type webAppRouter } from './web-app'
+const processOrderTask = convertProcedureClientToTask(
+  executor,
+  {
+    id: 'processOrder',
+    timeoutMs: 60_000,
+    retryOptions: {
+      maxAttempts: 3,
+      baseDelayMs: 2000,
+    },
+  },
+  appClient.processOrder
+)
 
-// Create a client for the web app router
-const webAppRouterLink = new RPCLink({
-  url: 'http://localhost:3000/rpc',
-  headers: () => ({
-    authorization: 'TOKEN',
-  }),
+export const tasks = { sendEmail, processOrder: processOrderTask }
+```
+
+## Common Patterns
+
+### Parent Task with Children
+
+```ts
+const processBatch = executor.parentTask({
+  id: 'processBatch',
+  timeoutMs: 60_000,
+  runParent: async (ctx, input: { items: Array<string> }) => {
+    return {
+      output: { batchId: Date.now() },
+      children: input.items.map(item => ({
+        task: processItem,
+        input: { item },
+      })),
+    }
+  },
+  finalize: {
+    run: async (ctx, { output, children }) => {
+      const successful = children.filter(c => c.status === 'completed')
+      return {
+        batchId: output.batchId,
+        processed: successful.length,
+        total: children.length,
+      }
+    },
+  },
 })
-const webAppRouterClient: RouterClient<typeof webAppRouter> = createORPCClient(webAppRouterLink)
-
-const clientAdd1 = convertClientProcedureToTask(executor, { id: 'add1', timeoutMs: 5000 }, webAppRouterClient.add1)
-
-export const tasks = { add1, add2, clientAdd1 }
 ```
 
-Enqueue tasks and query execution state on the client web app. This runs the client procedure on the
-web app itself but the execution state is managed by the durable executor server.
+### Webhook Processing
 
 ```ts
-// web-app.ts
+app.post('/webhook', async (req, res) => {
+  // Queue for processing
+  const executionId = await handles.sendEmail.enqueue(req.body)
 
-import { tasks, type tasksRouter } from './durable-executor-server'
-
-// ... create a client for the tasks router like above
-
-// Create handles for the tasks for type-safe enqueue and get execution
-const handles = createTaskClientHandles(tasksRouterClient, tasks)
-const executionId = await handles.clientAdd1.enqueue({ n: 0 })
-const execution = await handles.clientAdd1.getExecution(executionId)
+  // Respond immediately
+  res.json({ accepted: true, executionId })
+})
 ```
+
+### Monitoring Execution
+
+```ts
+async function waitForCompletion(executionId: string) {
+  let execution
+  do {
+    await new Promise((r) => setTimeout(r, 1000))
+    execution = await handles.sendEmail.getExecution(executionId)
+  } while (!['completed', 'failed', 'timed_out', 'finalize_failed', 'cancelled'].includes(execution.status))
+
+  return execution
+}
+```
+
+## Error Handling
+
+The library automatically maps oRPC errors to durable execution errors:
+
+- HTTP 404 → `DurableExecutionNotFoundError`
+- HTTP 408, 429, 500-504 → Retryable errors
+- HTTP 5xx → Internal errors
+
+## Production Tips
+
+### Storage
+
+Use persistent storage in production:
+
+```ts
+import { createPgTaskExecutionsTable, createPgTaskExecutionsStorage } from 'durable-execution-storage-drizzle'
+import { drizzle } from 'drizzle-orm/node-postgres'
+
+const db = drizzle(process.env.DATABASE_URL!)
+const taskExecutionsTable = createPgTaskExecutionsTable()
+const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable)
+const executor = new DurableExecutor(storage)
+```
+
+### Scaling
+
+Run multiple executor instances:
+
+```ts
+const executor = new DurableExecutor(storage, {
+  maxConcurrentTaskExecutions: 100,
+})
+```
+
+### Security
+
+Add authentication:
+
+```ts
+const tasksRouter = createTasksRouter(
+  os.use(authMiddleware),
+  executor,
+  tasks
+)
+```
+
+## API Reference
+
+### Server
+
+- `createTasksRouter(osBuilder, executor, tasks)` - Creates oRPC router
+- `convertProcedureClientToTask(executor, options, procedure)` - Converts oRPC procedure to task
+
+### Client
+
+- `createTaskClientHandles(client, tasks)` - Creates typed task handles
+- Types: `TasksRouterClient`, `TaskClientHandle`, `InferTaskClientHandles`
 
 ## Links
 
-- Durable Execution docs: <https://gpahal.github.io/durable-execution>
-- Repository: <https://github.com/gpahal/durable-execution>
+- [Durable Execution docs](https://gpahal.github.io/durable-execution)
+- [GitHub](https://github.com/gpahal/durable-execution)
+- [oRPC docs](https://orpc.unnoq.com/)
 
 ## License
 

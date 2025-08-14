@@ -1,22 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutor } from '../src'
-import { InMemoryStorage } from './in-memory-storage'
+import { DurableExecutor, InMemoryTaskExecutionsStorage } from '../src'
 
 describe('backpressure', () => {
   describe('maxConcurrentExecutions', () => {
-    let storage: InMemoryStorage
+    let storage: InMemoryTaskExecutionsStorage
     let executor: DurableExecutor
 
     beforeEach(() => {
-      storage = new InMemoryStorage({ enableDebug: false })
+      storage = new InMemoryTaskExecutionsStorage()
       executor = new DurableExecutor(storage, {
-        enableDebug: false,
+        logLevel: 'error',
         backgroundProcessIntraBatchSleepMs: 50,
         maxConcurrentTaskExecutions: 3,
-        maxTasksPerBatch: 2,
+        maxTaskExecutionsPerBatch: 2,
       })
       executor.startBackgroundProcesses()
     })
@@ -81,7 +78,7 @@ describe('backpressure', () => {
       expect(executor.getRunningTaskExecutionIds().size).toBe(0)
     })
 
-    it('should respect maxTasksPerBatch limit', async () => {
+    it('should respect maxTaskExecutionsPerBatch limit', async () => {
       const task = executor.task({
         id: 'quick_task',
         timeoutMs: 1000,
@@ -99,7 +96,7 @@ describe('backpressure', () => {
 
       const stats = executor.getExecutorStats()
       expect(stats.currConcurrentTaskExecutions).toBeLessThanOrEqual(3)
-      expect(stats.maxTasksPerBatch).toBe(2)
+      expect(stats.maxTaskExecutionsPerBatch).toBe(2)
 
       await Promise.all(handles.map((handle) => handle.waitAndGetFinishedExecution()))
       expect(executor.getRunningTaskExecutionIds().size).toBe(0)
@@ -107,16 +104,16 @@ describe('backpressure', () => {
   })
 
   describe('backpressureAtConcurrencyLimit', () => {
-    let storage: InMemoryStorage
+    let storage: InMemoryTaskExecutionsStorage
     let executor: DurableExecutor
 
     beforeEach(() => {
-      storage = new InMemoryStorage({ enableDebug: false })
+      storage = new InMemoryTaskExecutionsStorage()
       executor = new DurableExecutor(storage, {
-        enableDebug: false,
+        logLevel: 'error',
         backgroundProcessIntraBatchSleepMs: 50,
         maxConcurrentTaskExecutions: 2,
-        maxTasksPerBatch: 5,
+        maxTaskExecutionsPerBatch: 5,
       })
       executor.startBackgroundProcesses()
     })
@@ -173,16 +170,16 @@ describe('backpressure', () => {
   })
 
   describe('adaptiveBatchSizing', () => {
-    let storage: InMemoryStorage
+    let storage: InMemoryTaskExecutionsStorage
     let executor: DurableExecutor
 
     beforeEach(() => {
-      storage = new InMemoryStorage({ enableDebug: false })
+      storage = new InMemoryTaskExecutionsStorage()
       executor = new DurableExecutor(storage, {
-        enableDebug: false,
+        logLevel: 'error',
         backgroundProcessIntraBatchSleepMs: 50,
         maxConcurrentTaskExecutions: 5,
-        maxTasksPerBatch: 3,
+        maxTaskExecutionsPerBatch: 3,
       })
       executor.startBackgroundProcesses()
     })
@@ -242,17 +239,17 @@ describe('backpressure', () => {
   })
 
   describe('executorStats', () => {
-    let storage: InMemoryStorage
+    let storage: InMemoryTaskExecutionsStorage
     let executor: DurableExecutor
 
     beforeEach(() => {
-      storage = new InMemoryStorage({ enableDebug: false })
+      storage = new InMemoryTaskExecutionsStorage()
       executor = new DurableExecutor(storage, {
-        enableDebug: false,
+        logLevel: 'error',
         expireMs: 60_000,
         backgroundProcessIntraBatchSleepMs: 50,
         maxConcurrentTaskExecutions: 4,
-        maxTasksPerBatch: 2,
+        maxTaskExecutionsPerBatch: 2,
       })
       executor.startBackgroundProcesses()
     })
@@ -275,8 +272,8 @@ describe('backpressure', () => {
         backgroundProcessIntraBatchSleepMs: 50,
         currConcurrentTaskExecutions: 0,
         maxConcurrentTaskExecutions: 4,
-        maxTasksPerBatch: 2,
-        maxChildrenTasksPerParent: 1000,
+        maxTaskExecutionsPerBatch: 2,
+        maxChildrenPerTaskExecution: 1000,
         maxSerializedInputDataSize: 1024 * 1024,
         maxSerializedOutputDataSize: 1024 * 1024,
         registeredTasksCount: 1,

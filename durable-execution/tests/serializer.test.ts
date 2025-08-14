@@ -1,20 +1,46 @@
-import { describe, it } from 'vitest'
+import { createSuperjsonSerializer, DurableExecutionError } from '../src'
+import { SerializerInternal, zSerializer } from '../src/serializer'
 
-import { createSuperjsonSerializer, DurableExecutionError, WrappedSerializer } from '../src'
+describe('zSerializer', () => {
+  it('should handle serializer validation', () => {
+    expect(() =>
+      zSerializer.parse({
+        serialize: () => 'test',
+        deserialize: () => 'test',
+      }),
+    ).not.toThrow()
+
+    expect(() => zSerializer.parse({})).toThrow()
+
+    expect(() =>
+      zSerializer.parse({
+        serialize: 1,
+        deserialize: () => 'test',
+      }),
+    ).toThrow()
+
+    expect(() =>
+      zSerializer.parse({
+        serialize: () => 'test',
+        deserialize: 1,
+      }),
+    ).toThrow()
+  })
+})
 
 describe('serializer', () => {
-  it('should handle wrapper serializer errors', () => {
-    let executed = 0
-    const serializer = new WrappedSerializer({
+  it('should handle serializer errors', () => {
+    let executionCount = 0
+    const serializer = new SerializerInternal({
       serialize: (value) => {
-        executed++
+        executionCount++
         if (value === 1) {
           return '1'
         }
         throw new Error('serialize error')
       },
       deserialize: <T>(value: string): T => {
-        executed++
+        executionCount++
         if (value === '1') {
           return 1 as T
         }
@@ -24,13 +50,13 @@ describe('serializer', () => {
 
     expect(serializer.serialize(1)).toBe('1')
     expect(serializer.deserialize('1')).toBe(1)
-    expect(executed).toBe(2)
+    expect(executionCount).toBe(2)
 
     expect(() => serializer.serialize(2)).toThrow('Error serializing value: serialize error')
     expect(() => serializer.deserialize('2')).toThrow(
       'Error deserializing value: deserialize error',
     )
-    expect(executed).toBe(4)
+    expect(executionCount).toBe(4)
   })
 
   it('should create superjson serializer', () => {
@@ -43,8 +69,8 @@ describe('serializer', () => {
     expect(deserialized).toEqual(value)
   })
 
-  it('should handle size limit in WrappedSerializer', () => {
-    const serializer = new WrappedSerializer(createSuperjsonSerializer())
+  it('should handle size limit in serializer', () => {
+    const serializer = new SerializerInternal(createSuperjsonSerializer())
 
     const largeValue = 'x'.repeat(1000)
 
@@ -57,8 +83,8 @@ describe('serializer', () => {
     }).toThrow('exceeds maximum allowed size')
   })
 
-  it('should handle serialization errors in WrappedSerializer', () => {
-    const serializer = new WrappedSerializer({
+  it('should handle serialization errors in serializer', () => {
+    const serializer = new SerializerInternal({
       serialize: () => {
         throw new Error('Serialization failed')
       },
@@ -84,10 +110,10 @@ describe('serializer', () => {
     }).toThrow('Error deserializing value')
   })
 
-  it('should preserve DurableExecutionError in WrappedSerializer', () => {
-    const originalError = new DurableExecutionError('Original error', false)
+  it('should preserve DurableExecutionError in serializer', () => {
+    const originalError = DurableExecutionError.nonRetryable('Original error')
 
-    const serializer = new WrappedSerializer({
+    const serializer = new SerializerInternal({
       serialize: () => {
         throw originalError
       },
@@ -112,8 +138,8 @@ describe('serializer', () => {
     }
   })
 
-  it('should handle undefined max size in WrappedSerializer', () => {
-    const serializer = new WrappedSerializer(createSuperjsonSerializer())
+  it('should handle undefined max size in serializer', () => {
+    const serializer = new SerializerInternal(createSuperjsonSerializer())
 
     const value = 'x'.repeat(1000)
     const result = serializer.serialize(value)

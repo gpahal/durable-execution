@@ -1,4 +1,3 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { sleep } from '@gpahal/std/promises'
@@ -7,18 +6,18 @@ import {
   DurableExecutionCancelledError,
   DurableExecutionError,
   DurableExecutor,
+  InMemoryTaskExecutionsStorage,
   type TaskRunContext,
 } from '../src'
-import { InMemoryStorage } from './in-memory-storage'
 
 describe('simpleTask', () => {
-  let storage: InMemoryStorage
+  let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
   beforeEach(() => {
-    storage = new InMemoryStorage({ enableDebug: false })
+    storage = new InMemoryTaskExecutionsStorage()
     executor = new DurableExecutor(storage, {
-      enableDebug: false,
+      logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
     executor.startBackgroundProcesses()
@@ -29,12 +28,12 @@ describe('simpleTask', () => {
   })
 
   it('should complete', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       timeoutMs: 1000,
       run: () => {
-        executed++
+        executionCount++
         return 'test'
       },
     })
@@ -42,7 +41,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(1)
+    expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('test')
@@ -56,12 +55,12 @@ describe('simpleTask', () => {
   })
 
   it('should complete async', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       timeoutMs: 1000,
       run: async () => {
-        executed++
+        executionCount++
         await sleep(1)
         return 'test'
       },
@@ -70,7 +69,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(1)
+    expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('test')
@@ -84,7 +83,7 @@ describe('simpleTask', () => {
   })
 
   it('should complete with valid input', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor
       .validateInput((input: string) => {
         if (input !== 'test') {
@@ -96,7 +95,7 @@ describe('simpleTask', () => {
         id: 'test',
         timeoutMs: 1000,
         run: (_, input) => {
-          executed++
+          executionCount++
           return input
         },
       })
@@ -104,7 +103,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task, 'test')
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(1)
+    expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('test')
@@ -118,7 +117,7 @@ describe('simpleTask', () => {
   })
 
   it('should fail with invalid input', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor
       .validateInput((input: string) => {
         if (input !== 'test') {
@@ -130,7 +129,7 @@ describe('simpleTask', () => {
         id: 'test',
         timeoutMs: 1000,
         run: (_, input) => {
-          executed++
+          executionCount++
           return input
         },
       })
@@ -138,7 +137,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task, 'invalid')
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(0)
+    expect(executionCount).toBe(0)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
     expect(finishedExecution.taskId).toBe('test')
@@ -155,7 +154,7 @@ describe('simpleTask', () => {
   })
 
   it('should complete with input schema', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor
       .inputSchema(
         z.object({
@@ -166,7 +165,7 @@ describe('simpleTask', () => {
         id: 'test',
         timeoutMs: 1000,
         run: async (_, input) => {
-          executed++
+          executionCount++
           await sleep(1)
           return input.name
         },
@@ -175,7 +174,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task, { name: 'test' })
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(1)
+    expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('test')
@@ -189,7 +188,7 @@ describe('simpleTask', () => {
   })
 
   it('should fail with input schema', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor
       .inputSchema(
         z.object({
@@ -200,7 +199,7 @@ describe('simpleTask', () => {
         id: 'test',
         timeoutMs: 1000,
         run: async (_, input) => {
-          executed++
+          executionCount++
           await sleep(1)
           return input.name
         },
@@ -210,7 +209,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task, { name: 0 })
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(0)
+    expect(executionCount).toBe(0)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
     expect(finishedExecution.taskId).toBe('test')
@@ -227,12 +226,12 @@ describe('simpleTask', () => {
   })
 
   it('should fail', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       timeoutMs: 1000,
       run: () => {
-        executed++
+        executionCount++
         throw new Error('Test error')
       },
     })
@@ -240,7 +239,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(1)
+    expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
     expect(finishedExecution.taskId).toBe('test')
@@ -257,7 +256,7 @@ describe('simpleTask', () => {
   })
 
   it('should complete after retry', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       retryOptions: {
@@ -265,7 +264,7 @@ describe('simpleTask', () => {
       },
       timeoutMs: 1000,
       run: async (ctx) => {
-        executed++
+        executionCount++
         if (ctx.attempt === 0) {
           throw new Error('Test error')
         }
@@ -276,7 +275,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(2)
+    expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('test')
@@ -289,7 +288,7 @@ describe('simpleTask', () => {
   })
 
   it('should fail after retry', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       retryOptions: {
@@ -297,7 +296,7 @@ describe('simpleTask', () => {
       },
       timeoutMs: 1000,
       run: (ctx) => {
-        executed++
+        executionCount++
         throw new Error(`Test error ${ctx.attempt}`)
       },
     })
@@ -305,7 +304,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(2)
+    expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
     expect(finishedExecution.taskId).toBe('test')
@@ -322,7 +321,7 @@ describe('simpleTask', () => {
   })
 
   it('should fail after non-retryable error', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       retryOptions: {
@@ -330,15 +329,15 @@ describe('simpleTask', () => {
       },
       timeoutMs: 1000,
       run: () => {
-        executed++
-        throw new DurableExecutionError('Test error', false)
+        executionCount++
+        throw DurableExecutionError.nonRetryable('Test error')
       },
     })
 
     const handle = await executor.enqueueTask(task)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(1)
+    expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
     expect(finishedExecution.taskId).toBe('test')
@@ -355,12 +354,12 @@ describe('simpleTask', () => {
   })
 
   it('should timeout', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       timeoutMs: 10,
       run: async () => {
-        executed++
+        executionCount++
         await sleep(100)
       },
     })
@@ -368,13 +367,13 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(1)
+    expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('timed_out')
     assert(finishedExecution.status === 'timed_out')
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task timed out')
+    expect(finishedExecution.error?.message).toBe('Task execution timed out')
     expect(finishedExecution.error?.errorType).toBe('timed_out')
     expect(finishedExecution.error?.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
@@ -385,7 +384,7 @@ describe('simpleTask', () => {
   })
 
   it('should complete with enqueue timeout', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       retryOptions: {
@@ -393,7 +392,7 @@ describe('simpleTask', () => {
       },
       timeoutMs: 10,
       run: async () => {
-        executed++
+        executionCount++
         await sleep(50)
       },
     })
@@ -403,7 +402,7 @@ describe('simpleTask', () => {
     })
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(1)
+    expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('test')
@@ -428,12 +427,12 @@ describe('simpleTask', () => {
   })
 
   it('should cancel immediately', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       timeoutMs: 1000,
       run: async () => {
-        executed++
+        executionCount++
         await sleep(100)
       },
     })
@@ -442,13 +441,13 @@ describe('simpleTask', () => {
     await handle.cancel()
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(0)
+    expect(executionCount).toBe(0)
     expect(finishedExecution.status).toBe('cancelled')
     assert(finishedExecution.status === 'cancelled')
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task cancelled')
+    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
     expect(finishedExecution.error?.errorType).toBe('cancelled')
     expect(finishedExecution.error?.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeUndefined()
@@ -456,12 +455,12 @@ describe('simpleTask', () => {
   })
 
   it('should cancel after start', { timeout: 10_000 }, async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       timeoutMs: 5000,
       run: async () => {
-        executed++
+        executionCount++
         await sleep(2500)
       },
     })
@@ -472,13 +471,13 @@ describe('simpleTask', () => {
     await handle.cancel()
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(1)
+    expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('cancelled')
     assert(finishedExecution.status === 'cancelled')
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task cancelled')
+    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
     expect(finishedExecution.error?.errorType).toBe('cancelled')
     expect(finishedExecution.error?.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
@@ -493,12 +492,12 @@ describe('simpleTask', () => {
   })
 
   it('should handle immediate multiple cancellations', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       timeoutMs: 1000,
       run: async () => {
-        executed++
+        executionCount++
         await sleep(100)
       },
     })
@@ -507,13 +506,13 @@ describe('simpleTask', () => {
     await Promise.all([handle.cancel(), handle.cancel(), handle.cancel()])
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(0)
+    expect(executionCount).toBe(0)
     expect(finishedExecution.status).toBe('cancelled')
     assert(finishedExecution.status === 'cancelled')
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task cancelled')
+    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
     expect(finishedExecution.error?.errorType).toBe('cancelled')
     expect(finishedExecution.error?.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeUndefined()
@@ -521,12 +520,12 @@ describe('simpleTask', () => {
   })
 
   it('should handle multiple cancellations after start', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       timeoutMs: 5000,
       run: async () => {
-        executed++
+        executionCount++
         await sleep(2500)
       },
     })
@@ -536,13 +535,13 @@ describe('simpleTask', () => {
     await Promise.all([handle.cancel(), handle.cancel(), handle.cancel()])
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(1)
+    expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('cancelled')
     assert(finishedExecution.status === 'cancelled')
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task cancelled')
+    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
     expect(finishedExecution.error?.errorType).toBe('cancelled')
     expect(finishedExecution.error?.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
@@ -553,7 +552,7 @@ describe('simpleTask', () => {
   })
 
   it('should provide context with attempt and prevError on retry', async () => {
-    let executed = 0
+    let executionCount = 0
     const contexts: Array<TaskRunContext> = []
     const task = executor.task({
       id: 'test',
@@ -562,7 +561,7 @@ describe('simpleTask', () => {
       },
       timeoutMs: 1000,
       run: async (ctx) => {
-        executed++
+        executionCount++
         await sleep(0)
         contexts.push(ctx)
         throw new Error('Test error')
@@ -572,7 +571,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(2)
+    expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
     expect(finishedExecution.taskId).toBe('test')
@@ -594,7 +593,7 @@ describe('simpleTask', () => {
   })
 
   it('should apply sleepMsBeforeRun', async () => {
-    let executed = 0
+    let executionCount = 0
     const startTimes: Array<number> = []
     const task = executor.task({
       id: 'test',
@@ -604,7 +603,7 @@ describe('simpleTask', () => {
       sleepMsBeforeRun: 250,
       timeoutMs: 1000,
       run: async () => {
-        executed++
+        executionCount++
         await sleep(0)
         startTimes.push(Date.now())
         throw new Error('Test error')
@@ -614,7 +613,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(2)
+    expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
     expect(finishedExecution.taskId).toBe('test')
@@ -635,48 +634,25 @@ describe('simpleTask', () => {
     expect(startTimes[1]! - startTimes[0]!).toBeLessThan(250)
   })
 
-  it('should apply negative sleepMsBeforeRun', async () => {
-    let executed = 0
-    const startTimes: Array<number> = []
-    const task = executor.task({
-      id: 'test',
-      retryOptions: {
-        maxAttempts: 1,
-      },
-      sleepMsBeforeRun: -100,
-      timeoutMs: 1000,
-      run: async () => {
-        executed++
-        await sleep(0)
-        startTimes.push(Date.now())
-        throw new Error('Test error')
-      },
-    })
-
-    const handle = await executor.enqueueTask(task)
-
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(2)
-    expect(finishedExecution.status).toBe('failed')
-    assert(finishedExecution.status === 'failed')
-    expect(finishedExecution.taskId).toBe('test')
-    expect(finishedExecution.executionId).toMatch(/^te_/)
-    expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
-    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
-      finishedExecution.startedAt.getTime(),
-    )
-    expect(startTimes.length).toBe(2)
-    expect(startTimes[1]! - startTimes[0]!).toBeGreaterThanOrEqual(0)
-    expect(startTimes[1]! - startTimes[0]!).toBeLessThan(250)
+  it('should apply negative sleepMsBeforeRun', () => {
+    expect(() =>
+      executor.task({
+        id: 'test',
+        retryOptions: {
+          maxAttempts: 1,
+        },
+        sleepMsBeforeRun: -100,
+        timeoutMs: 1000,
+        run: async () => {
+          await sleep(0)
+          throw new Error('Test error')
+        },
+      }),
+    ).toThrow('Invalid sleep ms before run for task test')
   })
 
   it('should apply undefined delay after failed attempt', async () => {
-    let executed = 0
+    let executionCount = 0
     const startTimes: Array<number> = []
     const task = executor.task({
       id: 'test',
@@ -685,7 +661,7 @@ describe('simpleTask', () => {
       },
       timeoutMs: 1000,
       run: async () => {
-        executed++
+        executionCount++
         await sleep(0)
         startTimes.push(Date.now())
         throw new Error('Test error')
@@ -695,7 +671,7 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(2)
+    expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
     expect(finishedExecution.taskId).toBe('test')
@@ -746,12 +722,12 @@ describe('simpleTask', () => {
   })
 
   it('should respect shutdown signal within task', async () => {
-    let executed = 0
+    let executionCount = 0
     const task = executor.task({
       id: 'test',
       timeoutMs: 20_000,
       run: async (ctx) => {
-        executed++
+        executionCount++
         for (let i = 0; i < 20; i++) {
           if (ctx.shutdownSignal.isCancelled()) {
             throw new DurableExecutionCancelledError()
@@ -766,13 +742,13 @@ describe('simpleTask', () => {
     await executor.shutdown()
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(1)
+    expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('cancelled')
     assert(finishedExecution.status === 'cancelled')
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task cancelled')
+    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
     expect(finishedExecution.error?.errorType).toBe('cancelled')
     expect(finishedExecution.error?.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
@@ -786,12 +762,12 @@ describe('simpleTask', () => {
   })
 
   it('should complete sequential tasks', async () => {
-    let executed = 0
+    let executionCount = 0
     const taskString = executor.task({
       id: 'string',
       timeoutMs: 1000,
       run: (ctx, input: string) => {
-        executed++
+        executionCount++
         return input
       },
     })
@@ -799,7 +775,7 @@ describe('simpleTask', () => {
       id: 'number',
       timeoutMs: 1000,
       run: (ctx, input) => {
-        executed++
+        executionCount++
         return input
       },
     })
@@ -807,7 +783,7 @@ describe('simpleTask', () => {
       id: 'boolean',
       timeoutMs: 1000,
       run: (ctx, input: number) => {
-        executed++
+        executionCount++
         return input > 10 ? true : false
       },
     })
@@ -817,7 +793,7 @@ describe('simpleTask', () => {
     let handle = await executor.enqueueTask(task, '10.5')
 
     let finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(3)
+    expect(executionCount).toBe(3)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toContain('st_')
@@ -832,7 +808,7 @@ describe('simpleTask', () => {
     handle = await executor.enqueueTask(task, '9.5')
 
     finishedExecution = await handle.waitAndGetFinishedExecution()
-    expect(executed).toBe(6)
+    expect(executionCount).toBe(6)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toContain('st_')
@@ -843,5 +819,228 @@ describe('simpleTask', () => {
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
       finishedExecution.startedAt.getTime(),
     )
+  })
+
+  it('should fail when task input exceeds serialization size limit', async () => {
+    const tooLargeString = 'x'.repeat(1024 * 1024 + 1000)
+
+    const testTask = executor.task({
+      id: 'too_large_input',
+      timeoutMs: 5000,
+      run: (_ctx, input: string) => {
+        return input.length
+      },
+    })
+
+    await expect(async () => {
+      await executor.enqueueTask(testTask, tooLargeString)
+    }).rejects.toThrow()
+  })
+
+  it('should fail when task output exceeds serialization size limit', async () => {
+    const tooLargeOutput = 'z'.repeat(10 * 1024 * 1024 + 10_000)
+
+    const testTask = executor.task({
+      id: 'too_large_output',
+      timeoutMs: 5000,
+      run: () => {
+        return tooLargeOutput
+      },
+    })
+
+    const handle = await executor.enqueueTask(testTask)
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+
+    expect(finishedExecution.status).toBe('failed')
+    assert(finishedExecution.status === 'failed')
+    expect(finishedExecution.error?.message).toContain('size')
+  })
+
+  it('should handle sequential task error propagation correctly', async () => {
+    let executionCount = 0
+
+    const task1 = executor.task({
+      id: 'seq_task1',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        return 'task1'
+      },
+    })
+
+    const task2 = executor.task<string, string>({
+      id: 'seq_task2',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        throw new Error('Task 2 failed')
+      },
+    })
+
+    const task3 = executor.task<string, string>({
+      id: 'seq_task3',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        return 'task3'
+      },
+    })
+
+    const sequentialTask = executor.sequentialTasks(task1, task2, task3)
+
+    const handle = await executor.enqueueTask(sequentialTask)
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+
+    expect(finishedExecution.status).toBe('finalize_failed')
+    assert(finishedExecution.status === 'finalize_failed')
+    expect(finishedExecution.error?.message).toContain('Task 2 failed')
+    expect(executionCount).toBe(2)
+  })
+
+  it('should handle sequential task cancellation at different stages', async () => {
+    let task1Started = false
+    let task2Started = false
+
+    const task1 = executor.task({
+      id: 'seq_cancel_task1',
+      timeoutMs: 5000,
+      run: async () => {
+        task1Started = true
+        await sleep(100)
+        return 'task1'
+      },
+    })
+
+    const task2 = executor.task<string, string>({
+      id: 'seq_cancel_task2',
+      timeoutMs: 5000,
+      run: async () => {
+        task2Started = true
+        await sleep(1000)
+        return 'task2'
+      },
+    })
+
+    const sequentialTask = executor.sequentialTasks(task1, task2)
+
+    const handle = await executor.enqueueTask(sequentialTask)
+    await sleep(500)
+    await handle.cancel()
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(finishedExecution.status).toBe('cancelled')
+    expect(task1Started).toBe(true)
+    expect(task2Started).toBe(true)
+  })
+
+  it('should handle sequential task timeout scenarios', async () => {
+    const task1 = executor.task({
+      id: 'seq_timeout_task1',
+      timeoutMs: 100,
+      run: async () => {
+        await sleep(500)
+        return 'task1'
+      },
+    })
+
+    const task2 = executor.task<string, string>({
+      id: 'seq_timeout_task2',
+      timeoutMs: 1000,
+      run: () => {
+        return 'task2'
+      },
+    })
+
+    const sequentialTask = executor.sequentialTasks(task1, task2)
+
+    const handle = await executor.enqueueTask(sequentialTask)
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+
+    expect(finishedExecution.status).toBe('finalize_failed')
+    assert(finishedExecution.status === 'finalize_failed')
+    expect(finishedExecution.error?.message).toContain('Task execution timed out')
+  })
+
+  it('should handle empty sequential task array', () => {
+    // @ts-expect-error - Testing invalid input
+    expect(() => executor.sequentialTasks()).toThrow()
+  })
+
+  it('should complete single sequential task', async () => {
+    let executionCount = 0
+    const task1 = executor.task({
+      id: 'seq_task',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        return 'task1'
+      },
+    })
+
+    const sequentialTask = executor.sequentialTasks(task1)
+
+    const handle = await executor.enqueueTask(sequentialTask)
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.output).toBe('task1')
+    expect(executionCount).toBe(1)
+  })
+
+  it('should handle single sequential task error propagation correctly', async () => {
+    let executionCount = 0
+    const task1 = executor.task({
+      id: 'seq_task',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        throw new Error('Task 1 failed')
+      },
+    })
+
+    const sequentialTask = executor.sequentialTasks(task1)
+
+    const handle = await executor.enqueueTask(sequentialTask)
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+
+    expect(finishedExecution.status).toBe('finalize_failed')
+    assert(finishedExecution.status === 'finalize_failed')
+    expect(finishedExecution.error?.message).toContain('Task 1 failed')
+    expect(executionCount).toBe(1)
+  })
+
+  it('should handle task closure', async () => {
+    let executionCount = 0
+    const task = executor.task({
+      id: 'test',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        return 'test'
+      },
+    })
+
+    const handle = await executor.enqueueTask(task)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(executionCount).toBe(1)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.output).toBe('test')
+
+    while (true) {
+      const executionStorageValue = await storage.getById(handle.getExecutionId(), {})
+      expect(executionStorageValue).toBeDefined()
+      assert(executionStorageValue)
+      expect(executionStorageValue.status).toBe('completed')
+
+      if (executionStorageValue.closeStatus === 'closed') {
+        expect(executionStorageValue.closedAt).toBeInstanceOf(Date)
+        break
+      }
+
+      await sleep(100)
+    }
   })
 })

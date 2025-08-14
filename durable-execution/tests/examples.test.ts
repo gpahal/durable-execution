@@ -1,19 +1,23 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutor, type Task } from '../src'
-import { InMemoryStorage } from './in-memory-storage'
+import {
+  DurableExecutionError,
+  DurableExecutor,
+  InMemoryTaskExecutionsStorage,
+  type CompletedChildTaskExecution,
+  type Task,
+} from '../src'
 
 describe('examples', () => {
-  let storage: InMemoryStorage
+  let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
   beforeEach(() => {
-    storage = new InMemoryStorage({ enableDebug: false })
+    storage = new InMemoryTaskExecutionsStorage()
     executor = new DurableExecutor(storage, {
-      enableDebug: false,
+      logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
     executor.startBackgroundProcesses()
@@ -226,7 +230,7 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from parent task, ${input.name}!`,
-          childrenTasks: [
+          children: [
             {
               task: taskA,
               input: { name: input.name },
@@ -249,12 +253,14 @@ describe('examples', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.output).toBe('Hello from parent task, world!')
-    expect(finishedExecution.output.childrenTaskExecutionsOutputs[0]!.output).toBe(
-      'Hello from task A, world!',
-    )
-    expect(finishedExecution.output.childrenTaskExecutionsOutputs[1]!.output).toBe(
-      'Hello from task B, world!',
-    )
+    expect(finishedExecution.output.children[0]!.status).toBe('completed')
+    assert(finishedExecution.output.children[0]!.status === 'completed')
+    expect(finishedExecution.output.children[0]!.output).toBe('Hello from task A, world!')
+    expect(finishedExecution.output.children[1]!.status).toBe('completed')
+    assert(finishedExecution.output.children[1]!.status === 'completed')
+    expect(finishedExecution.output.children[1]!.output).toBe('Hello from task B, world!')
+    assert(finishedExecution.output.children[0]!.output === 'Hello from task A, world!')
+    assert(finishedExecution.output.children[1]!.output === 'Hello from task B, world!')
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -284,7 +290,7 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from parent task, ${input.name}!`,
-          childrenTasks: [
+          children: [
             {
               task: taskA,
               input: { name: input.name },
@@ -296,14 +302,23 @@ describe('examples', () => {
           ],
         }
       },
-      finalizeTask: {
+      finalize: {
         id: 'onParentRunAndChildrenComplete',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+        run: (ctx, { output, children }) => {
+          const child1 = children[0]!
+          const child2 = children[1]!
+
+          // The finalize function receives all children executions, including failed ones.
+          // This allows you to implement custom error handling logic.
+          if (child1.status !== 'completed' || child2.status !== 'completed') {
+            throw DurableExecutionError.nonRetryable('Children failed')
+          }
+
           return {
             parentOutput: output,
-            taskAOutput: childrenTaskExecutionsOutputs[0]!.output as string,
-            taskBOutput: childrenTaskExecutionsOutputs[1]!.output as string,
+            taskAOutput: child1.output as string,
+            taskBOutput: child2.output as string,
           }
         },
       },
@@ -320,6 +335,150 @@ describe('examples', () => {
     expect(finishedExecution.output.parentOutput).toBe('Hello from parent task, world!')
     expect(finishedExecution.output.taskAOutput).toBe('Hello from task A, world!')
     expect(finishedExecution.output.taskBOutput).toBe('Hello from task B, world!')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should fail parent task if any parallel children fail', async () => {
+    const taskA = executor.task({
+      id: 'a',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        return `Hello from task A, ${input.name}!`
+      },
+    })
+    const taskB = executor.task({
+      id: 'b',
+      timeoutMs: 1000,
+      run: () => {
+        throw new Error('Failed')
+      },
+    })
+
+    const parentTask = executor.parentTask({
+      id: 'parent',
+      timeoutMs: 1000,
+      runParent: (ctx, input: { name: string }) => {
+        return {
+          output: `Hello from parent task, ${input.name}!`,
+          children: [
+            {
+              task: taskA,
+              input: { name: input.name },
+            },
+            {
+              task: taskB,
+            },
+          ],
+        }
+      },
+      finalize: {
+        id: 'onParentRunAndChildrenComplete',
+        timeoutMs: 1000,
+        run: (ctx, { output, children }) => {
+          const child1 = children[0]!
+          const child2 = children[1]!
+
+          // The finalize function receives all children executions, including failed ones.
+          // This allows you to implement custom error handling logic.
+          if (child1.status !== 'completed' || child2.status !== 'completed') {
+            throw DurableExecutionError.nonRetryable('Children failed')
+          }
+
+          return {
+            parentOutput: output,
+            taskAOutput: child1.output as string,
+            taskBOutput: child2.output as string,
+          }
+        },
+      },
+    })
+
+    const handle = await executor.enqueueTask(parentTask, { name: 'world' })
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(finishedExecution.status).toBe('finalize_failed')
+    assert(finishedExecution.status === 'finalize_failed')
+    expect(finishedExecution.taskId).toBe('parent')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.error).toBeDefined()
+    expect(finishedExecution.error?.message).toContain('Children failed')
+    expect(finishedExecution.error?.errorType).toBe('generic')
+    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete parent task with partial success if any parallel children fail', async () => {
+    const taskA = executor.task({
+      id: 'a',
+      timeoutMs: 1000,
+      run: (ctx, input: { name: string }) => {
+        return `Hello from task A, ${input.name}!`
+      },
+    })
+    const taskB = executor.task({
+      id: 'b',
+      timeoutMs: 1000,
+      run: () => {
+        throw new Error('Failed')
+      },
+    })
+
+    const resilientParentTask = executor.parentTask({
+      id: 'resilientParent',
+      timeoutMs: 1000,
+      runParent: (ctx, input: { name: string }) => {
+        return {
+          output: `Hello from parent task, ${input.name}!`,
+          children: [{ task: taskA, input: { name: input.name } }, { task: taskB }],
+        }
+      },
+      finalize: {
+        id: 'resilientFinalize',
+        timeoutMs: 1000,
+        run: (ctx, { output, children }) => {
+          const results = children.map((child, index) => ({
+            index,
+            success: child.status === 'completed',
+            result: child.status === 'completed' ? child.output : child.error?.message,
+          }))
+
+          const successfulResults = results.filter((r) => r.success)
+
+          // Continue even if some children failed.
+          return {
+            parentOutput: output,
+            successfulCount: successfulResults.length,
+            totalCount: children.length,
+            results,
+          }
+        },
+      },
+    })
+
+    const handle = await executor.enqueueTask(resilientParentTask, { name: 'world' })
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('resilientParent')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBeDefined()
+    expect(finishedExecution.output.parentOutput).toBe('Hello from parent task, world!')
+    expect(finishedExecution.output.successfulCount).toBe(1)
+    expect(finishedExecution.output.totalCount).toBe(2)
+    expect(finishedExecution.output.results).toBeDefined()
+    expect(finishedExecution.output.results[0]!.success).toBe(true)
+    expect(finishedExecution.output.results[0]!.result).toBe('Hello from task A, world!')
+    expect(finishedExecution.output.results[1]!.success).toBe(false)
+    expect(finishedExecution.output.results[1]!.result).toBe('Failed')
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -400,22 +559,27 @@ describe('examples', () => {
           },
         }
       },
-      finalizeTask: {
+      finalize: {
         id: 'taskBFinalize',
         timeoutMs: 1000,
         runParent: (ctx, { output }) => {
           return {
             output: output.taskBOutput,
-            childrenTasks: [{ task: taskC, input: { name: output.name } }],
+            children: [{ task: taskC, input: { name: output.name } }],
           }
         },
-        finalizeTask: {
+        finalize: {
           id: 'taskBFinalizeNested',
           timeoutMs: 1000,
-          run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+          run: (ctx, { output, children }) => {
+            const child = children[0]!
+            if (child.status !== 'completed') {
+              throw DurableExecutionError.nonRetryable('Child failed')
+            }
+
             return {
               taskBOutput: output,
-              taskCOutput: childrenTaskExecutionsOutputs[0]!.output as string,
+              taskCOutput: child.output as string,
             }
           },
         },
@@ -432,20 +596,25 @@ describe('examples', () => {
           },
         }
       },
-      finalizeTask: {
+      finalize: {
         id: 'taskAFinalize',
         timeoutMs: 1000,
         runParent: (ctx, { output }) => {
           return {
             output: output.taskAOutput,
-            childrenTasks: [{ task: taskB, input: { name: output.name } }],
+            children: [{ task: taskB, input: { name: output.name } }],
           }
         },
-        finalizeTask: {
+        finalize: {
           id: 'taskAFinalizeNested',
           timeoutMs: 1000,
-          run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
-            const taskBOutput = childrenTaskExecutionsOutputs[0]!.output as {
+          run: (ctx, { output, children }) => {
+            const child = children[0]!
+            if (child.status !== 'completed') {
+              throw DurableExecutionError.nonRetryable('Child failed')
+            }
+
+            const taskBOutput = child.output as {
               taskBOutput: string
               taskCOutput: string
             }
@@ -516,21 +685,27 @@ describe('examples', () => {
             name: input.name,
             taskAOutput: `Hello from task A, ${input.name}!`,
           },
-          childrenTasks: [
+          children: [
             { task: taskA1, input: { name: input.name } },
             { task: taskA2, input: { name: input.name } },
           ],
         }
       },
-      finalizeTask: {
+      finalize: {
         id: 'taskAFinalize',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+        run: (ctx, { output, children }) => {
+          const child1 = children[0]!
+          const child2 = children[1]!
+          if (child1.status !== 'completed' || child2.status !== 'completed') {
+            throw DurableExecutionError.nonRetryable('Children failed')
+          }
+
           return {
             name: output.name,
             taskAOutput: output.taskAOutput,
-            taskA1Output: childrenTaskExecutionsOutputs[0]!.output as string,
-            taskA2Output: childrenTaskExecutionsOutputs[1]!.output as string,
+            taskA1Output: child1.output as string,
+            taskA2Output: child2.output as string,
           }
         },
       },
@@ -549,20 +724,26 @@ describe('examples', () => {
             taskA2Output: input.taskA2Output,
             taskBOutput: `Hello from task B, ${input.name}!`,
           },
-          childrenTasks: [
+          children: [
             { task: taskB1, input: { name: input.name } },
             { task: taskB2, input: { name: input.name } },
           ],
         }
       },
-      finalizeTask: {
+      finalize: {
         id: 'taskBFinalize',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+        run: (ctx, { output, children }) => {
+          const child1 = children[0]!
+          const child2 = children[1]!
+          if (child1.status !== 'completed' || child2.status !== 'completed') {
+            throw DurableExecutionError.nonRetryable('Children failed')
+          }
+
           return {
             ...output,
-            taskB1Output: childrenTaskExecutionsOutputs[0]!.output as string,
-            taskB2Output: childrenTaskExecutionsOutputs[1]!.output as string,
+            taskB1Output: child1.output as string,
+            taskB2Output: child2.output as string,
           }
         },
       },
@@ -653,22 +834,33 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from task A, ${input.name}!`,
-          childrenTasks: [
+          children: [
             { task: taskA1, input: { name: input.name } },
             { task: taskA2, input: { name: input.name } },
             { task: taskA3, input: { name: input.name } },
           ],
         }
       },
-      finalizeTask: {
+      finalize: {
         id: 'taskAFinalize',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+        run: (ctx, { output, children }) => {
+          const child1 = children[0]!
+          const child2 = children[1]!
+          const child3 = children[2]!
+          if (
+            child1.status !== 'completed' ||
+            child2.status !== 'completed' ||
+            child3.status !== 'completed'
+          ) {
+            throw DurableExecutionError.nonRetryable('Children failed')
+          }
+
           return {
             taskAOutput: output,
-            taskA1Output: childrenTaskExecutionsOutputs[0]!.output as string,
-            taskA2Output: childrenTaskExecutionsOutputs[1]!.output as string,
-            taskA3Output: childrenTaskExecutionsOutputs[2]!.output as string,
+            taskA1Output: child1.output as string,
+            taskA2Output: child2.output as string,
+            taskA3Output: child3.output as string,
           }
         },
       },
@@ -680,23 +872,29 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from root task, ${input.name}!`,
-          childrenTasks: [
+          children: [
             { task: taskA, input: { name: input.name } },
             { task: taskB, input: { name: input.name } },
           ],
         }
       },
-      finalizeTask: {
+      finalize: {
         id: 'rootFinalize',
         timeoutMs: 1000,
-        run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
-          const taskAOutput = childrenTaskExecutionsOutputs[0]!.output as {
+        run: (ctx, { output, children }) => {
+          const child1 = children[0]!
+          const child2 = children[1]!
+          if (child1.status !== 'completed' || child2.status !== 'completed') {
+            throw DurableExecutionError.nonRetryable('Children failed')
+          }
+
+          const taskAOutput = child1.output as {
             taskAOutput: string
             taskA1Output: string
             taskA2Output: string
             taskA3Output: string
           }
-          const taskBOutput = childrenTaskExecutionsOutputs[1]!.output as {
+          const taskBOutput = child2.output as {
             taskB1Output: string
             taskB2Output: string
             taskB3Output: string
@@ -747,19 +945,23 @@ describe('examples', () => {
           await sleep(1)
           return {
             output: undefined,
-            childrenTasks:
+            children:
               input.index >= 9 ? [] : [{ task: recursiveTask, input: { index: input.index + 1 } }],
           }
         },
-        finalizeTask: {
+        finalize: {
           id: 'recursiveFinalize',
           timeoutMs: 1000,
-          run: (ctx, { childrenTaskExecutionsOutputs }) => {
+          run: (ctx, { children }) => {
+            if (children.some((child) => child.status !== 'completed')) {
+              throw DurableExecutionError.nonRetryable('Children failed')
+            }
+
             return {
               count:
                 1 +
-                childrenTaskExecutionsOutputs.reduce(
-                  (acc, childOutput) => acc + (childOutput.output as { count: number }).count,
+                (children as Array<CompletedChildTaskExecution>).reduce(
+                  (acc, child) => acc + (child.output as { count: number }).count,
                   0,
                 ),
             }
@@ -816,13 +1018,13 @@ describe('examples', () => {
             } as
               | { isDone: false; value: undefined; prevCount: number }
               | { isDone: true; value: number; prevCount: number },
-            childrenTasks: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
+            children: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
           }
         },
-        finalizeTask: {
+        finalize: {
           id: 'pollingFinalize',
           timeoutMs: 1000,
-          run: (ctx, { output, childrenTaskExecutionsOutputs }) => {
+          run: (ctx, { output, children }) => {
             if (output.isDone) {
               return {
                 count: output.prevCount + 1,
@@ -830,7 +1032,12 @@ describe('examples', () => {
               }
             }
 
-            return childrenTaskExecutionsOutputs[0]!.output as {
+            const child = children[0]!
+            if (child.status !== 'completed') {
+              throw DurableExecutionError.nonRetryable('Child failed')
+            }
+
+            return child.output as {
               count: number
               value: number
             }

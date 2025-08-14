@@ -2,83 +2,71 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Development Commands
+## Commands
 
-```bash
-# Installation (from monorepo root)
-pnpm install   # Requires pnpm@10, Node >= 20
+### Development
 
-# Build and Development
-pnpm build          # Build package with tsup
-pnpm clean          # Remove build artifacts
-pnpm type-check     # TypeScript type checking + typedoc validation
+- `pnpm test` - Run all tests
+- `pnpm test-coverage` - Run tests with coverage reporting
+- `pnpm type-check` - Run TypeScript type checking and generate documentation
+- `pnpm lint` - Run ESLint
+- `pnpm lint-fix` - Run ESLint with auto-fix
+- `pnpm build` - Build the project (cleans build directory first)
+- `pnpm clean` - Remove build directory
 
-# Testing
-pnpm test           # Run all tests
-pnpm test-coverage  # Run tests with coverage report
+### Testing
 
-# Code Quality
-pnpm lint           # Run ESLint
-pnpm lint-fix       # Auto-fix linting issues
-```
+- Single test files are run with vitest, but there's only one test file: `tests/index.test.ts`
+- The project uses vitest with v8 coverage reporting
+- Tests require proper cleanup with `executor.shutdown()` in `afterEach` blocks
+- Task IDs in tests must be alphanumeric with underscores only (no hyphens)
 
-## Architecture Overview
+## Architecture
 
-This package provides oRPC utilities for the durable-execution library, enabling separation of task execution into a dedicated server process with type-safe client-server communication.
+This is an oRPC utilities library for the durable-execution framework that enables separation of business logic from execution orchestration.
 
-### Package Structure
+### Core Components
 
-#### Entry Points
+**Server (`src/server.ts`)**:
 
-- `/server` - Server-side utilities for creating oRPC procedures
-- `/client` - Client-side utilities for interacting with server procedures
+- `createTasksRouter()` - Creates oRPC router with `enqueueTask` and `getTaskExecution` procedures
+- `convertProcedureClientToTask()` - Converts oRPC procedure clients into durable tasks for remote execution
+- Error mapping from oRPC errors to DurableExecutionError types
+- HTTP status code classification (retryable: 408, 429, 500-504; not found: 404)
 
-#### Core Modules
+**Client (`src/client.ts`)**:
 
-- `src/server.ts` - Server utilities
-  - `createTasksRouter()` - Creates oRPC router with task procedures
-  - `convertClientProcedureToTask()` - Wraps client procedures as durable tasks
-- `src/client.ts` - Client utilities
-  - `TasksRouterClient<>` - Type definition for client procedures
-  - `createTaskClientHandles()` - Creates type-safe task handles
+- `createTaskClientHandles()` - Creates type-safe handles for tasks with `enqueue` and `getExecution` methods
+- Complex TypeScript generics for full type inference from task definitions
+- Handles client context propagation for authenticated requests
 
 ### Key Patterns
 
-**Task Router Creation**
-The server exposes tasks via oRPC procedures that handle:
+**Type System**:
 
-- Task enqueueing with `enqueueTask` procedure
-- Execution state queries with `getTaskExecution` procedure
-- Error mapping from DurableExecutionError to oRPC error codes
+- Heavy use of TypeScript conditional types and inference
+- `convertProcedureClientToTask` uses `any` constraint for `ClientContext` to enable flexible type inference
+- Task input/output types are inferred from oRPC procedure schemas
 
-**Client Procedure Conversion**
-Enables web apps to expose business logic as oRPC procedures that the durable executor server can call:
+**Error Handling**:
 
-1. Web app defines and exposes oRPC procedures
-2. Server wraps these as durable tasks using `convertClientProcedureToTask()`
-3. Task execution triggers RPC calls back to the web app
-4. Execution state managed by durable executor server
+- Three-tier error classification: retryable, internal, not found
+- Automatic retry logic based on HTTP status codes
+- DurableExecutionError wrapping with proper error metadata
 
-**Type-Safe Client Handles**
-`createTaskClientHandles()` generates strongly-typed client handles from task definitions, providing:
+**Testing Strategy**:
 
-- `enqueue()` method with proper input typing
-- `getExecution()` method returning typed execution results
+- Comprehensive edge case coverage including all HTTP status codes
+- Mock-based testing for error scenarios using vi.spyOn
+- Real execution testing with InMemoryTaskExecutionsStorage
+- Type safety verification through test compilation
 
-### Testing Approach
+### Dependencies
 
-Tests validate:
+This package is part of a monorepo and depends on:
 
-- Direct task execution through router procedures
-- Client procedure conversion and execution
-- Error handling and propagation
-- Type safety across client-server boundaries
+- `durable-execution` (workspace dependency) - Core task execution framework
+- `@orpc/*` packages - RPC framework for client/server communication
+- `@gpahal/std` - Standard utilities library
 
-Run tests with `pnpm test` from package directory or `pnpm vitest run tests/index.test.ts` for specific test file.
-
-### Usage Flow
-
-1. **Server Setup**: Create executor, register tasks, build router with `createTasksRouter()`
-2. **Client Setup**: Create oRPC client for server router
-3. **Task Execution**: Use client handles to enqueue tasks and query execution state
-4. **Remote Tasks**: Optionally wrap client procedures as tasks for remote execution
+Configuration files inherit from parent directory (`../durable-execution/`) for tsup and vitest configs.

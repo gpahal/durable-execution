@@ -2,53 +2,75 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Commands
+## Project Overview
 
-### Build and Development
+This is a TypeScript library that provides test utilities for validating storage implementations in the durable-execution ecosystem. It's part of a monorepo with packages including `durable-execution` (core), `durable-execution-orpc-utils`, and `durable-execution-storage-drizzle`.
 
-- `pnpm build` - Build the package using tsup
-- `pnpm clean` - Clean build artifacts
-- `pnpm type-check` - Run TypeScript type checking and typedoc validation
+## Essential Commands
 
-### Testing
+### Development
 
-- `pnpm test` - Run all tests with Vitest
-- `pnpm test-coverage` - Run tests with coverage report
+```bash
+# Install dependencies (from monorepo root)
+pnpm install
 
-### Linting
+# Build the package
+pnpm build
 
-- `pnpm lint` - Run ESLint
-- `pnpm lint-fix` - Run ESLint with automatic fixes
+# Run tests
+pnpm test
+
+# Run tests with coverage
+pnpm test:coverage
+
+# Lint code
+pnpm lint
+
+# Format code
+pnpm format
+```
+
+### Monorepo Context
+
+This package uses Turbo for build orchestration and pnpm workspaces. When making changes, consider running commands from the monorepo root to ensure proper dependency coordination.
 
 ## Architecture
 
-This is a test utilities package for durable-execution storage implementations. The main architecture consists of:
+### Core Functionality
 
-### Core Components
+The package exports test utilities from `src/index.ts`:
 
-- **runStorageTest()**: Main test function that takes a `Storage` implementation and runs comprehensive tests against it
-- **DurableExecutor**: Creates and manages durable task execution with configurable timeout and retry options
-- **Test utilities**: Helper functions for temporary file/directory management
+- **`runStorageTest(storage, cleanup?)`** - Main comprehensive test suite that validates storage implementations through complex scenarios including:
+  - DurableExecutor functionality with task hierarchies
+  - Concurrent execution (250+ tasks)
+  - Retry mechanisms and error handling
+  - Parent-child task relationships
 
-### Test Pattern Structure
+- **`createTaskExecutionStorageValue()`** - Factory for test storage values
+- **Temporary resource helpers** - `withTemporaryDirectory()`, `withTemporaryFile()`, `cleanupTemporaryFiles()`
 
-The test suite validates storage implementations through:
+### Dependencies
 
-1. **Sequential Tasks** (`taskB1`, `taskB2`, `taskB3`) - Tests chained task execution
-2. **Parent Tasks with Children** (`taskA`) - Tests hierarchical task structures with finalization
-3. **Concurrent Tasks** (250 tasks) - Tests parallel execution handling
-4. **Retry Logic** - Tests task retry mechanisms with configurable attempts
-5. **Error Handling** - Tests various failure scenarios (task failures, child failures, finalization failures)
-6. **Large Scale Concurrency** (500 child tasks) - Tests high-volume concurrent execution
+- **Peer dependency**: `durable-execution` (workspace)
+- **Dev dependency**: `@gpahal/std` for utilities
+- **Runtime**: Node.js >=20.0.0, ESM modules
 
-### Key Testing Scenarios
+### Testing Strategy
 
-- Root task with nested parent/child task hierarchies
-- Sequential task chaining with data flow
-- Concurrent task execution at scale
-- Retry mechanisms and failure handling
-- Parent task finalization with child task results aggregation
+- Uses **Vitest** with 120-second timeouts for comprehensive storage tests
+- Tests demonstrate usage with `InMemoryTaskExecutionsStorage`
+- Coverage reporting via `@vitest/coverage-v8`
 
-## Dependencies
+## Key Configuration
 
-This package has a peer dependency on `durable-execution` (workspace) and uses `@gpahal/std` for utilities. The package is built as an ES module with TypeScript support.
+- **TypeScript**: Strict configuration with declaration generation
+- **Build**: tsup bundler with inherited config from parent
+- **Linting**: ESLint with `@gpahal/eslint-config/base`
+- **Package manager**: pnpm with workspace support
+
+## Development Notes
+
+- This is a library package (not an application)
+- Uses semantic versioning and is published to NPM
+- Part of coordinated releases across the durable-execution ecosystem
+- When implementing new test utilities, ensure they work with the existing `runStorageTest` framework

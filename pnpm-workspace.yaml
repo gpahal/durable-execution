@@ -20,16 +20,16 @@ catalogs:
   dev:
     '@changesets/cli': ^2.29.5
     '@electric-sql/pglite': ^0.3.7
-    '@gpahal/eslint-config': ^0.0.105
-    '@gpahal/prettier-config': ^0.0.29
+    '@gpahal/eslint-config': ^0.0.106
+    '@gpahal/prettier-config': ^0.0.30
     '@gpahal/tsconfig': ^0.0.20
-    '@ianvs/prettier-plugin-sort-imports': ^4.6.1
-    '@libsql/client': ^0.15.10
-    '@orpc/client': ^1.8.0
-    '@orpc/contract': ^1.8.0
-    '@orpc/server': ^1.8.0
+    '@ianvs/prettier-plugin-sort-imports': ^4.6.2
+    '@libsql/client': ^0.15.11
+    '@orpc/client': ^1.8.1
+    '@orpc/contract': ^1.8.1
+    '@orpc/server': ^1.8.1
     '@testcontainers/mysql': ^11.5.1
-    '@types/node': ^24.2.1
+    '@types/node': ^24.3.0
     '@vitest/coverage-v8': ^3.2.4
     drizzle-kit: ^0.31.4
     drizzle-orm: ^0.44.4
@@ -41,7 +41,7 @@ catalogs:
     testcontainers: ^11.5.1
     tsup: ^8.5.0
     tsx: ^4.20.4
-    turbo: ^2.5.5
+    turbo: ^2.5.6
     typedoc: ^0.28.10
     typedoc-plugin-mermaid: ^1.12.0
     typescript: ^5.9.2

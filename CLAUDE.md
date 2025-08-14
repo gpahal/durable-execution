@@ -4,178 +4,205 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
-### Installation and Setup
+### Monorepo Commands (run from root)
 
 ```bash
-pnpm install   # Install dependencies (requires pnpm@10, Node >= 20)
+# Install dependencies
+pnpm install
+
+# Build all packages
+pnpm build
+pnpm build-docs           # Build TypeDoc documentation for main package
+
+# Testing
+pnpm test                 # Run all tests across packages
+pnpm test-coverage        # Run tests with coverage
+turbo test               # Alternative via Turbo
+
+# Code quality
+pnpm type-check          # TypeScript checking across packages
+pnpm lint                # ESLint all packages
+pnpm lint-fix            # Auto-fix linting issues
+pnpm fmt                 # Format code with Prettier
+pnpm fmt-check           # Check formatting
+
+# Development workflow
+pnpm pre-commit          # Full pre-commit checks (type-check, lint, fmt-check, build)
+
+# Publishing
+pnpm cs                  # Create changeset and version
+pnpm cs-publish          # Publish packages with git tagging
 ```
 
-### Build Commands
+### Package-specific Commands
+
+Navigate to individual package directories to run package-specific commands:
 
 ```bash
-pnpm build          # Build all packages using Turbo
-pnpm clean          # Clean all build artifacts
-pnpm build-docs     # Generate TypeDoc documentation for core package
-```
+# Core package (durable-execution/)
+cd durable-execution
+pnpm test                # Run core tests
+pnpm build-docs          # Generate TypeDoc docs
+npx vitest run tests/executor.test.ts  # Run specific test
 
-### Testing Commands
+# Storage implementations
+cd durable-execution-storage-drizzle
+pnpm test                # Test all database implementations
 
-```bash
-pnpm test           # Run all tests across packages
-pnpm test-coverage  # Run tests with coverage reporting
+# oRPC utilities
+cd durable-execution-orpc-utils
+pnpm test                # Test remote execution utilities
 
-# Run tests for specific packages
-pnpm -F durable-execution test
-pnpm -F durable-execution-storage-drizzle test
-pnpm -F durable-execution-orpc-utils test
-pnpm -F durable-execution-storage-test-utils test
-
-# Run specific test files
-pnpm vitest run tests/executor.test.ts           # Core executor tests
-pnpm vitest run tests/executor-client.test.ts    # Client tests
-pnpm vitest run tests/parent-task.test.ts        # Parent-child task tests
-pnpm vitest run tests/concurrent-scenarios.test.ts # Concurrency tests
-```
-
-### Code Quality Commands
-
-```bash
-pnpm type-check     # Type check all packages
-pnpm lint           # Lint all packages
-pnpm lint-fix       # Lint with automatic fixes
-pnpm fmt            # Format code with Prettier
-pnpm fmt-check      # Check code formatting
-```
-
-### Git Hooks and Publishing
-
-```bash
-pnpm pre-commit     # Run type-check, lint, fmt-check, and build (used by git hooks)
-pnpm cs             # Create changesets for versioning
-pnpm cs-publish     # Publish packages after running tests
+# Test utilities
+cd durable-execution-storage-test-utils
+pnpm test                # Test storage validation suite
 ```
 
 ## Architecture Overview
 
-This is a monorepo containing a durable execution engine for running resilient tasks that survive process failures, network issues, and transient errors.
+This is a **TypeScript monorepo** for a durable task execution framework that provides resilient, idempotent task orchestration with failure recovery.
 
 ### Package Structure
 
-**Core Package - `durable-execution/`**
+**Core Package**: `durable-execution/`
 
-- Main durable execution engine and task orchestration
-- Exports: `DurableExecutor`, `DurableExecutorClient`, task types, storage interface, error types
-- Key files: `executor.ts`, `executor-client.ts`, `task.ts`, `storage.ts`, `in-memory-storage.ts`
+- Main framework for durable task execution
+- Provides `DurableExecutor`, task definitions, storage interfaces
+- Comprehensive test suite and TypeDoc documentation
 
-**Storage Implementation - `durable-execution-storage-drizzle/`**
+**Storage Implementations**: `durable-execution-storage-drizzle/`
 
-- Drizzle ORM-based storage for PostgreSQL, MySQL, and SQLite
-- Production-ready storage implementations with proper indexing and transactions
-- Exports: `createPgStorage()`, `createMySqlStorage()`, `createSQLiteStorage()`, table schema creators
-- PostgreSQL/MySQL use `FOR UPDATE SKIP LOCKED` for row locking
-- SQLite uses mutex-based transaction serialization
+- Database storage using Drizzle ORM
+- Supports PostgreSQL, MySQL, SQLite
+- Production-ready with transaction support
 
-**oRPC Integration - `durable-execution-orpc-utils/`**
+**Remote Execution**: `durable-execution-orpc-utils/`
 
-- Utilities for running durable executor as a separate server process
-- Type-safe client-server communication via oRPC
-- Split exports: `./server` and `./client` entry points
-- Server: `createTasksRouter()`, `convertClientProcedureToTask()`
-- Client: `TasksRouterClient<>`, `createTaskClientHandles()`
+- oRPC integration for distributed task execution
+- Type-safe client/server communication
+- Separates business logic from execution orchestration
 
-**Test Utilities - `durable-execution-storage-test-utils/`**
+**Testing Infrastructure**: `durable-execution-storage-test-utils/`
 
-- Comprehensive test suite for validating storage implementations
-- Exports: `runStorageTest()` function and test utilities
-- Used by storage packages to ensure consistent behavior
+- Comprehensive test suite for storage implementations
+- Test utilities and factories for integration testing
 
-### Core Architecture Patterns
+### Core Design Principles
 
-#### DurableExecutor Lifecycle
+**Durable Execution Model**:
 
-1. Create executor with Storage implementation
-2. Call `startBackgroundProcesses()` to begin task processing
-3. Enqueue tasks via `enqueueTask(task, input)`
-4. Manage task execution through handles
-5. Call `shutdown()` when done
+- Tasks are idempotent and can be safely retried
+- Process failure recovery through task expiration and re-queueing
+- Hierarchical task relationships (parent-child, sequential, finalize)
+- ACID storage requirements for state consistency
 
-#### DurableExecutorClient
+**Task Types**:
 
-- Lightweight client for enqueuing tasks without background processes
-- Shares the same storage as DurableExecutor
-- Useful for distributed architectures where task submission and execution are separated
+- **Simple tasks**: Single function execution
+- **Parent tasks**: Spawn parallel child tasks with optional finalize step
+- **Sequential tasks**: Chained dependent execution
+- **Finalize tasks**: Post-processing after parent+children complete
 
-#### Task Types and Execution Flow
+**State Management**:
 
-- **Simple Tasks**: Single function execution with retry logic
-- **Parent Tasks**: Spawn parallel children tasks, optional finalize task for coordination
-- **Sequential Tasks**: Chain tasks where output of one becomes input of next
+- Task execution state machine: `ready` → `running` → `completed`/`failed`/`timed_out`
+- Parent tasks add `waiting_for_children` and `waiting_for_finalize` states
+- Comprehensive error handling with retryable/non-retryable classification
 
-#### Task State Machine
+### Key Components
 
-- `ready` → `running` → `completed`/`failed`/`timed_out`
-- Parent tasks: `waiting_for_children_tasks` → `waiting_for_finalize_task`
-- Failed tasks can retry based on retry configuration
+**DurableExecutor** (`durable-execution/src/executor.ts`):
+Central orchestrator managing task enqueueing, background processing, and failure recovery.
 
-#### Storage Contract
+**Task System** (`durable-execution/src/task.ts`, `task-internal.ts`):
+Fluent API for task definition with optional schema validation using Zod.
 
-- Abstract `Storage` interface for persistence
-- Must support atomic transactions and concurrent access
-- InMemoryStorage for testing, Drizzle implementations for production
+**Storage Layer** (`durable-execution/src/storage.ts`):
+Abstract interface requiring ACID transactions. Production implementations in storage packages.
 
-### Key Design Principles
-
-**Durability**: Tasks survive process crashes through expiration monitoring and state persistence
-
-**Idempotency**: Tasks should be idempotent as they may execute multiple times on failure/retry
-
-**Type Safety**: Full TypeScript support with input/output type inference across task chains
-
-**Composability**: Tasks compose into complex workflows through parent-child relationships
-
-**Scalability**: Configurable concurrency limits and batch processing for high-throughput scenarios
-
-### Testing Strategy
-
-Each package contains comprehensive tests in `tests/*.test.ts`:
-
-- Core functionality in `durable-execution/tests/`
-- Storage implementation validation via shared test utils
-- oRPC integration testing with mock procedures
-- Concurrent execution and failure scenario testing
-
-Key test files:
-
-- `executor.test.ts` - Core executor functionality
-- `executor-client.test.ts` - DurableExecutorClient functionality
-- `parent-task.test.ts` - Parent-child task relationships
-- `concurrent-scenarios.test.ts` - Concurrency and race conditions
-- `executor-crash.test.ts` - Process failure resilience
+**Error Hierarchy** (`durable-execution/src/errors.ts`):
+Structured error system with explicit retry control via `retryable()` and `nonRetryable()` factories.
 
 ## Development Workflow
 
-### Adding New Features
+### Task Definition Pattern
 
-1. Implement in appropriate package (`durable-execution` for core features)
-2. Add comprehensive tests covering success and failure scenarios
-3. Update TypeDoc documentation if public API changes
-4. Run full test suite: `pnpm test`
-5. Ensure type safety: `pnpm type-check`
+```typescript
+const task = executor
+  .inputSchema(z.object({ /* validation schema */ }))  // Optional
+  .task({
+    id: 'uniqueTaskId',
+    timeoutMs: 30000,
+    retryOptions: { maxAttempts: 3 },
+    run: async (ctx, input) => {
+      // Idempotent task logic
+      return result
+    }
+  })
+```
 
-### Creating a New Storage Implementation
+### Testing Approach
 
-1. Implement `Storage` interface from `durable-execution/src/storage.ts`
-2. Use `durable-execution-storage-test-utils` to validate implementation
-3. Reference Drizzle implementations for patterns and indexing strategies
+- **Integration focus**: Test real scenarios with multiple executor instances
+- **Storage testing**: Use comprehensive test suite from `durable-execution-storage-test-utils`
+- **Concurrency validation**: Test race conditions and failure recovery
+- **Mock-free when possible**: Prefer real implementations for reliability
 
-### Important Configuration Limits
+### Key Test Files by Scenario
 
-- `maxConcurrentTaskExecutions`: default 1000
-- `maxChildrenTasksPerParent`: default 1000
-- `maxSerializedInputDataSize`/`maxSerializedOutputDataSize`: default 1MB each
-- Background process timing via `backgroundProcessIntraBatchSleepMs` and `expireMs`
+- `examples.test.ts`: End-to-end patterns from documentation
+- `executor-crash.test.ts`: Process failure recovery scenarios
+- `concurrent-scenarios.test.ts`: Race conditions and parallelism
+- `parent-task.test.ts`: Parent-child task orchestration
 
-## Documentation
+## Monorepo Configuration
 
-- Main documentation: <https://gpahal.github.io/durable-execution>
-- Repository: <https://github.com/gpahal/durable-execution>
+### Build System
+
+- **pnpm workspaces**: Package management and dependency resolution
+- **Turbo**: Orchestrates builds, tests, and caching across packages
+- **TypeScript**: Strict mode with project references for fast builds
+- **tsup**: Fast bundling for package builds
+
+### Code Quality
+
+- **ESLint**: `@gpahal/eslint-config` for consistent styling
+- **Prettier**: Automated formatting with import sorting
+- **Git hooks**: Pre-commit validation with `simple-git-hooks`
+- **Changesets**: Semantic versioning and coordinated releases
+
+### Package Dependencies
+
+Packages use pnpm workspace protocol (`workspace:*`) for internal dependencies and catalog references for external dependencies to ensure version consistency.
+
+## Important Conventions
+
+- **API Exports**: All public APIs exported through package `index.ts`
+- **Type Safety**: Full TypeScript with generic type inference across task chains
+- **Error Types**: Use existing error classes from `durable-execution/src/errors.ts`
+- **Backward Compatibility**: Maintain storage interface compatibility across versions
+- **Test Coverage**: Thoroughly test concurrency scenarios and edge cases
+- **Documentation**: Maintain comprehensive JSDoc for public APIs
+
+## Common Operations
+
+### Adding New Task Types
+
+1. Extend task definition interfaces in `durable-execution/src/task.ts`
+2. Update executor implementation in `durable-execution/src/executor.ts`
+3. Add comprehensive tests covering concurrency and failure scenarios
+4. Update TypeDoc documentation and examples
+
+### Storage Implementation
+
+1. Implement `TaskExecutionsStorage` interface with ACID guarantees
+2. Use test suite from `durable-execution-storage-test-utils`
+3. Handle all storage operations atomically
+4. Support concurrent access patterns
+
+### Remote Execution Setup
+
+1. Use `durable-execution-orpc-utils` for client/server separation
+2. Define tasks on server with `createTasksRouter()`
+3. Create type-safe client handles with `createTaskClientHandles()`
+4. Handle network failures and retries appropriately
