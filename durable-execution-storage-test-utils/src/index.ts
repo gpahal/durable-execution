@@ -2,22 +2,72 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import {
+  ChildTask,
   DurableExecutor,
+  FINISHED_TASK_EXECUTION_STATUSES,
+  type ParentTaskExecutionSummary,
   type Task,
   type TaskExecutionsStorage,
-  type TaskExecutionStorageGetByIdsFilters,
-  type TaskExecutionStorageUpdate,
+  type TaskExecutionStorageGetByIdFilters,
   type TaskExecutionStorageValue,
+  type TaskExecutionSummary,
   type TaskRetryOptions,
 } from 'durable-execution'
+import { customAlphabet } from 'nanoid'
 
 import { sleep } from '@gpahal/std/promises'
 
+/**
+ * Runs a comprehensive test suite to validate a TaskExecutionsStorage implementation.
+ *
+ * This function executes an extensive set of tests that verify the correctness of a storage
+ * implementation, including ACID compliance, concurrent access patterns, and all required
+ * storage operations. It tests both high-level DurableExecutor functionality and low-level
+ * storage operations.
+ *
+ * The test suite includes:
+ * - Task execution lifecycle (ready → running → completed/failed)
+ * - Parent-child task relationships and hierarchies
+ * - Sequential task chains
+ * - Retry mechanisms and error handling
+ * - Concurrent task execution (250+ parallel tasks)
+ * - Task expiration and timeout handling
+ * - Promise cancellation flows
+ * - Atomic transactions and batch operations
+ * - Race condition handling
+ *
+ * @example
+ * ```ts
+ * import { InMemoryTaskExecutionsStorage } from 'durable-execution'
+ * import { runStorageTest } from 'durable-execution-storage-test-utils'
+ *
+ * const storage = new InMemoryTaskExecutionsStorage()
+ * await runStorageTest(storage)
+ * ```
+ *
+ * @example
+ * ```ts
+ * // With cleanup for database storage
+ * const storage = new CustomTaskExecutionsStorage({ url: process.env.DATABASE_URL! })
+ * await runStorageTest(storage, async () => {
+ *   await db.delete(taskExecutions)
+ * })
+ * ```
+ *
+ *
+ * @param storage - The TaskExecutionsStorage implementation to test
+ * @param cleanup - Optional cleanup function to run after tests complete (e.g., to remove test
+ *   database)
+ * @throws Will throw if any storage operation fails validation or doesn't meet ACID requirements
+ */
 export async function runStorageTest(
   storage: TaskExecutionsStorage,
   cleanup?: () => void | Promise<void>,
 ) {
-  const executor = new DurableExecutor(storage)
+  const executor = new DurableExecutor(storage, {
+    logLevel: 'error',
+    backgroundProcessIntraBatchSleepMs: 50,
+  })
   executor.startBackgroundProcesses()
 
   try {
@@ -68,7 +118,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
       }
     },
   })
-  const taskB = executor.sequentialTasks(taskB1, taskB2, taskB3)
+  const taskB = executor.sequentialTasks('b', taskB1, taskB2, taskB3)
 
   const taskA1 = executor.task({
     id: 'a1',
@@ -98,9 +148,9 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
       return {
         output: `Hello from task A, ${input.name}!`,
         children: [
-          { task: taskA1, input: { name: input.name } },
-          { task: taskA2, input: { name: input.name } },
-          { task: taskA3, input: { name: input.name } },
+          new ChildTask(taskA1, { name: input.name }),
+          new ChildTask(taskA2, { name: input.name }),
+          new ChildTask(taskA3, { name: input.name }),
         ],
       }
     },
@@ -136,8 +186,8 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
       return {
         output: `Hello from root task, ${input.name}!`,
         children: [
-          { task: taskA, input: { name: input.name } },
-          { task: taskB, input: { name: input.name } },
+          new ChildTask(taskA, { name: input.name }),
+          new ChildTask(taskB, { name: input.name }),
         ],
       }
     },
@@ -218,7 +268,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     runParent: () => {
       return {
         output: undefined,
-        children: [{ task: failingTask }],
+        children: [new ChildTask(failingTask)],
       }
     },
     finalize: {
@@ -240,7 +290,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     runParent: () => {
       return {
         output: undefined,
-        children: [{ task: taskA1, input: { name: 'world' } }],
+        children: [new ChildTask(taskA1, { name: 'world' })],
       }
     },
     finalize: {
@@ -276,6 +326,74 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     },
   })
 
+  let value: number | undefined
+  setTimeout(() => {
+    value = 10
+  }, 1000)
+
+  const pollTask = executor.task({
+    id: 'poll',
+    sleepMsBeforeRun: 100,
+    timeoutMs: 1000,
+    run: () => {
+      return value == null
+        ? {
+            isDone: false,
+          }
+        : {
+            isDone: true,
+            output: value,
+          }
+    },
+  })
+  const pollingTask = executor.pollingTask('polling', pollTask, 20, 100)
+
+  const sleepingTask = executor.sleepingTask<string>({
+    id: 'test',
+    timeoutMs: 300_000,
+  })
+
+  const parentTaskWithSleepingTask = executor.parentTask({
+    id: 'parent',
+    timeoutMs: 1000,
+    runParent: () => {
+      return {
+        output: 'parent_output',
+        children: [new ChildTask(sleepingTask, 'test_unique_id')],
+      }
+    },
+    finalize: {
+      id: 'finalizeTask',
+      timeoutMs: 1000,
+      run: (ctx, { children }) => {
+        const child = children[0]!
+        if (child.status !== 'completed') {
+          throw new Error('Finalize task failed')
+        }
+        return child.output
+      },
+    },
+  })
+
+  let closeTestExecutionCount = 0
+  const closeTestTask = executor.task({
+    id: 'closeTestTask',
+    timeoutMs: 1000,
+    run: () => {
+      closeTestExecutionCount++
+      return 'test'
+    },
+  })
+
+  const closeTestParentTask = executor.parentTask({
+    id: 'closeTestParentTask',
+    timeoutMs: 1000,
+    runParent: () => {
+      return { output: 'parent_output', children: [new ChildTask(closeTestTask)] }
+    },
+  })
+
+  console.log('=> Enqueuing tasks')
   const rootTaskHandle = await executor.enqueueTask(rootTask, { name: 'world' })
   const concurrentTaskHandles = await Promise.all(
     concurrentTasks.map((task) => executor.enqueueTask(task, 'world')),
@@ -287,7 +405,11 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     parentTaskWithFailingFinalizeTask,
   )
   const concurrentParentTaskHandle = await executor.enqueueTask(concurrentParentTask)
+  const pollingTaskHandle = await executor.enqueueTask(pollingTask)
+  const parentTaskWithSleepingTaskHandle = await executor.enqueueTask(parentTaskWithSleepingTask)
+  const closeTestTaskHandle = await executor.enqueueTask(closeTestParentTask)
 
+  console.log('=> Waiting for root task')
   const finishedExecution = await rootTaskHandle.waitAndGetFinishedExecution({
     pollingIntervalMs: 50,
   })
@@ -309,6 +431,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     finishedExecution.startedAt.getTime(),
   )
 
+  console.log('=> Waiting for concurrent tasks')
   const concurrentFinishedExecutions = await Promise.all(
     concurrentTaskHandles.map((handle) =>
       handle.waitAndGetFinishedExecution({
@@ -327,6 +450,8 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     expect(execution.finishedAt).toBeInstanceOf(Date)
     expect(execution.finishedAt.getTime()).toBeGreaterThanOrEqual(execution.startedAt.getTime())
   }
+
+  console.log('=> Waiting for retry task')
   const retryExecution = await retryTaskHandle.waitAndGetFinishedExecution({
     pollingIntervalMs: 50,
   })
@@ -356,6 +481,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     failingExecution.startedAt.getTime(),
   )
 
+  console.log('=> Waiting for parent task with failing child')
   const parentTaskWithFailingChildExecution =
     await parentTaskWithFailingChildHandle.waitAndGetFinishedExecution({
       pollingIntervalMs: 50,
@@ -370,6 +496,8 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
   expect(parentTaskWithFailingChildExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
     parentTaskWithFailingChildExecution.startedAt.getTime(),
   )
+
+  console.log('=> Waiting for parent task with failing finalize task')
   const parentTaskWithFailingFinalizeTaskExecution =
     await parentTaskWithFailingFinalizeTaskHandle.waitAndGetFinishedExecution({
       pollingIntervalMs: 50,
@@ -385,6 +513,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     parentTaskWithFailingFinalizeTaskExecution.startedAt.getTime(),
   )
 
+  console.log('=> Waiting for concurrent parent task')
   const concurrentParentTaskExecution =
     await concurrentParentTaskHandle.waitAndGetFinishedExecution({
       pollingIntervalMs: 50,
@@ -402,27 +531,56 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
   }
   expect(concurrentParentTaskExecution.startedAt).toBeInstanceOf(Date)
 
-  let closeTestExecutionCount = 0
-  const closeTesttask = executor.task({
-    id: 'closeTestTask',
-    timeoutMs: 1000,
-    run: () => {
-      closeTestExecutionCount++
-      return 'test'
-    },
+  console.log('=> Waiting for polling task')
+  const pollingTaskExecution = await pollingTaskHandle.waitAndGetFinishedExecution({
+    pollingIntervalMs: 250,
   })
+  expect(pollingTaskExecution.status).toBe('completed')
+  assert(pollingTaskExecution.status === 'completed')
+  expect(pollingTaskExecution.taskId).toBe('polling')
+  expect(pollingTaskExecution.output).toBeDefined()
+  expect(pollingTaskExecution.output.isSuccess).toBe(true)
+  assert(pollingTaskExecution.output.isSuccess)
+  expect(pollingTaskExecution.output.output).toBe(10)
+  expect(pollingTaskExecution.startedAt).toBeInstanceOf(Date)
+  expect(pollingTaskExecution.finishedAt).toBeInstanceOf(Date)
+  expect(pollingTaskExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+    pollingTaskExecution.startedAt.getTime(),
+  )
 
-  const closeTestParentTask = executor.parentTask({
-    id: 'closeTestParentTask',
-    timeoutMs: 1000,
-    runParent: () => {
-      return { output: 'parent_output', children: [{ task: closeTesttask }] }
+  console.log('=> Waiting for parent task with sleeping task')
+  while (true) {
+    const execution = await parentTaskWithSleepingTaskHandle.getExecution()
+    if (
+      FINISHED_TASK_EXECUTION_STATUSES.includes(execution.status) ||
+      execution.status === 'waiting_for_children'
+    ) {
+      break
+    }
+    await sleep(100)
+  }
+
+  await sleep(100)
+  const sleepingTaskExecution = await executor.wakeupSleepingTaskExecution(
+    sleepingTask,
+    'test_unique_id',
+    {
+      status: 'completed',
+      output: 'sleeping_task_output',
     },
-  })
+  )
+  expect(sleepingTaskExecution.status).toBe('completed')
+  assert(sleepingTaskExecution.status === 'completed')
+  expect(sleepingTaskExecution.output).toBe('sleeping_task_output')
 
-  const handle = await executor.enqueueTask(closeTestParentTask)
+  const parentTaskWithSleepingTaskFinishedExecution =
+    await parentTaskWithSleepingTaskHandle.waitAndGetFinishedExecution()
+  expect(parentTaskWithSleepingTaskFinishedExecution.status).toBe('completed')
+  assert(parentTaskWithSleepingTaskFinishedExecution.status === 'completed')
+  expect(parentTaskWithSleepingTaskFinishedExecution.output).toBe('sleeping_task_output')
 
-  const closeTestFinishedExecution = await handle.waitAndGetFinishedExecution()
+  console.log('=> Waiting for close test task')
+  const closeTestFinishedExecution = await closeTestTaskHandle.waitAndGetFinishedExecution()
   expect(closeTestExecutionCount).toBe(1)
   expect(closeTestFinishedExecution.status).toBe('completed')
   assert(closeTestFinishedExecution.status === 'completed')
@@ -454,1627 +612,1267 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
 }
 
 async function runStorageOperationsTest(storage: TaskExecutionsStorage) {
-  const now = new Date()
-
-  const parentExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'storage-test-task-parent',
-    executionId: 'te_storage_test_parent',
-    retryOptions: { maxAttempts: 3 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ test: 'data-parent' }),
-  })
-  parentExecution.status = 'waiting_for_children'
-  parentExecution.children = [
-    { taskId: 'storage-test-task-1', executionId: 'te_storage_test_1' },
-    { taskId: 'storage-test-task-2', executionId: 'te_storage_test_2' },
-  ]
-  parentExecution.activeChildrenCount = 2
-  parentExecution.onChildrenFinishedProcessingStatus = 'idle'
-
-  const execution1 = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'storage-test-task-parent', executionId: 'te_storage_test_parent' },
-    parent: {
-      taskId: 'storage-test-task-parent',
-      executionId: 'te_storage_test_parent',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'storage-test-task-1',
-    executionId: 'te_storage_test_1',
-    retryOptions: { maxAttempts: 3 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ test: 'data1' }),
-  })
-
-  const execution2 = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'storage-test-task-parent', executionId: 'te_storage_test_parent' },
-    parent: {
-      taskId: 'storage-test-task-parent',
-      executionId: 'te_storage_test_parent',
-      indexInParentChildTaskExecutions: 1,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'storage-test-task-2',
-    executionId: 'te_storage_test_2',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 100,
-    timeoutMs: 10_000,
-    input: JSON.stringify({ test: 'data2' }),
-  })
-
-  const execution3 = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'root-task', executionId: 'te_root' },
-    parent: {
-      taskId: 'parent-task',
-      executionId: 'te_parent',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'storage-test-task-3',
-    executionId: 'te_storage_test_3',
-    retryOptions: { maxAttempts: 5 },
-    sleepMsBeforeRun: 200,
-    timeoutMs: 15_000,
-    input: JSON.stringify({ test: 'data3' }),
-  })
-
-  const multiParent = createTaskExecutionStorageValue({
-    now,
-    taskId: 'multi-parent',
-    executionId: 'te_multi_parent',
-    retryOptions: { maxAttempts: 2 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 8000,
-    input: JSON.stringify({ multi: true }),
-  })
-  multiParent.status = 'waiting_for_children'
-  multiParent.children = [
-    { taskId: 'child-a', executionId: 'te_child_a' },
-    { taskId: 'child-b', executionId: 'te_child_b' },
-    { taskId: 'child-c', executionId: 'te_child_c' },
-    { taskId: 'child-d', executionId: 'te_child_d' },
-  ]
-  multiParent.activeChildrenCount = 4
-  multiParent.onChildrenFinishedProcessingStatus = 'idle'
-
-  const childA = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'multi-parent', executionId: 'te_multi_parent' },
-    parent: {
-      taskId: 'multi-parent',
-      executionId: 'te_multi_parent',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'child-a',
-    executionId: 'te_child_a',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ child: 'a' }),
-  })
-
-  const childB = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'multi-parent', executionId: 'te_multi_parent' },
-    parent: {
-      taskId: 'multi-parent',
-      executionId: 'te_multi_parent',
-      indexInParentChildTaskExecutions: 1,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'child-b',
-    executionId: 'te_child_b',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ child: 'b' }),
-  })
-
-  const childC = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'multi-parent', executionId: 'te_multi_parent' },
-    parent: {
-      taskId: 'multi-parent',
-      executionId: 'te_multi_parent',
-      indexInParentChildTaskExecutions: 2,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'child-c',
-    executionId: 'te_child_c',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ child: 'c' }),
-  })
-
-  const childD = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'multi-parent', executionId: 'te_multi_parent' },
-    parent: {
-      taskId: 'multi-parent',
-      executionId: 'te_multi_parent',
-      indexInParentChildTaskExecutions: 3,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'child-d',
-    executionId: 'te_child_d',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ child: 'd' }),
-  })
-
-  const finalizeParent = createTaskExecutionStorageValue({
-    now,
-    taskId: 'finalize-parent',
-    executionId: 'te_finalize_parent',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ finalize: 'parent' }),
-  })
-  finalizeParent.status = 'waiting_for_children'
-  finalizeParent.children = [{ taskId: 'finalize-child', executionId: 'te_finalize_child' }]
-  finalizeParent.activeChildrenCount = 1
-  finalizeParent.onChildrenFinishedProcessingStatus = 'idle'
-
-  const finalizeChild = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'finalize-parent', executionId: 'te_finalize_parent' },
-    parent: {
-      taskId: 'finalize-parent',
-      executionId: 'te_finalize_parent',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'finalize-child',
-    executionId: 'te_finalize_child',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ finalize: 'child' }),
-  })
-
-  const finalizeTask = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'finalize-parent', executionId: 'te_finalize_parent' },
-    parent: {
-      taskId: 'finalize-parent',
-      executionId: 'te_finalize_parent',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: true,
-    },
-    taskId: 'finalize-task',
-    executionId: 'te_finalize_task',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ finalize: 'task' }),
-  })
-
-  const retryExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'retry-task',
-    executionId: 'te_retry',
-    retryOptions: { maxAttempts: 5, baseDelayMs: 100, delayMultiplier: 2 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ retry: true }),
-  })
-
-  const timedOutExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'timeout-task',
-    executionId: 'te_timeout',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 1000,
-    input: JSON.stringify({ timeout: true }),
-  })
-  timedOutExecution.status = 'running'
-  timedOutExecution.startedAt = now
-  timedOutExecution.expiresAt = new Date(now.getTime() - 1000)
-
-  await storage.insert([
-    parentExecution,
-    execution1,
-    execution2,
-    execution3,
-    multiParent,
-    childA,
-    childB,
-    childC,
-    childD,
-    finalizeParent,
-    finalizeChild,
-    finalizeTask,
-    retryExecution,
-    timedOutExecution,
-  ])
-
-  const retrieved = await storage.getByIds([
-    'te_storage_test_1',
-    'te_storage_test_2',
-    'te_storage_test_3',
-  ])
-  expect(retrieved).toHaveLength(3)
-  expect(retrieved[0]).toBeDefined()
-  expect(retrieved[0]!.executionId).toBe('te_storage_test_1')
-  expect(retrieved[0]!.taskId).toBe('storage-test-task-1')
-  expect(retrieved[1]).toBeDefined()
-  expect(retrieved[1]!.executionId).toBe('te_storage_test_2')
-  expect(retrieved[2]).toBeDefined()
-  expect(retrieved[2]!.executionId).toBe('te_storage_test_3')
-  expect(retrieved[2]!.root).toEqual({ taskId: 'root-task', executionId: 'te_root' })
-  expect(retrieved[2]!.parent).toEqual({
-    taskId: 'parent-task',
-    executionId: 'te_parent',
-    indexInParentChildTaskExecutions: 0,
-    isFinalizeTaskOfParentTask: false,
-  })
-
-  const partialRetrieved = await storage.getByIds([
-    'te_storage_test_1',
-    'te_nonexistent',
-    'te_storage_test_3',
-  ])
-  expect(partialRetrieved).toHaveLength(3)
-  expect(partialRetrieved[0]).toBeDefined()
-  expect(partialRetrieved[0]!.executionId).toBe('te_storage_test_1')
-  expect(partialRetrieved[1]).toBeUndefined()
-  expect(partialRetrieved[2]).toBeDefined()
-  expect(partialRetrieved[2]!.executionId).toBe('te_storage_test_3')
-
-  const filters: TaskExecutionStorageGetByIdsFilters = { statuses: ['ready'] }
-  const singleExecution = await storage.getById('te_storage_test_1', filters)
-  expect(singleExecution).toBeDefined()
-  expect(singleExecution!.executionId).toBe('te_storage_test_1')
-  expect(singleExecution!.status).toBe('ready')
-
-  const noMatchFilter: TaskExecutionStorageGetByIdsFilters = { statuses: ['running'] }
-  const noMatch = await storage.getById('te_storage_test_1', noMatchFilter)
-  expect(noMatch).toBeUndefined()
-
-  const updatedAt = new Date(now.getTime() + 1000)
-  const basicUpdate: TaskExecutionStorageUpdate = {
-    status: 'running',
-    startedAt: updatedAt,
-    expiresAt: new Date(updatedAt.getTime() + 5000),
-    retryAttempts: 1,
-    runOutput: JSON.stringify({ step: 'started' }),
-    updatedAt: updatedAt,
-  }
-
-  await storage.updateById('te_storage_test_1', {}, basicUpdate)
-
-  const updatedExecution = await storage.getById('te_storage_test_1', {})
-  expect(updatedExecution).toBeDefined()
-  expect(updatedExecution!.status).toBe('running')
-  expectDateApproximatelyEqual(updatedExecution!.startedAt!, updatedAt)
-  expectDateApproximatelyEqual(updatedExecution!.expiresAt!, new Date(updatedAt.getTime() + 5000))
-  expect(updatedExecution!.retryAttempts).toBe(1)
-  expect(updatedExecution!.runOutput).toBe(JSON.stringify({ step: 'started' }))
-  expectDateApproximatelyEqual(updatedExecution!.updatedAt, updatedAt)
-
-  const unsetTime = new Date(updatedAt.getTime() + 1000)
-  const completedUpdate: TaskExecutionStorageUpdate = {
-    status: 'completed',
-    output: JSON.stringify({ result: 'success' }),
-    unsetRunOutput: true,
-    finishedAt: unsetTime,
-    decrementParentActiveChildrenCount: true,
-    unsetExpiresAt: true,
-    unsetError: true,
-    updatedAt: unsetTime,
-  }
-
-  await storage.updateById('te_storage_test_1', {}, completedUpdate)
-
-  const completedExecution = await storage.getById('te_storage_test_1', {})
-  expect(completedExecution).toBeDefined()
-  expect(completedExecution!.status).toBe('completed')
-  expect(completedExecution!.output).toBe(JSON.stringify({ result: 'success' }))
-  expect(completedExecution!.runOutput).toBeUndefined()
-  expectDateApproximatelyEqual(completedExecution!.finishedAt!, unsetTime)
-  expect(completedExecution!.expiresAt).toBeUndefined()
-  expect(completedExecution!.error).toBeUndefined()
-
-  const parentExecution1 = await storage.getById('te_storage_test_parent', {})
-  expect(parentExecution1).toBeDefined()
-  expect(parentExecution1!.status).toBe('waiting_for_children')
-  expect(parentExecution1!.children).toHaveLength(2)
-  expect(parentExecution1!.children![0]!.taskId).toBe('storage-test-task-1')
-  expect(parentExecution1!.children![1]!.taskId).toBe('storage-test-task-2')
-  expect(parentExecution1!.activeChildrenCount).toBe(1)
-
-  const failedUpdate: TaskExecutionStorageUpdate = {
-    status: 'failed',
-    error: {
-      errorType: 'generic',
-      message: 'Test failure',
-      isRetryable: false,
-      isInternal: false,
-    },
-    unsetRunOutput: true,
-    finishedAt: unsetTime,
-    decrementParentActiveChildrenCount: true,
-    unsetExpiresAt: true,
-    updatedAt: unsetTime,
-  }
-
-  await storage.updateById('te_storage_test_2', {}, failedUpdate)
-
-  const failedExecution = await storage.getById('te_storage_test_2', {})
-  expect(failedExecution).toBeDefined()
-  expect(failedExecution!.status).toBe('failed')
-  expect(failedExecution!.error).toBeDefined()
-  expect(failedExecution!.error!.errorType).toBe('generic')
-  expect(failedExecution!.error!.message).toBe('Test failure')
-  expect(failedExecution!.error!.isRetryable).toBe(false)
-  expect(failedExecution!.error!.isInternal).toBe(false)
-  expect(failedExecution!.runOutput).toBeUndefined()
-  expectDateApproximatelyEqual(failedExecution!.finishedAt!, unsetTime)
-
-  const parentExecution2 = await storage.getById('te_storage_test_parent', {})
-  expect(parentExecution2).toBeDefined()
-  expect(parentExecution2!.status).toBe('waiting_for_children')
-  expect(parentExecution2!.children).toHaveLength(2)
-  expect(parentExecution2!.children![0]!.taskId).toBe('storage-test-task-1')
-  expect(parentExecution2!.children![1]!.taskId).toBe('storage-test-task-2')
-  expect(parentExecution2!.activeChildrenCount).toBe(0)
-
-  const childrenUpdate: TaskExecutionStorageUpdate = {
-    status: 'waiting_for_children',
-    children: [
-      { taskId: 'child1', executionId: 'te_child1' },
-      { taskId: 'child2', executionId: 'te_child2' },
-    ],
-    activeChildrenCount: 2,
-    onChildrenFinishedProcessingStatus: 'idle',
-    startedAt: updatedAt,
-    expiresAt: new Date(updatedAt.getTime() + 10_000),
-    updatedAt: updatedAt,
-  }
-
-  await storage.updateById('te_storage_test_3', {}, childrenUpdate)
-
-  const childrenExecution = await storage.getById('te_storage_test_3', {})
-  expect(childrenExecution).toBeDefined()
-  expect(childrenExecution!.status).toBe('waiting_for_children')
-  expect(childrenExecution!.children).toHaveLength(2)
-  expect(childrenExecution!.children![0]!.taskId).toBe('child1')
-  expect(childrenExecution!.children![1]!.taskId).toBe('child2')
-  expect(childrenExecution!.activeChildrenCount).toBe(2)
-  expect(childrenExecution!.onChildrenFinishedProcessingStatus).toBe('idle')
-
-  const finalizeUpdate: TaskExecutionStorageUpdate = {
-    status: 'waiting_for_finalize',
-    finalize: { taskId: 'finalize-task', executionId: 'te_finalize' },
-    onChildrenFinishedProcessingStatus: 'processed',
-    onChildrenFinishedProcessingFinishedAt: updatedAt,
-    unsetOnChildrenFinishedProcessingExpiresAt: true,
-    updatedAt: updatedAt,
-  }
-
-  await storage.updateById('te_storage_test_3', {}, finalizeUpdate)
-
-  const finalizeExecution = await storage.getById('te_storage_test_3', {})
-  expect(finalizeExecution).toBeDefined()
-  expect(finalizeExecution!.status).toBe('waiting_for_finalize')
-  expect(finalizeExecution!.finalize).toBeDefined()
-  expect(finalizeExecution!.finalize!.taskId).toBe('finalize-task')
-  expect(finalizeExecution!.onChildrenFinishedProcessingStatus).toBe('processed')
-  expectDateApproximatelyEqual(
-    finalizeExecution!.onChildrenFinishedProcessingFinishedAt!,
-    updatedAt,
+  console.log('=> Running storage operations test')
+  await storage.deleteAll()
+  await testInsertMany(storage)
+  await storage.deleteAll()
+  await testGetById(storage)
+  await storage.deleteAll()
+  await testGetBySleepingTaskUniqueId(storage)
+  await storage.deleteAll()
+  await testUpdateById(storage)
+  await storage.deleteAll()
+  await testUpdateByIdAndInsertManyIfUpdated(storage)
+  await storage.deleteAll()
+  await testUpdateByStatusAndStartAtLessThanAndReturn(storage)
+  await storage.deleteAll()
+  await testUpdateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
+    storage,
   )
-  expect(finalizeExecution!.onChildrenFinishedProcessingExpiresAt).toBeUndefined()
-
-  const closeUpdate: TaskExecutionStorageUpdate = {
-    closeStatus: 'closing',
-    closeExpiresAt: new Date(updatedAt.getTime() + 5000),
-    updatedAt: updatedAt,
-  }
-
-  await storage.updateById('te_storage_test_1', {}, closeUpdate)
-
-  const closingExecution = await storage.getById('te_storage_test_1', {})
-  expect(closingExecution).toBeDefined()
-  expect(closingExecution!.closeStatus).toBe('closing')
-  expectDateApproximatelyEqual(
-    closingExecution!.closeExpiresAt!,
-    new Date(updatedAt.getTime() + 5000),
-  )
-
-  const closedUpdate: TaskExecutionStorageUpdate = {
-    closeStatus: 'closed',
-    closedAt: updatedAt,
-    unsetCloseExpiresAt: true,
-    updatedAt: updatedAt,
-  }
-
-  await storage.updateById('te_storage_test_1', {}, closedUpdate)
-
-  const closedExecution = await storage.getById('te_storage_test_1', {})
-  expect(closedExecution).toBeDefined()
-  expect(closedExecution!.closeStatus).toBe('closed')
-  expectDateApproximatelyEqual(closedExecution!.closedAt!, updatedAt)
-  expect(closedExecution!.closeExpiresAt).toBeUndefined()
-
-  const cancellationUpdate: TaskExecutionStorageUpdate = {
-    needsPromiseCancellation: true,
-    updatedAt: updatedAt,
-  }
-
-  await storage.updateById('te_storage_test_2', {}, cancellationUpdate)
-
-  const cancellationExecution = await storage.getById('te_storage_test_2', {})
-  expect(cancellationExecution).toBeDefined()
-  expect(cancellationExecution!.needsPromiseCancellation).toBe(true)
-
-  const cancellationResults = await storage.getByNeedsPromiseCancellationAndIds(
-    true,
-    ['te_storage_test_1', 'te_storage_test_2', 'te_storage_test_3'],
-    10,
-  )
-  expect(cancellationResults).toHaveLength(1)
-  expect(cancellationResults[0]!.executionId).toBe('te_storage_test_2')
-  expect(cancellationResults[0]!.needsPromiseCancellation).toBe(true)
-
-  await storage.updateByIdsAndStatuses(['te_storage_test_2'], ['failed'], {
-    needsPromiseCancellation: false,
-    updatedAt: updatedAt,
-  })
-
-  const batchUpdatedExecution = await storage.getById('te_storage_test_2', {})
-  expect(batchUpdatedExecution).toBeDefined()
-  expect(batchUpdatedExecution!.needsPromiseCancellation).toBe(false)
-
-  const newExecution = createTaskExecutionStorageValue({
-    now: updatedAt,
-    taskId: 'inserted-task',
-    executionId: 'te_inserted',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ inserted: true }),
-  })
-
-  await storage.updateByIdAndInsertIfUpdated(
-    'te_storage_test_3',
-    {},
-    {
-      status: 'completed',
-      output: JSON.stringify({ batch: 'success' }),
-      updatedAt: updatedAt,
-    },
-    [newExecution],
-  )
-
-  const batchWithInsertExecution = await storage.getById('te_storage_test_3', {})
-  expect(batchWithInsertExecution).toBeDefined()
-  expect(batchWithInsertExecution!.status).toBe('completed')
-  expect(batchWithInsertExecution!.output).toBe(JSON.stringify({ batch: 'success' }))
-
-  const insertedExecution = await storage.getById('te_inserted', {})
-  expect(insertedExecution).toBeDefined()
-  expect(insertedExecution!.taskId).toBe('inserted-task')
-  expect(insertedExecution!.status).toBe('ready')
-
-  const futureDate = new Date(now.getTime() + 100_000)
-  const startAtResults = await storage.updateByStatusAndStartAtLessThanAndReturn(
-    'ready',
-    futureDate,
-    { retryAttempts: 10, updatedAt: updatedAt },
-    5,
-  )
-  expect(startAtResults.length).toBeGreaterThanOrEqual(0)
-
-  const statusFilter: TaskExecutionStorageGetByIdsFilters = {
-    statuses: ['completed', 'failed'],
-  }
-  const statusFilteredExecution = await storage.getById('te_storage_test_1', statusFilter)
-  expect(statusFilteredExecution).toBeDefined()
-  expect(statusFilteredExecution!.status).toBe('completed')
-
-  await testStatusTransitions(storage, now)
-  await testParentChildRelationships(storage, now)
-  await testUnsetOperations(storage, now)
-  await testRetryAndTimeoutScenarios(storage, now)
-  await testBatchOperationsAndFilters(storage, now)
-  await testConcurrentUpdates(storage, now)
-  await testErrorHandlingAndEdgeCases(storage, now)
-  await testOnChildrenFinishedProcessing(storage, now)
+  await storage.deleteAll()
+  await testUpdateByCloseStatusAndReturn(storage)
+  await storage.deleteAll()
+  await testUpdateByExpiresAtLessThanAndReturn(storage)
+  await storage.deleteAll()
+  await testUpdateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(storage)
+  await storage.deleteAll()
+  await testUpdateByCloseExpiresAtLessThanAndReturn(storage)
+  await storage.deleteAll()
+  await testUpdateByExecutorIdAndNeedsPromiseCancellationAndReturn(storage)
+  await storage.deleteAll()
+  await testGetByParentExecutionId(storage)
+  await storage.deleteAll()
+  await testUpdateByParentExecutionIdAndIsFinished(storage)
+  await storage.deleteAll()
+  await testUpdateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(storage)
+  await storage.deleteAll()
 }
 
-async function testStatusTransitions(storage: TaskExecutionsStorage, now: Date) {
-  const execution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'status-test',
-    executionId: 'te_status',
-    retryOptions: { maxAttempts: 3 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ status: 'test' }),
-  })
-  await storage.insert([execution])
-
-  const transitions = [
-    { status: 'ready' as const, startAt: new Date(now.getTime() + 1000) },
-    { status: 'running' as const, startedAt: now, expiresAt: new Date(now.getTime() + 5000) },
-    { status: 'completed' as const, output: JSON.stringify({ done: true }) },
+async function testInsertMany(storage: TaskExecutionsStorage) {
+  const executions = [
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue({
+      root: {
+        taskId: generateTaskId(),
+        executionId: generateTaskExecutionId(),
+      },
+      parent: {
+        taskId: generateTaskId(),
+        executionId: generateTaskExecutionId(),
+        indexInParentChildTaskExecutions: 0,
+        isFinalizeTaskOfParentTask: false,
+      },
+    }),
   ]
+  executions[1]!.isSleepingTask = true
+  executions[1]!.sleepingTaskUniqueId = 'test_unique_id'
+  await storage.insertMany(executions)
 
-  for (const transition of transitions) {
-    await storage.updateById('te_status', {}, { ...transition, updatedAt: now })
-    const updated = await storage.getById('te_status', {})
-    expect(updated).toBeDefined()
-    expect(updated!.status).toBe(transition.status)
-    if (transition.startAt) {
-      expectDateApproximatelyEqual(updated!.startAt, transition.startAt)
-    }
-    if (transition.startedAt) {
-      expectDateApproximatelyEqual(updated!.startedAt!, transition.startedAt)
-    }
-    if (transition.expiresAt) {
-      expectDateApproximatelyEqual(updated!.expiresAt!, transition.expiresAt)
-    }
-    if (transition.output) {
-      expect(updated!.output).toBe(transition.output)
-    }
+  for (const execution of executions) {
+    const insertedExecution = await storage.getById(execution.executionId, {})
+    expect(insertedExecution).toBeDefined()
+    assert(insertedExecution)
+    expect(insertedExecution.root).toStrictEqual(execution.root)
+    expect(insertedExecution.parent).toStrictEqual(execution.parent)
+    expect(insertedExecution.taskId).toEqual(execution.taskId)
+    expect(insertedExecution.executionId).toEqual(execution.executionId)
+    expect(insertedExecution.retryOptions).toEqual(execution.retryOptions)
+    expect(insertedExecution.sleepMsBeforeRun).toEqual(execution.sleepMsBeforeRun)
+    expect(insertedExecution.timeoutMs).toEqual(execution.timeoutMs)
+    expect(insertedExecution.input).toEqual(execution.input)
+    expect(insertedExecution.executorId).toBeUndefined()
+    expect(insertedExecution.status).toEqual('ready')
+    expect(insertedExecution.isFinished).toEqual(false)
+    expect(insertedExecution.runOutput).toBeUndefined()
+    expect(insertedExecution.output).toBeUndefined()
+    expect(insertedExecution.error).toBeUndefined()
+    expect(insertedExecution.retryAttempts).toEqual(0)
+    expect(insertedExecution.startAt).toBeInstanceOf(Date)
+    expect(insertedExecution.startedAt).toBeUndefined()
+    expect(insertedExecution.expiresAt).toBeUndefined()
+    expect(insertedExecution.finishedAt).toBeUndefined()
+    expect(insertedExecution.children).toBeUndefined()
+    expect(insertedExecution.activeChildrenCount).toEqual(0)
+    expect(insertedExecution.onChildrenFinishedProcessingStatus).toEqual('idle')
+    expect(insertedExecution.onChildrenFinishedProcessingExpiresAt).toBeUndefined()
+    expect(insertedExecution.onChildrenFinishedProcessingFinishedAt).toBeUndefined()
+    expect(insertedExecution.closeStatus).toEqual('idle')
+    expect(insertedExecution.closeExpiresAt).toBeUndefined()
+    expect(insertedExecution.closedAt).toBeUndefined()
+    expect(insertedExecution.needsPromiseCancellation).toEqual(false)
+    expect(insertedExecution.createdAt).toBeInstanceOf(Date)
+    expect(insertedExecution.updatedAt).toBeInstanceOf(Date)
+    expectDateApproximatelyEqual(insertedExecution.createdAt, insertedExecution.updatedAt)
   }
 
-  const cancellableExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'cancel-test',
-    executionId: 'te_cancel',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ cancel: 'test' }),
-  })
-  await storage.insert([cancellableExecution])
+  const duplicateExecution = createTaskExecutionStorageValue()
+  duplicateExecution.executionId = executions[0]!.executionId
+  await expect(storage.insertMany([duplicateExecution])).rejects.toThrow()
 
-  await storage.updateById(
-    'te_cancel',
-    {},
+  const duplicateSleepingTaskExecution = createTaskExecutionStorageValue({
+    isSleepingTask: true,
+    sleepingTaskUniqueId: executions[1]!.sleepingTaskUniqueId,
+  })
+  await expect(storage.insertMany([duplicateSleepingTaskExecution])).rejects.toThrow()
+}
+
+async function testGetById(storage: TaskExecutionsStorage) {
+  const execution1 = createTaskExecutionStorageValue()
+  const execution2 = createTaskExecutionStorageValue()
+
+  execution2.status = 'completed'
+  execution2.isFinished = true
+  execution2.output = 'output'
+  execution2.retryAttempts = 1
+  execution2.finishedAt = new Date()
+  execution2.children = [
     {
+      taskId: generateTaskId(),
+      executionId: generateTaskExecutionId(),
+    },
+  ]
+  execution2.activeChildrenCount = 0
+  execution2.closeStatus = 'closing'
+  execution2.closeExpiresAt = new Date()
+  await storage.insertMany([execution1, execution2])
+
+  const foundExecution1 = await storage.getById(execution1.executionId, {})
+  expect(foundExecution1).toBeDefined()
+  assert(foundExecution1)
+  expect(foundExecution1.taskId).toBe(execution1.taskId)
+  expect(foundExecution1.executionId).toEqual(execution1.executionId)
+  expect(foundExecution1.status).toEqual('ready')
+
+  const execution2MatchingFilters: Array<TaskExecutionStorageGetByIdFilters> = [
+    {},
+    { status: 'completed' },
+    { status: 'completed', isFinished: true },
+    { isFinished: true },
+    { isSleepingTask: false },
+    { isSleepingTask: false, status: 'completed' },
+    { isSleepingTask: false, status: 'completed', isFinished: true },
+    { isSleepingTask: false, isFinished: true },
+  ]
+
+  for (const filter of execution2MatchingFilters) {
+    const foundExecution2 = await storage.getById(execution2.executionId, filter)
+    expect(foundExecution2).toBeDefined()
+    assert(foundExecution2)
+    expect(foundExecution2.taskId).toBe(execution2.taskId)
+    expect(foundExecution2.executionId).toEqual(execution2.executionId)
+    expect(foundExecution2.status).toEqual('completed')
+    expect(foundExecution2.isFinished).toEqual(true)
+    expect(foundExecution2.output).toEqual('output')
+    expect(foundExecution2.error).toBeUndefined()
+    expect(foundExecution2.retryAttempts).toEqual(1)
+    expectDateApproximatelyEqual(foundExecution2.finishedAt!, execution2.finishedAt)
+    expect(foundExecution2.children).toBeDefined()
+    assert(foundExecution2.children)
+    expect(foundExecution2.children).toHaveLength(1)
+    expect(foundExecution2.children[0]!.taskId).toEqual(execution2.children[0]!.taskId)
+    expect(foundExecution2.children[0]!.executionId).toEqual(execution2.children[0]!.executionId)
+    expect(foundExecution2.activeChildrenCount).toEqual(0)
+    expect(foundExecution2.onChildrenFinishedProcessingStatus).toEqual('idle')
+    expect(foundExecution2.onChildrenFinishedProcessingExpiresAt).toBeUndefined()
+    expect(foundExecution2.onChildrenFinishedProcessingFinishedAt).toBeUndefined()
+    expect(foundExecution2.closeStatus).toEqual('closing')
+    expectDateApproximatelyEqual(foundExecution2.closeExpiresAt!, execution2.closeExpiresAt)
+    expect(foundExecution2.closedAt).toBeUndefined()
+  }
+
+  const execution2NonFiltersFilters: Array<TaskExecutionStorageGetByIdFilters> = [
+    { status: 'ready' },
+    { status: 'completed', isFinished: false },
+    { isFinished: false },
+    { isSleepingTask: true },
+    { isSleepingTask: true, status: 'completed' },
+    { isSleepingTask: true, status: 'completed', isFinished: true },
+    { isSleepingTask: true, isFinished: true },
+  ]
+
+  for (const filter of execution2NonFiltersFilters) {
+    const foundExecution2 = await storage.getById(execution2.executionId, filter)
+    expect(foundExecution2).toBeUndefined()
+  }
+
+  const nonFoundExecution = await storage.getById('invalid_execution_id', {})
+  expect(nonFoundExecution).toBeUndefined()
+}
+
+async function testGetBySleepingTaskUniqueId(storage: TaskExecutionsStorage) {
+  const execution1 = createTaskExecutionStorageValue()
+
+  execution1.isSleepingTask = true
+  execution1.sleepingTaskUniqueId = 'test_unique_id1'
+  await storage.insertMany([execution1])
+
+  const foundExecution1 = await storage.getBySleepingTaskUniqueId(execution1.sleepingTaskUniqueId)
+  expect(foundExecution1).toBeDefined()
+  assert(foundExecution1)
+  expect(foundExecution1.taskId).toBe(execution1.taskId)
+  expect(foundExecution1.executionId).toEqual(execution1.executionId)
+  expect(foundExecution1.status).toEqual('ready')
+
+  const nonFoundExecution = await storage.getBySleepingTaskUniqueId(
+    'invalid_sleeping_task_unique_id',
+  )
+  expect(nonFoundExecution).toBeUndefined()
+}
+
+async function testUpdateById(storage: TaskExecutionsStorage) {
+  const executionFilters: Array<TaskExecutionStorageGetByIdFilters> = [
+    {},
+    { status: 'ready' },
+    { status: 'ready', isFinished: false },
+    { isFinished: false },
+    { isSleepingTask: false },
+    { isSleepingTask: false, status: 'ready' },
+    { isSleepingTask: false, status: 'ready', isFinished: false },
+    { isSleepingTask: false, isFinished: false },
+  ]
+
+  for (const filter of executionFilters) {
+    const execution = createTaskExecutionStorageValue()
+    await storage.insertMany([execution])
+
+    let now = new Date()
+    const child = {
+      taskId: generateTaskId(),
+      executionId: generateTaskExecutionId(),
+    }
+    await storage.updateById(execution.executionId, filter, {
+      executorId: 'executor_id',
       status: 'running',
+      isFinished: true,
+      runOutput: 'run_output',
+      output: 'output',
+      error: {
+        message: 'error_message',
+        errorType: 'cancelled',
+        isRetryable: false,
+        isInternal: false,
+      },
+      retryAttempts: 1,
       startedAt: now,
-      expiresAt: new Date(now.getTime() + 5000),
-      updatedAt: now,
-    },
-  )
-
-  await storage.updateById(
-    'te_cancel',
-    {},
-    {
-      status: 'cancelled',
+      expiresAt: now,
       finishedAt: now,
-      unsetExpiresAt: true,
-      updatedAt: now,
-    },
-  )
-
-  const cancelledExecution = await storage.getById('te_cancel', {})
-  expect(cancelledExecution).toBeDefined()
-  expect(cancelledExecution!.status).toBe('cancelled')
-  expectDateApproximatelyEqual(cancelledExecution!.finishedAt!, now)
-  expect(cancelledExecution!.expiresAt).toBeUndefined()
-
-  const finalizeFailExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'finalize-fail-test',
-    executionId: 'te_finalize_fail',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ finalizeFail: 'test' }),
-  })
-  await storage.insert([finalizeFailExecution])
-
-  await storage.updateById(
-    'te_finalize_fail',
-    {},
-    {
-      status: 'finalize_failed',
-      error: {
-        errorType: 'generic',
-        message: 'Finalize task failed',
-        isRetryable: false,
-        isInternal: false,
-      },
-      finishedAt: now,
-      updatedAt: now,
-    },
-  )
-
-  const finalizeFailedExecution = await storage.getById('te_finalize_fail', {})
-  expect(finalizeFailedExecution).toBeDefined()
-  expect(finalizeFailedExecution!.status).toBe('finalize_failed')
-  expect(finalizeFailedExecution!.error).toBeDefined()
-  expect(finalizeFailedExecution!.error!.errorType).toBe('generic')
-  expect(finalizeFailedExecution!.error!.message).toBe('Finalize task failed')
-  expect(finalizeFailedExecution!.error!.isRetryable).toBe(false)
-  expect(finalizeFailedExecution!.error!.isInternal).toBe(false)
-}
-
-async function testParentChildRelationships(storage: TaskExecutionsStorage, now: Date) {
-  const parent = createTaskExecutionStorageValue({
-    now,
-    taskId: 'parent-test',
-    executionId: 'te_parent_test',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ parent: 'test' }),
-  })
-  parent.status = 'waiting_for_children'
-  parent.children = [
-    { taskId: 'child1', executionId: 'te_child1_test' },
-    { taskId: 'child2', executionId: 'te_child2_test' },
-    { taskId: 'child3', executionId: 'te_child3_test' },
-  ]
-  parent.activeChildrenCount = 3
-  parent.onChildrenFinishedProcessingStatus = 'idle'
-
-  const child1 = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'parent-test', executionId: 'te_parent_test' },
-    parent: {
-      taskId: 'parent-test',
-      executionId: 'te_parent_test',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'child1',
-    executionId: 'te_child1_test',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ child: 1 }),
-  })
-
-  const child2 = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'parent-test', executionId: 'te_parent_test' },
-    parent: {
-      taskId: 'parent-test',
-      executionId: 'te_parent_test',
-      indexInParentChildTaskExecutions: 1,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'child2',
-    executionId: 'te_child2_test',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ child: 2 }),
-  })
-
-  const child3 = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'parent-test', executionId: 'te_parent_test' },
-    parent: {
-      taskId: 'parent-test',
-      executionId: 'te_parent_test',
-      indexInParentChildTaskExecutions: 2,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'child3',
-    executionId: 'te_child3_test',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ child: 3 }),
-  })
-
-  await storage.insert([parent, child1, child2, child3])
-
-  await storage.updateById(
-    'te_child1_test',
-    {},
-    {
-      status: 'completed',
-      output: JSON.stringify({ result: 'child1 done' }),
-      finishedAt: now,
-      decrementParentActiveChildrenCount: true,
-      updatedAt: now,
-    },
-  )
-
-  const parentAfterChild1 = await storage.getById('te_parent_test', {})
-  expect(parentAfterChild1).toBeDefined()
-  expect(parentAfterChild1!.activeChildrenCount).toBe(2)
-
-  await storage.updateById(
-    'te_child2_test',
-    {},
-    {
-      status: 'failed',
-      error: {
-        errorType: 'generic',
-        message: 'Child 2 failed',
-        isRetryable: false,
-        isInternal: false,
-      },
-      finishedAt: now,
-      decrementParentActiveChildrenCount: true,
-      updatedAt: now,
-    },
-  )
-
-  const parentAfterChild2 = await storage.getById('te_parent_test', {})
-  expect(parentAfterChild2).toBeDefined()
-  expect(parentAfterChild2!.activeChildrenCount).toBe(1)
-
-  await storage.updateById(
-    'te_child3_test',
-    {},
-    {
-      status: 'cancelled',
-      finishedAt: now,
-      decrementParentActiveChildrenCount: true,
-      updatedAt: now,
-    },
-  )
-
-  const parentAfterAllChildren = await storage.getById('te_parent_test', {})
-  expect(parentAfterAllChildren).toBeDefined()
-  expect(parentAfterAllChildren!.activeChildrenCount).toBe(0)
-
-  const nestedParent = createTaskExecutionStorageValue({
-    now,
-    taskId: 'nested-parent',
-    executionId: 'te_nested_parent',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ nested: 'parent' }),
-  })
-  nestedParent.status = 'waiting_for_children'
-  nestedParent.children = [{ taskId: 'nested-child-parent', executionId: 'te_nested_child_parent' }]
-  nestedParent.activeChildrenCount = 1
-  nestedParent.onChildrenFinishedProcessingStatus = 'idle'
-
-  const nestedChildParent = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'nested-parent', executionId: 'te_nested_parent' },
-    parent: {
-      taskId: 'nested-parent',
-      executionId: 'te_nested_parent',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'nested-child-parent',
-    executionId: 'te_nested_child_parent',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ nested: 'child-parent' }),
-  })
-  nestedChildParent.status = 'waiting_for_children'
-  nestedChildParent.children = [
-    { taskId: 'nested-grandchild', executionId: 'te_nested_grandchild' },
-  ]
-  nestedChildParent.activeChildrenCount = 1
-  nestedChildParent.onChildrenFinishedProcessingStatus = 'idle'
-
-  const nestedGrandchild = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'nested-parent', executionId: 'te_nested_parent' },
-    parent: {
-      taskId: 'nested-child-parent',
-      executionId: 'te_nested_child_parent',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'nested-grandchild',
-    executionId: 'te_nested_grandchild',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ nested: 'grandchild' }),
-  })
-
-  await storage.insert([nestedParent, nestedChildParent, nestedGrandchild])
-
-  await storage.updateById(
-    'te_nested_grandchild',
-    {},
-    {
-      status: 'completed',
-      output: JSON.stringify({ result: 'grandchild done' }),
-      finishedAt: now,
-      decrementParentActiveChildrenCount: true,
-      updatedAt: now,
-    },
-  )
-
-  const childParentAfterGrandchild = await storage.getById('te_nested_child_parent', {})
-  expect(childParentAfterGrandchild).toBeDefined()
-  expect(childParentAfterGrandchild!.activeChildrenCount).toBe(0)
-
-  const topParentAfterGrandchild = await storage.getById('te_nested_parent', {})
-  expect(topParentAfterGrandchild).toBeDefined()
-  expect(topParentAfterGrandchild!.activeChildrenCount).toBe(1)
-
-  await storage.updateById(
-    'te_nested_child_parent',
-    {},
-    {
-      status: 'completed',
-      output: JSON.stringify({ result: 'child-parent done' }),
-      finishedAt: now,
-      decrementParentActiveChildrenCount: true,
-      updatedAt: now,
-    },
-  )
-
-  const topParentAfterAll = await storage.getById('te_nested_parent', {})
-  expect(topParentAfterAll).toBeDefined()
-  expect(topParentAfterAll!.activeChildrenCount).toBe(0)
-}
-
-async function testUnsetOperations(storage: TaskExecutionsStorage, now: Date) {
-  const execution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'unset-test',
-    executionId: 'te_unset',
-    retryOptions: { maxAttempts: 3 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ unset: 'test' }),
-  })
-  execution.status = 'running'
-  execution.startedAt = now
-  execution.expiresAt = new Date(now.getTime() + 5000)
-  execution.runOutput = JSON.stringify({ running: true })
-  execution.error = {
-    errorType: 'generic',
-    message: 'Initial error',
-    isRetryable: true,
-    isInternal: false,
-  }
-  await storage.insert([execution])
-
-  await storage.updateById(
-    'te_unset',
-    {},
-    {
-      status: 'ready',
-      unsetRunOutput: true,
-      unsetError: true,
-      unsetExpiresAt: true,
-      updatedAt: now,
-    },
-  )
-
-  const unsetExecution = await storage.getById('te_unset', {})
-  expect(unsetExecution).toBeDefined()
-  expect(unsetExecution!.status).toBe('ready')
-  expect(unsetExecution!.runOutput).toBeUndefined()
-  expect(unsetExecution!.error).toBeUndefined()
-  expect(unsetExecution!.expiresAt).toBeUndefined()
-
-  const processingExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'processing-unset-test',
-    executionId: 'te_processing_unset',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ processingUnset: 'test' }),
-  })
-  processingExecution.status = 'waiting_for_children'
-  processingExecution.onChildrenFinishedProcessingStatus = 'processing'
-  processingExecution.onChildrenFinishedProcessingExpiresAt = new Date(now.getTime() + 5000)
-  await storage.insert([processingExecution])
-
-  await storage.updateById(
-    'te_processing_unset',
-    {},
-    {
-      onChildrenFinishedProcessingStatus: 'processed',
+      children: [child],
+      activeChildrenCount: 1,
+      onChildrenFinishedProcessingStatus: 'processing',
+      onChildrenFinishedProcessingExpiresAt: now,
       onChildrenFinishedProcessingFinishedAt: now,
-      unsetOnChildrenFinishedProcessingExpiresAt: true,
-      updatedAt: now,
-    },
-  )
-
-  const processedExecution = await storage.getById('te_processing_unset', {})
-  expect(processedExecution).toBeDefined()
-  expect(processedExecution!.onChildrenFinishedProcessingStatus).toBe('processed')
-  expectDateApproximatelyEqual(processedExecution!.onChildrenFinishedProcessingFinishedAt!, now)
-  expect(processedExecution!.onChildrenFinishedProcessingExpiresAt).toBeUndefined()
-
-  const closeExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'close-unset-test',
-    executionId: 'te_close_unset',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ closeUnset: 'test' }),
-  })
-  closeExecution.closeStatus = 'closing'
-  closeExecution.closeExpiresAt = new Date(now.getTime() + 5000)
-  await storage.insert([closeExecution])
-
-  await storage.updateById(
-    'te_close_unset',
-    {},
-    {
-      closeStatus: 'closed',
+      closeStatus: 'closing',
+      closeExpiresAt: now,
       closedAt: now,
-      unsetCloseExpiresAt: true,
+      needsPromiseCancellation: true,
       updatedAt: now,
-    },
-  )
+    })
 
-  const closedExecution = await storage.getById('te_close_unset', {})
-  expect(closedExecution).toBeDefined()
-  expect(closedExecution!.closeStatus).toBe('closed')
-  expectDateApproximatelyEqual(closedExecution!.closedAt!, now)
-  expect(closedExecution!.closeExpiresAt).toBeUndefined()
-}
+    const updatedExecution1 = await storage.getById(execution.executionId, {})
+    expect(updatedExecution1).toBeDefined()
+    assert(updatedExecution1)
+    expect(updatedExecution1.executorId).toBe('executor_id')
+    expect(updatedExecution1.status).toBe('running')
+    expect(updatedExecution1.isFinished).toBe(true)
+    expect(updatedExecution1.runOutput).toBe('run_output')
+    expect(updatedExecution1.output).toBe('output')
+    expect(updatedExecution1.error).toBeDefined()
+    assert(updatedExecution1.error)
+    expect(updatedExecution1.error.message).toBe('error_message')
+    expect(updatedExecution1.error.errorType).toBe('cancelled')
+    expect(updatedExecution1.error.isRetryable).toBe(false)
+    expect(updatedExecution1.error.isInternal).toBe(false)
+    expect(updatedExecution1.retryAttempts).toBe(1)
+    expectDateApproximatelyEqual(updatedExecution1.startedAt!, now)
+    expectDateApproximatelyEqual(updatedExecution1.expiresAt!, now)
+    expectDateApproximatelyEqual(updatedExecution1.finishedAt!, now)
+    expect(updatedExecution1.children).toBeDefined()
+    assert(updatedExecution1.children)
+    expect(updatedExecution1.children).toHaveLength(1)
+    expect(updatedExecution1.children[0]!.taskId).toEqual(child.taskId)
+    expect(updatedExecution1.children[0]!.executionId).toEqual(child.executionId)
+    expect(updatedExecution1.activeChildrenCount).toBe(1)
+    expect(updatedExecution1.onChildrenFinishedProcessingStatus).toBe('processing')
+    expectDateApproximatelyEqual(updatedExecution1.onChildrenFinishedProcessingExpiresAt!, now)
+    expectDateApproximatelyEqual(updatedExecution1.onChildrenFinishedProcessingFinishedAt!, now)
+    expect(updatedExecution1.closeStatus).toBe('closing')
+    expectDateApproximatelyEqual(updatedExecution1.closeExpiresAt!, now)
+    expectDateApproximatelyEqual(updatedExecution1.closedAt!, now)
+    expect(updatedExecution1.needsPromiseCancellation).toBe(true)
+    expectDateApproximatelyEqual(updatedExecution1.updatedAt, now)
 
-async function testRetryAndTimeoutScenarios(storage: TaskExecutionsStorage, now: Date) {
-  const retryExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'retry-scenario',
-    executionId: 'te_retry_scenario',
-    retryOptions: { maxAttempts: 5, baseDelayMs: 100, delayMultiplier: 2 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ retry: 'scenario' }),
-  })
-  await storage.insert([retryExecution])
-
-  for (let attempt = 1; attempt <= 4; attempt++) {
+    now = new Date()
     await storage.updateById(
-      'te_retry_scenario',
+      execution.executionId,
       {},
       {
-        status: 'running',
-        retryAttempts: attempt,
-        startedAt: now,
-        expiresAt: new Date(now.getTime() + 5000),
+        unsetExecutorId: true,
+        unsetRunOutput: true,
+        unsetError: true,
+        unsetExpiresAt: true,
+        unsetOnChildrenFinishedProcessingExpiresAt: true,
+        unsetCloseExpiresAt: true,
+        needsPromiseCancellation: false,
         updatedAt: now,
       },
     )
 
-    const runningExecution = await storage.getById('te_retry_scenario', {})
-    expect(runningExecution).toBeDefined()
-    expect(runningExecution!.status).toBe('running')
-    expect(runningExecution!.retryAttempts).toBe(attempt)
+    const updatedExecution2 = await storage.getById(execution.executionId, {})
+    expect(updatedExecution2).toBeDefined()
+    assert(updatedExecution2)
+    expect(updatedExecution2.executorId).toBeUndefined()
+    expect(updatedExecution2.runOutput).toBeUndefined()
+    expect(updatedExecution2.error).toBeUndefined()
+    expect(updatedExecution2.expiresAt).toBeUndefined()
+    expect(updatedExecution2.onChildrenFinishedProcessingExpiresAt).toBeUndefined()
+    expect(updatedExecution2.closeExpiresAt).toBeUndefined()
+    expect(updatedExecution2.needsPromiseCancellation).toBe(false)
+    expectDateApproximatelyEqual(updatedExecution2.updatedAt, now)
+  }
+}
 
-    if (attempt < 4) {
-      const retryDelay = 100 * Math.pow(2, attempt - 1)
-      await storage.updateById(
-        'te_retry_scenario',
-        {},
-        {
-          status: 'ready',
-          error: {
-            errorType: 'generic',
-            message: `Attempt ${attempt} failed`,
-            isRetryable: true,
-            isInternal: false,
-          },
-          startAt: new Date(now.getTime() + retryDelay),
-          unsetExpiresAt: true,
-          updatedAt: now,
+async function testUpdateByIdAndInsertManyIfUpdated(storage: TaskExecutionsStorage) {
+  const matchingFilters: Array<TaskExecutionStorageGetByIdFilters> = [
+    {},
+    { status: 'ready' },
+    { status: 'ready', isFinished: false },
+    { isFinished: false },
+    { isSleepingTask: false },
+    { isSleepingTask: false, status: 'ready' },
+    { isSleepingTask: false, status: 'ready', isFinished: false },
+    { isSleepingTask: false, isFinished: false },
+  ]
+
+  for (const filter of matchingFilters) {
+    const testExecution = createTaskExecutionStorageValue()
+    const childrenExecutions = [
+      createTaskExecutionStorageValue({
+        parent: {
+          taskId: testExecution.taskId,
+          executionId: testExecution.executionId,
+          indexInParentChildTaskExecutions: 0,
+          isFinalizeTaskOfParentTask: false,
         },
-      )
+      }),
+      createTaskExecutionStorageValue({
+        parent: {
+          taskId: testExecution.taskId,
+          executionId: testExecution.executionId,
+          indexInParentChildTaskExecutions: 1,
+          isFinalizeTaskOfParentTask: false,
+        },
+      }),
+    ]
 
-      const retryReadyExecution = await storage.getById('te_retry_scenario', {})
-      expect(retryReadyExecution).toBeDefined()
-      expect(retryReadyExecution!.status).toBe('ready')
-      expectDateApproximatelyEqual(
-        retryReadyExecution!.startAt,
-        new Date(now.getTime() + retryDelay),
-      )
+    await storage.insertMany([testExecution])
+
+    const now = new Date()
+    await storage.updateByIdAndInsertManyIfUpdated(
+      testExecution.executionId,
+      filter,
+      {
+        status: 'waiting_for_children',
+        children: childrenExecutions.map((e) => ({ taskId: e.taskId, executionId: e.executionId })),
+        activeChildrenCount: 2,
+        updatedAt: now,
+      },
+      childrenExecutions,
+    )
+
+    const updatedExecution = await storage.getById(testExecution.executionId, {})
+    expect(updatedExecution).toBeDefined()
+    assert(updatedExecution)
+    expect(updatedExecution.status).toBe('waiting_for_children')
+    expect(updatedExecution.children).toBeDefined()
+    assert(updatedExecution.children)
+    expect(updatedExecution.children).toHaveLength(2)
+    expect(updatedExecution.activeChildrenCount).toBe(2)
+
+    for (const child of childrenExecutions) {
+      const insertedChild = await storage.getById(child.executionId, {})
+      expect(insertedChild).toBeDefined()
+      assert(insertedChild)
+      expect(insertedChild.taskId).toBe(child.taskId)
+      expect(insertedChild.parent).toBeDefined()
+      assert(insertedChild.parent)
+      expect(insertedChild.parent.executionId).toBe(testExecution.executionId)
     }
   }
 
-  await storage.updateById(
-    'te_retry_scenario',
-    {},
+  const nonMatchingFilters: Array<TaskExecutionStorageGetByIdFilters> = [
+    { status: 'running' },
+    { status: 'completed' },
+    { isFinished: true },
+    { isSleepingTask: true },
+    { isSleepingTask: true, status: 'ready' },
+    { isSleepingTask: true, status: 'ready', isFinished: false },
+    { isSleepingTask: true, isFinished: false },
+  ]
+
+  for (const filter of nonMatchingFilters) {
+    const execution = createTaskExecutionStorageValue()
+    await storage.insertMany([execution])
+
+    const childExecution = createTaskExecutionStorageValue({
+      parent: {
+        taskId: execution.taskId,
+        executionId: execution.executionId,
+        indexInParentChildTaskExecutions: 0,
+        isFinalizeTaskOfParentTask: false,
+      },
+    })
+
+    await storage.updateByIdAndInsertManyIfUpdated(
+      execution.executionId,
+      filter,
+      {
+        status: 'running',
+        updatedAt: new Date(),
+      },
+      [childExecution],
+    )
+
+    const unchangedExecution = await storage.getById(execution.executionId, {})
+    expect(unchangedExecution).toBeDefined()
+    assert(unchangedExecution)
+    expect(unchangedExecution.status).toBe('ready')
+
+    const nonInsertedChild = await storage.getById(childExecution.executionId, {})
+    expect(nonInsertedChild).toBeUndefined()
+  }
+}
+
+async function testUpdateByStatusAndStartAtLessThanAndReturn(storage: TaskExecutionsStorage) {
+  let now = new Date()
+  const past = new Date(now.getTime() - 5000)
+  const future = new Date(now.getTime() + 5000)
+
+  const executions = [
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+  ]
+
+  executions[0]!.startAt = past
+  executions[1]!.startAt = future
+  executions[2]!.startAt = now
+  executions[3]!.status = 'running'
+  executions[3]!.startAt = past
+  executions[4]!.status = 'completed'
+  executions[4]!.isFinished = true
+  executions[4]!.startAt = past
+
+  await storage.insertMany(executions)
+
+  now = new Date(Date.now() + 1000)
+  const updatedExecutions = await storage.updateByStatusAndStartAtLessThanAndReturn(
+    'ready',
+    new Date(future.getTime() + 1000),
     {
-      status: 'completed',
-      output: JSON.stringify({ result: 'success after retries' }),
-      finishedAt: now,
-      unsetError: true,
-      unsetExpiresAt: true,
+      status: 'running',
+      executorId: 'test-executor',
+      startedAt: now,
       updatedAt: now,
     },
+    new Date(now.getTime() + 10_000),
+    2,
   )
 
-  const completedRetryExecution = await storage.getById('te_retry_scenario', {})
-  expect(completedRetryExecution).toBeDefined()
-  expect(completedRetryExecution!.status).toBe('completed')
-  expect(completedRetryExecution!.retryAttempts).toBe(4)
-  expect(completedRetryExecution!.output).toBe(JSON.stringify({ result: 'success after retries' }))
+  expect(updatedExecutions).toHaveLength(2)
+  expect(updatedExecutions[0]!.executionId).toBe(executions[0]!.executionId)
+  expect(updatedExecutions[1]!.executionId).toBe(executions[2]!.executionId)
+  expect(updatedExecutions[0]!.status).toBe('running')
+  expect(updatedExecutions[1]!.status).toBe('running')
+  expect(updatedExecutions[0]!.executorId).toBe('test-executor')
+  expect(updatedExecutions[1]!.executorId).toBe('test-executor')
 
-  const timeoutExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'timeout-scenario',
-    executionId: 'te_timeout_scenario',
-    retryOptions: { maxAttempts: 2 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 1000,
-    input: JSON.stringify({ timeout: 'scenario' }),
-  })
-  timeoutExecution.status = 'running'
-  timeoutExecution.startedAt = now
-  timeoutExecution.expiresAt = new Date(now.getTime() - 1000)
-  await storage.insert([timeoutExecution])
+  const expiresAt = new Date(now.getTime() + updatedExecutions[0]!.timeoutMs + 10_000)
+  expectDateApproximatelyEqual(updatedExecutions[0]!.expiresAt!, expiresAt)
+  expectDateApproximatelyEqual(updatedExecutions[1]!.expiresAt!, expiresAt)
 
-  await storage.updateById(
-    'te_timeout_scenario',
-    {},
+  const updatedExecution1 = await storage.getById(executions[0]!.executionId, {})
+  const updatedExecution2 = await storage.getById(executions[2]!.executionId, {})
+  expect(updatedExecution1?.status).toBe('running')
+  expect(updatedExecution2?.status).toBe('running')
+
+  const nonUpdatedExecution1 = await storage.getById(executions[1]!.executionId, {})
+  const nonUpdatedExecution2 = await storage.getById(executions[3]!.executionId, {})
+  const nonUpdatedExecution3 = await storage.getById(executions[4]!.executionId, {})
+  expect(nonUpdatedExecution1?.status).toBe('ready')
+  expect(nonUpdatedExecution2?.status).toBe('running')
+  expect(nonUpdatedExecution3?.status).toBe('completed')
+
+  const noMatchedExecutions = await storage.updateByStatusAndStartAtLessThanAndReturn(
+    'failed',
+    new Date(future.getTime() + 1000),
+    { updatedAt: new Date() },
+    new Date(now.getTime() + 10_000),
+    10,
+  )
+  expect(noMatchedExecutions).toHaveLength(0)
+}
+
+async function testUpdateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
+  storage: TaskExecutionsStorage,
+) {
+  let now = new Date()
+  const past = new Date(now.getTime() - 1000)
+  const future = new Date(now.getTime() + 1000)
+
+  const executions = [
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+  ]
+
+  executions[0]!.status = 'waiting_for_children'
+  executions[0]!.onChildrenFinishedProcessingStatus = 'idle'
+  executions[0]!.activeChildrenCount = 0
+  executions[0]!.updatedAt = past
+
+  executions[1]!.status = 'waiting_for_children'
+  executions[1]!.onChildrenFinishedProcessingStatus = 'idle'
+  executions[1]!.activeChildrenCount = 0
+  executions[1]!.updatedAt = future
+
+  executions[2]!.status = 'waiting_for_children'
+  executions[2]!.onChildrenFinishedProcessingStatus = 'idle'
+  executions[2]!.activeChildrenCount = 0
+  executions[2]!.updatedAt = now
+
+  executions[3]!.status = 'waiting_for_children'
+  executions[3]!.onChildrenFinishedProcessingStatus = 'idle'
+  executions[3]!.activeChildrenCount = 2
+
+  executions[4]!.status = 'completed'
+  executions[4]!.isFinished = true
+  executions[4]!.onChildrenFinishedProcessingStatus = 'idle'
+  executions[4]!.activeChildrenCount = 0
+
+  await storage.insertMany(executions)
+
+  now = new Date()
+  const updatedExecutions =
+    await storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
+      'waiting_for_children',
+      'idle',
+      1,
+      {
+        onChildrenFinishedProcessingStatus: 'processing',
+        onChildrenFinishedProcessingExpiresAt: new Date(now.getTime() + 10_000),
+        updatedAt: now,
+      },
+      2,
+    )
+
+  expect(updatedExecutions).toHaveLength(2)
+  expect(updatedExecutions[0]!.executionId).toBe(executions[0]!.executionId)
+  expect(updatedExecutions[1]!.executionId).toBe(executions[2]!.executionId)
+  expect(updatedExecutions[0]!.onChildrenFinishedProcessingStatus).toBe('processing')
+  expect(updatedExecutions[1]!.onChildrenFinishedProcessingStatus).toBe('processing')
+
+  const updatedExecution1 = await storage.getById(executions[0]!.executionId, {})
+  const updatedExecution2 = await storage.getById(executions[2]!.executionId, {})
+  expect(updatedExecution1?.onChildrenFinishedProcessingStatus).toBe('processing')
+  expect(updatedExecution2?.onChildrenFinishedProcessingStatus).toBe('processing')
+  expect(updatedExecution1?.onChildrenFinishedProcessingExpiresAt).toBeInstanceOf(Date)
+  expect(updatedExecution2?.onChildrenFinishedProcessingExpiresAt).toBeInstanceOf(Date)
+
+  const nonUpdatedExecution1 = await storage.getById(executions[1]!.executionId, {})
+  const nonUpdatedExecution2 = await storage.getById(executions[3]!.executionId, {})
+  const nonUpdatedExecution3 = await storage.getById(executions[4]!.executionId, {})
+  expect(nonUpdatedExecution1?.onChildrenFinishedProcessingStatus).toBe('idle')
+  expect(nonUpdatedExecution2?.onChildrenFinishedProcessingStatus).toBe('idle')
+  expect(nonUpdatedExecution3?.onChildrenFinishedProcessingStatus).toBe('idle')
+}
+
+async function testUpdateByCloseStatusAndReturn(storage: TaskExecutionsStorage) {
+  let now = new Date()
+  const past = new Date(now.getTime() - 1000)
+  const future = new Date(now.getTime() + 1000)
+
+  const executions = [
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+  ]
+
+  executions[0]!.closeStatus = 'ready'
+  executions[0]!.updatedAt = past
+  executions[1]!.closeStatus = 'ready'
+  executions[1]!.updatedAt = future
+  executions[2]!.closeStatus = 'ready'
+  executions[2]!.updatedAt = now
+  executions[3]!.closeStatus = 'closing'
+  executions[3]!.updatedAt = past
+  executions[4]!.closeStatus = 'closed'
+  executions[4]!.updatedAt = past
+
+  await storage.insertMany(executions)
+
+  now = new Date()
+  const updatedExecutions = await storage.updateByCloseStatusAndReturn(
+    'ready',
     {
-      status: 'failed',
+      closeStatus: 'closing',
+      closeExpiresAt: new Date(now.getTime() + 10_000),
+      updatedAt: now,
+    },
+    2,
+  )
+
+  expect(updatedExecutions).toHaveLength(2)
+  expect(updatedExecutions[0]!.executionId).toBe(executions[0]!.executionId)
+  expect(updatedExecutions[1]!.executionId).toBe(executions[2]!.executionId)
+  expect(updatedExecutions[0]!.closeStatus).toBe('closing')
+  expect(updatedExecutions[1]!.closeStatus).toBe('closing')
+
+  const updatedExecution1 = await storage.getById(executions[0]!.executionId, {})
+  const updatedExecution2 = await storage.getById(executions[2]!.executionId, {})
+  expect(updatedExecution1?.closeStatus).toBe('closing')
+  expect(updatedExecution2?.closeStatus).toBe('closing')
+  expect(updatedExecution1?.closeExpiresAt).toBeInstanceOf(Date)
+  expect(updatedExecution2?.closeExpiresAt).toBeInstanceOf(Date)
+
+  const nonUpdatedExecution1 = await storage.getById(executions[1]!.executionId, {})
+  const nonUpdatedExecution2 = await storage.getById(executions[3]!.executionId, {})
+  const nonUpdatedExecution3 = await storage.getById(executions[4]!.executionId, {})
+  expect(nonUpdatedExecution1?.closeStatus).toBe('ready')
+  expect(nonUpdatedExecution2?.closeStatus).toBe('closing')
+  expect(nonUpdatedExecution3?.closeStatus).toBe('closed')
+}
+
+async function testUpdateByExpiresAtLessThanAndReturn(storage: TaskExecutionsStorage) {
+  let now = new Date()
+  const past = new Date(now.getTime() - 5000)
+  const future = new Date(now.getTime() + 5000)
+
+  const executions = [
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+  ]
+
+  executions[0]!.status = 'running'
+  executions[0]!.expiresAt = past
+  executions[1]!.status = 'running'
+  executions[1]!.expiresAt = future
+  executions[2]!.status = 'running'
+  executions[2]!.expiresAt = now
+  executions[3]!.status = 'completed'
+  executions[3]!.isFinished = true
+  executions[4]!.isSleepingTask = true
+  executions[4]!.expiresAt = past
+
+  await storage.insertMany(executions)
+
+  now = new Date(Date.now() + 1000)
+  let updatedExecutions = await storage.updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+    false,
+    now,
+    {
+      status: 'ready',
       error: {
+        message: 'Task expired',
+        errorType: 'generic',
+        isRetryable: true,
+        isInternal: true,
+      },
+      startAt: now,
+      updatedAt: now,
+    },
+    2,
+  )
+
+  expect(updatedExecutions).toHaveLength(2)
+  expect(updatedExecutions[0]!.executionId).toBe(executions[0]!.executionId)
+  expect(updatedExecutions[1]!.executionId).toBe(executions[2]!.executionId)
+  expect(updatedExecutions[0]!.status).toBe('ready')
+  expect(updatedExecutions[1]!.status).toBe('ready')
+  expect(updatedExecutions[0]!.error).toBeDefined()
+  assert(updatedExecutions[0]!.error)
+  expect(updatedExecutions[0]!.error.message).toBe('Task expired')
+  expect(updatedExecutions[0]!.startAt).toBeInstanceOf(Date)
+  expect(updatedExecutions[1]!.error).toBeDefined()
+  assert(updatedExecutions[1]!.error)
+  expect(updatedExecutions[1]!.error.message).toBe('Task expired')
+  expect(updatedExecutions[1]!.startAt).toBeInstanceOf(Date)
+
+  const updatedExecution1 = await storage.getById(executions[0]!.executionId, {})
+  const updatedExecution2 = await storage.getById(executions[2]!.executionId, {})
+  expect(updatedExecution1?.status).toBe('ready')
+  expect(updatedExecution2?.status).toBe('ready')
+  expect(updatedExecution1?.startAt).toBeInstanceOf(Date)
+  expect(updatedExecution2?.startAt).toBeInstanceOf(Date)
+
+  const nonUpdatedExecution1 = await storage.getById(executions[1]!.executionId, {})
+  const nonUpdatedExecution2 = await storage.getById(executions[3]!.executionId, {})
+  const nonUpdatedExecution3 = await storage.getById(executions[4]!.executionId, {})
+  expect(nonUpdatedExecution1?.status).toBe('running')
+  expect(nonUpdatedExecution2?.status).toBe('completed')
+  expect(nonUpdatedExecution3?.status).toBe('ready')
+
+  now = new Date(Date.now() + 1000)
+  updatedExecutions = await storage.updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+    true,
+    now,
+    {
+      status: 'timed_out',
+      error: {
+        message: 'Task timed out',
         errorType: 'timed_out',
-        message: 'Task execution timed out',
         isRetryable: true,
         isInternal: false,
       },
-      finishedAt: now,
-      unsetExpiresAt: true,
       updatedAt: now,
     },
+    2,
   )
 
-  const timedOutExecution = await storage.getById('te_timeout_scenario', {})
-  expect(timedOutExecution).toBeDefined()
-  expect(timedOutExecution!.status).toBe('failed')
-  expect(timedOutExecution!.error).toBeDefined()
-  expect(timedOutExecution!.error!.errorType).toBe('timed_out')
-  expect(timedOutExecution!.error!.message).toBe('Task execution timed out')
-  expect(timedOutExecution!.error!.isRetryable).toBe(true)
-  expect(timedOutExecution!.error!.isInternal).toBe(false)
-  expectDateApproximatelyEqual(timedOutExecution!.finishedAt!, now)
+  expect(updatedExecutions).toHaveLength(1)
+  expect(updatedExecutions[0]!.executionId).toBe(executions[4]!.executionId)
+  expect(updatedExecutions[0]!.status).toBe('timed_out')
+  expect(updatedExecutions[0]!.error).toBeDefined()
+  assert(updatedExecutions[0]!.error)
+  expect(updatedExecutions[0]!.error.message).toBe('Task timed out')
+  expect(updatedExecutions[0]!.error.errorType).toBe('timed_out')
+  expect(updatedExecutions[0]!.error.isRetryable).toBe(true)
+  expect(updatedExecutions[0]!.error.isInternal).toBe(false)
 }
 
-async function testBatchOperationsAndFilters(storage: TaskExecutionsStorage, now: Date) {
-  const batchExecutions = []
-  for (let i = 0; i < 5; i++) {
-    const execution = createTaskExecutionStorageValue({
-      now,
-      taskId: `batch-task-${i}`,
-      executionId: `te_batch_${i}`,
-      retryOptions: { maxAttempts: 1 },
-      sleepMsBeforeRun: i * 100,
-      timeoutMs: 5000,
-      input: JSON.stringify({ batch: i }),
-    })
-    if (i % 2 === 0) {
-      execution.status = 'ready'
-    } else {
-      execution.status = 'running'
-      execution.startedAt = now
-      execution.expiresAt = new Date(now.getTime() + 5000)
-    }
-    batchExecutions.push(execution)
-  }
-  await storage.insert(batchExecutions)
+async function testUpdateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
+  storage: TaskExecutionsStorage,
+) {
+  let now = new Date()
+  const past = new Date(now.getTime() - 5000)
+  const future = new Date(now.getTime() + 5000)
 
-  const batchIds = batchExecutions.map((e) => e.executionId)
-  const allExecutions = await storage.getByIds(batchIds)
-
-  const readyCount = allExecutions.filter((e) => e !== undefined && e.status === 'ready').length
-  expect(readyCount).toBe(3)
-
-  const runningCount = allExecutions.filter((e) => e !== undefined && e.status === 'running').length
-  expect(runningCount).toBe(2)
-
-  await storage.updateByIdsAndStatuses(['te_batch_1', 'te_batch_3'], ['running'], {
-    status: 'completed',
-    output: JSON.stringify({ batch: 'completed' }),
-    finishedAt: now,
-    unsetExpiresAt: true,
-    updatedAt: now,
-  })
-
-  const updatedBatch1 = await storage.getById('te_batch_1', {})
-  expect(updatedBatch1).toBeDefined()
-  expect(updatedBatch1!.status).toBe('completed')
-
-  const updatedBatch3 = await storage.getById('te_batch_3', {})
-  expect(updatedBatch3).toBeDefined()
-  expect(updatedBatch3!.status).toBe('completed')
-
-  const allExecutionsUpdated = await storage.getByIds(batchIds)
-
-  const multiStatusCount = allExecutionsUpdated.filter(
-    (e) => e !== undefined && (e.status === 'ready' || e.status === 'completed'),
-  ).length
-  expect(multiStatusCount).toBe(5)
-
-  const needsCancellationExecutions = []
-  for (let i = 0; i < 3; i++) {
-    const execution = createTaskExecutionStorageValue({
-      now,
-      taskId: `cancellation-task-${i}`,
-      executionId: `te_cancellation_${i}`,
-      retryOptions: { maxAttempts: 1 },
-      sleepMsBeforeRun: 0,
-      timeoutMs: 5000,
-      input: JSON.stringify({ cancellation: i }),
-    })
-    execution.needsPromiseCancellation = i < 2
-    needsCancellationExecutions.push(execution)
-  }
-  await storage.insert(needsCancellationExecutions)
-
-  const cancellationResults = await storage.getByNeedsPromiseCancellationAndIds(
-    true,
-    needsCancellationExecutions.map((e) => e.executionId),
-    10,
-  )
-  expect(cancellationResults).toHaveLength(2)
-  expect(cancellationResults[0]!.needsPromiseCancellation).toBe(true)
-  expect(cancellationResults[1]!.needsPromiseCancellation).toBe(true)
-
-  const noCancellationResults = await storage.getByNeedsPromiseCancellationAndIds(
-    false,
-    needsCancellationExecutions.map((e) => e.executionId),
-    10,
-  )
-  expect(noCancellationResults).toHaveLength(1)
-  expect(noCancellationResults[0]!.needsPromiseCancellation).toBe(false)
-}
-
-async function testConcurrentUpdates(storage: TaskExecutionsStorage, now: Date) {
-  const concurrentParent = createTaskExecutionStorageValue({
-    now,
-    taskId: 'concurrent-parent',
-    executionId: 'te_concurrent_parent',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ concurrent: 'parent' }),
-  })
-  concurrentParent.status = 'waiting_for_children'
-  concurrentParent.children = []
-  concurrentParent.activeChildrenCount = 10
-  concurrentParent.onChildrenFinishedProcessingStatus = 'idle'
-
-  const concurrentChildren = []
-  for (let i = 0; i < 10; i++) {
-    const child = createTaskExecutionStorageValue({
-      now,
-      root: { taskId: 'concurrent-parent', executionId: 'te_concurrent_parent' },
-      parent: {
-        taskId: 'concurrent-parent',
-        executionId: 'te_concurrent_parent',
-        indexInParentChildTaskExecutions: i,
-        isFinalizeTaskOfParentTask: false,
-      },
-      taskId: `concurrent-child-${i}`,
-      executionId: `te_concurrent_child_${i}`,
-      retryOptions: { maxAttempts: 1 },
-      sleepMsBeforeRun: 0,
-      timeoutMs: 3000,
-      input: JSON.stringify({ concurrent: 'child', index: i }),
-    })
-    concurrentChildren.push(child)
-    concurrentParent.children.push({
-      taskId: `concurrent-child-${i}`,
-      executionId: `te_concurrent_child_${i}`,
-    })
-  }
-
-  await storage.insert([concurrentParent, ...concurrentChildren])
-
-  const updatePromises = concurrentChildren.map((child, index) =>
-    storage.updateById(
-      child.executionId,
-      {},
-      {
-        status: index % 2 === 0 ? 'completed' : 'failed',
-        output: index % 2 === 0 ? JSON.stringify({ result: `child ${index} done` }) : undefined,
-        error:
-          index % 2 === 1
-            ? {
-                errorType: 'generic',
-                message: `Child ${index} failed`,
-                isRetryable: false,
-                isInternal: false,
-              }
-            : undefined,
-        finishedAt: now,
-        decrementParentActiveChildrenCount: true,
-        updatedAt: now,
-      },
-    ),
-  )
-
-  await Promise.all(updatePromises)
-
-  const parentAfterConcurrentUpdates = await storage.getById('te_concurrent_parent', {})
-  expect(parentAfterConcurrentUpdates).toBeDefined()
-  expect(parentAfterConcurrentUpdates!.activeChildrenCount).toBe(0)
-
-  for (let i = 0; i < 10; i++) {
-    const child = await storage.getById(`te_concurrent_child_${i}`, {})
-    expect(child).toBeDefined()
-    if (i % 2 === 0) {
-      expect(child!.status).toBe('completed')
-      expect(child!.output).toBe(JSON.stringify({ result: `child ${i} done` }))
-    } else {
-      expect(child!.status).toBe('failed')
-      expect(child!.error).toBeDefined()
-      expect(child!.error!.message).toBe(`Child ${i} failed`)
-    }
-  }
-
-  const raceConditionExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'race-condition',
-    executionId: 'te_race_condition',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ race: 'condition' }),
-  })
-  await storage.insert([raceConditionExecution])
-
-  const conflictingUpdates = [
-    storage.updateByIdsAndStatuses(['te_race_condition'], ['ready'], {
-      status: 'running',
-      startedAt: now,
-      expiresAt: new Date(now.getTime() + 5000),
-      updatedAt: now,
-    }),
-    storage.updateByIdsAndStatuses(['te_race_condition'], ['ready'], {
-      status: 'cancelled',
-      finishedAt: now,
-      updatedAt: now,
-    }),
+  const executions = [
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
   ]
 
-  await Promise.all(conflictingUpdates)
+  executions[0]!.onChildrenFinishedProcessingStatus = 'processing'
+  executions[0]!.onChildrenFinishedProcessingExpiresAt = past
+  executions[1]!.onChildrenFinishedProcessingStatus = 'processing'
+  executions[1]!.onChildrenFinishedProcessingExpiresAt = future
+  executions[2]!.onChildrenFinishedProcessingStatus = 'processing'
+  executions[2]!.onChildrenFinishedProcessingExpiresAt = now
+  executions[3]!.onChildrenFinishedProcessingStatus = 'processed'
+  executions[3]!.updatedAt = new Date(past.getTime() - 10_000)
 
-  const raceConditionResult = await storage.getById('te_race_condition', {})
-  expect(raceConditionResult).toBeDefined()
-  expect(['running', 'cancelled', 'ready']).toContain(raceConditionResult!.status)
-}
+  await storage.insertMany(executions)
 
-async function testErrorHandlingAndEdgeCases(storage: TaskExecutionsStorage, now: Date) {
-  const errorTypes = [
-    {
-      errorType: 'generic' as const,
-      message: 'Generic error',
-      isRetryable: false,
-      isInternal: false,
-    },
-    {
-      errorType: 'timed_out' as const,
-      message: 'Timeout error',
-      isRetryable: true,
-      isInternal: false,
-    },
-    {
-      errorType: 'not_found' as const,
-      message: 'Not found error',
-      isRetryable: false,
-      isInternal: false,
-    },
-    {
-      errorType: 'cancelled' as const,
-      message: 'Cancelled error',
-      isRetryable: false,
-      isInternal: false,
-    },
-    {
-      errorType: 'generic' as const,
-      message: 'Internal error',
-      isRetryable: false,
-      isInternal: true,
-    },
-  ]
-
-  for (const [index, errorType] of errorTypes.entries()) {
-    const execution = createTaskExecutionStorageValue({
+  now = new Date(Date.now() + 1000)
+  const updatedExecutions =
+    await storage.updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
       now,
-      taskId: `error-type-${index}`,
-      executionId: `te_error_type_${index}`,
-      retryOptions: { maxAttempts: 1 },
-      sleepMsBeforeRun: 0,
-      timeoutMs: 5000,
-      input: JSON.stringify({ errorType: errorType.errorType }),
-    })
-    await storage.insert([execution])
-
-    await storage.updateById(
-      `te_error_type_${index}`,
-      {},
       {
-        status: 'failed',
-        error: errorType,
-        finishedAt: now,
+        onChildrenFinishedProcessingStatus: 'processed',
+        unsetOnChildrenFinishedProcessingExpiresAt: true,
         updatedAt: now,
       },
+      2,
     )
 
-    const errorExecution = await storage.getById(`te_error_type_${index}`, {})
-    expect(errorExecution).toBeDefined()
-    expect(errorExecution!.status).toBe('failed')
-    expect(errorExecution!.error).toBeDefined()
-    expect(errorExecution!.error!.errorType).toBe(errorType.errorType)
-    expect(errorExecution!.error!.message).toBe(errorType.message)
-    expect(errorExecution!.error!.isRetryable).toBe(errorType.isRetryable)
-    expect(errorExecution!.error!.isInternal).toBe(errorType.isInternal)
-  }
+  expect(updatedExecutions).toHaveLength(2)
+  expect(updatedExecutions[0]!.executionId).toBe(executions[0]!.executionId)
+  expect(updatedExecutions[1]!.executionId).toBe(executions[2]!.executionId)
+  expect(updatedExecutions[0]!.onChildrenFinishedProcessingStatus).toBe('processed')
+  expect(updatedExecutions[1]!.onChildrenFinishedProcessingStatus).toBe('processed')
 
-  const nullExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'null-test',
-    executionId: 'te_null',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify(null),
-  })
-  await storage.insert([nullExecution])
+  const updatedExecution1 = await storage.getById(executions[0]!.executionId, {})
+  const updatedExecution2 = await storage.getById(executions[2]!.executionId, {})
+  expect(updatedExecution1?.onChildrenFinishedProcessingStatus).toBe('processed')
+  expect(updatedExecution2?.onChildrenFinishedProcessingStatus).toBe('processed')
+  expect(updatedExecution1?.onChildrenFinishedProcessingExpiresAt).toBeUndefined()
+  expect(updatedExecution2?.onChildrenFinishedProcessingExpiresAt).toBeUndefined()
 
-  await storage.updateById(
-    'te_null',
-    {},
-    {
-      status: 'completed',
-      output: JSON.stringify(null),
-      finishedAt: now,
-      updatedAt: now,
-    },
-  )
-
-  const nullResultExecution = await storage.getById('te_null', {})
-  expect(nullResultExecution).toBeDefined()
-  expect(nullResultExecution!.status).toBe('completed')
-  expect(nullResultExecution!.output).toBe(JSON.stringify(null))
-
-  const largeExecution = createTaskExecutionStorageValue({
-    now,
-    taskId: 'large-data',
-    executionId: 'te_large',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ data: 'x'.repeat(10_000) }),
-  })
-  await storage.insert([largeExecution])
-
-  await storage.updateById(
-    'te_large',
-    {},
-    {
-      status: 'completed',
-      output: JSON.stringify({ result: 'y'.repeat(10_000) }),
-      finishedAt: now,
-      updatedAt: now,
-    },
-  )
-
-  const largeResultExecution = await storage.getById('te_large', {})
-  expect(largeResultExecution).toBeDefined()
-  expect(largeResultExecution!.status).toBe('completed')
-  expect(largeResultExecution!.output).toContain('y'.repeat(100))
-
-  await storage.updateById(
-    'te_nonexistent_update',
-    {},
-    {
-      status: 'completed',
-      updatedAt: now,
-    },
-  )
-
-  const emptyFilterResult = await storage.getByIds(['te_nonexistent_1', 'te_nonexistent_2'])
-  expect(emptyFilterResult).toHaveLength(2)
-  expect(emptyFilterResult[0]).toBeUndefined()
-  expect(emptyFilterResult[1]).toBeUndefined()
+  const nonUpdatedExecution1 = await storage.getById(executions[1]!.executionId, {})
+  const nonUpdatedExecution2 = await storage.getById(executions[3]!.executionId, {})
+  expect(nonUpdatedExecution1?.onChildrenFinishedProcessingStatus).toBe('processing')
+  expect(nonUpdatedExecution2?.onChildrenFinishedProcessingStatus).toBe('processed')
+  expectDateApproximatelyEqual(nonUpdatedExecution1!.onChildrenFinishedProcessingExpiresAt!, future)
+  expect(nonUpdatedExecution2?.updatedAt.getTime()).toBeLessThan(now.getTime())
 }
 
-async function testOnChildrenFinishedProcessing(storage: TaskExecutionsStorage, now: Date) {
-  const processingParent = createTaskExecutionStorageValue({
-    now,
-    taskId: 'processing-parent',
-    executionId: 'te_processing_parent',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 5000,
-    input: JSON.stringify({ processing: 'parent' }),
-  })
-  processingParent.status = 'waiting_for_children'
-  processingParent.children = [{ taskId: 'processing-child', executionId: 'te_processing_child' }]
-  processingParent.activeChildrenCount = 1
-  processingParent.onChildrenFinishedProcessingStatus = 'idle'
+async function testUpdateByCloseExpiresAtLessThanAndReturn(storage: TaskExecutionsStorage) {
+  let now = new Date()
+  const past = new Date(now.getTime() - 5000)
+  const future = new Date(now.getTime() + 5000)
 
-  const processingChild = createTaskExecutionStorageValue({
+  const executions = [
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+  ]
+
+  executions[0]!.closeStatus = 'closing'
+  executions[0]!.closeExpiresAt = past
+  executions[1]!.closeStatus = 'closing'
+  executions[1]!.closeExpiresAt = future
+  executions[2]!.closeStatus = 'closing'
+  executions[2]!.closeExpiresAt = now
+  executions[3]!.closeStatus = 'ready'
+  executions[3]!.updatedAt = new Date(past.getTime() - 10_000)
+
+  await storage.insertMany(executions)
+
+  now = new Date(Date.now() + 1000)
+  const updatedExecutions = await storage.updateByCloseExpiresAtLessThanAndReturn(
     now,
-    root: { taskId: 'processing-parent', executionId: 'te_processing_parent' },
+    {
+      closeStatus: 'closed',
+      unsetCloseExpiresAt: true,
+      updatedAt: now,
+    },
+    2,
+  )
+
+  expect(updatedExecutions).toHaveLength(2)
+  expect(updatedExecutions[0]!.executionId).toBe(executions[0]!.executionId)
+  expect(updatedExecutions[1]!.executionId).toBe(executions[2]!.executionId)
+  expect(updatedExecutions[0]!.closeStatus).toBe('closed')
+  expect(updatedExecutions[1]!.closeStatus).toBe('closed')
+  expect(updatedExecutions[0]!.closeExpiresAt).toBeUndefined()
+  expect(updatedExecutions[1]!.closeExpiresAt).toBeUndefined()
+
+  const updatedExecution1 = await storage.getById(executions[0]!.executionId, {})
+  const updatedExecution2 = await storage.getById(executions[2]!.executionId, {})
+  expect(updatedExecution1?.closeStatus).toBe('closed')
+  expect(updatedExecution2?.closeStatus).toBe('closed')
+  expect(updatedExecution1?.closeExpiresAt).toBeUndefined()
+  expect(updatedExecution2?.closeExpiresAt).toBeUndefined()
+
+  const nonUpdatedExecution1 = await storage.getById(executions[1]!.executionId, {})
+  const nonUpdatedExecution2 = await storage.getById(executions[3]!.executionId, {})
+  expect(nonUpdatedExecution1?.closeStatus).toBe('closing')
+  expect(nonUpdatedExecution2?.closeStatus).toBe('ready')
+  expectDateApproximatelyEqual(nonUpdatedExecution1!.closeExpiresAt!, future)
+  expect(nonUpdatedExecution2?.updatedAt.getTime()).toBeLessThan(now.getTime())
+}
+
+async function testUpdateByExecutorIdAndNeedsPromiseCancellationAndReturn(
+  storage: TaskExecutionsStorage,
+) {
+  let now = new Date()
+  const past = new Date(now.getTime() - 1000)
+  const future = new Date(now.getTime() + 1000)
+
+  const executions = [
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+    createTaskExecutionStorageValue(),
+  ]
+
+  executions[0]!.executorId = 'executor1'
+  executions[0]!.needsPromiseCancellation = true
+  executions[0]!.updatedAt = past
+  executions[1]!.executorId = 'executor2'
+  executions[1]!.needsPromiseCancellation = true
+  executions[1]!.updatedAt = past
+  executions[2]!.executorId = 'executor1'
+  executions[2]!.needsPromiseCancellation = true
+  executions[2]!.updatedAt = future
+  executions[3]!.executorId = 'executor1'
+  executions[3]!.needsPromiseCancellation = true
+  executions[3]!.updatedAt = now
+  executions[4]!.executorId = 'executor1'
+  executions[4]!.needsPromiseCancellation = false
+  executions[4]!.updatedAt = past
+
+  await storage.insertMany(executions)
+
+  now = new Date()
+  const updatedExecutions = await storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
+    'executor1',
+    true,
+    {
+      needsPromiseCancellation: false,
+      updatedAt: now,
+    },
+    2,
+  )
+
+  expect(updatedExecutions).toHaveLength(2)
+  expect(updatedExecutions[0]!.executionId).toBe(executions[0]!.executionId)
+  expect(updatedExecutions[1]!.executionId).toBe(executions[3]!.executionId)
+  expect(updatedExecutions[0]!.needsPromiseCancellation).toBe(false)
+  expect(updatedExecutions[1]!.needsPromiseCancellation).toBe(false)
+
+  const updatedExecution1 = await storage.getById(executions[0]!.executionId, {})
+  const updatedExecution2 = await storage.getById(executions[3]!.executionId, {})
+  expect(updatedExecution1?.needsPromiseCancellation).toBe(false)
+  expect(updatedExecution2?.needsPromiseCancellation).toBe(false)
+
+  const nonUpdatedExecution1 = await storage.getById(executions[1]!.executionId, {})
+  const nonUpdatedExecution2 = await storage.getById(executions[2]!.executionId, {})
+  const nonUpdatedExecution3 = await storage.getById(executions[4]!.executionId, {})
+  expect(nonUpdatedExecution1?.needsPromiseCancellation).toBe(true)
+  expect(nonUpdatedExecution2?.needsPromiseCancellation).toBe(true)
+  expect(nonUpdatedExecution3?.needsPromiseCancellation).toBe(false)
+}
+
+async function testGetByParentExecutionId(storage: TaskExecutionsStorage) {
+  const parentExecution = createTaskExecutionStorageValue()
+  const childrenExecutions = [
+    createTaskExecutionStorageValue({
+      parent: {
+        taskId: parentExecution.taskId,
+        executionId: parentExecution.executionId,
+        indexInParentChildTaskExecutions: 0,
+        isFinalizeTaskOfParentTask: false,
+      },
+    }),
+    createTaskExecutionStorageValue({
+      parent: {
+        taskId: parentExecution.taskId,
+        executionId: parentExecution.executionId,
+        indexInParentChildTaskExecutions: 1,
+        isFinalizeTaskOfParentTask: false,
+      },
+    }),
+    createTaskExecutionStorageValue({
+      parent: {
+        taskId: parentExecution.taskId,
+        executionId: parentExecution.executionId,
+        indexInParentChildTaskExecutions: -1,
+        isFinalizeTaskOfParentTask: true,
+      },
+    }),
+  ]
+  const unrelatedExecution1 = createTaskExecutionStorageValue()
+  const unrelatedExecution2 = createTaskExecutionStorageValue({
     parent: {
-      taskId: 'processing-parent',
-      executionId: 'te_processing_parent',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
-    },
-    taskId: 'processing-child',
-    executionId: 'te_processing_child',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ processing: 'child' }),
-  })
-
-  await storage.insert([processingParent, processingChild])
-
-  await storage.updateById(
-    'te_processing_child',
-    {},
-    {
-      status: 'completed',
-      output: JSON.stringify({ result: 'child done' }),
-      finishedAt: now,
-      decrementParentActiveChildrenCount: true,
-      updatedAt: now,
-    },
-  )
-
-  const parentAfterChildComplete = await storage.getById('te_processing_parent', {})
-  expect(parentAfterChildComplete).toBeDefined()
-  expect(parentAfterChildComplete!.activeChildrenCount).toBe(0)
-
-  await storage.updateById(
-    'te_processing_parent',
-    {},
-    {
-      onChildrenFinishedProcessingStatus: 'processing',
-      onChildrenFinishedProcessingExpiresAt: new Date(now.getTime() + 5000),
-      updatedAt: now,
-    },
-  )
-
-  const parentProcessing = await storage.getById('te_processing_parent', {})
-  expect(parentProcessing).toBeDefined()
-  expect(parentProcessing!.onChildrenFinishedProcessingStatus).toBe('processing')
-  expectDateApproximatelyEqual(
-    parentProcessing!.onChildrenFinishedProcessingExpiresAt!,
-    new Date(now.getTime() + 5000),
-  )
-
-  await storage.updateById(
-    'te_processing_parent',
-    {},
-    {
-      onChildrenFinishedProcessingStatus: 'processed',
-      onChildrenFinishedProcessingFinishedAt: now,
-      unsetOnChildrenFinishedProcessingExpiresAt: true,
-      updatedAt: now,
-    },
-  )
-
-  const parentProcessed = await storage.getById('te_processing_parent', {})
-  expect(parentProcessed).toBeDefined()
-  expect(parentProcessed!.onChildrenFinishedProcessingStatus).toBe('processed')
-  expectDateApproximatelyEqual(parentProcessed!.onChildrenFinishedProcessingFinishedAt!, now)
-  expect(parentProcessed!.onChildrenFinishedProcessingExpiresAt).toBeUndefined()
-
-  await storage.updateById(
-    'te_processing_parent',
-    {},
-    {
-      status: 'waiting_for_finalize',
-      finalize: { taskId: 'processing-finalize', executionId: 'te_processing_finalize' },
-      updatedAt: now,
-    },
-  )
-
-  const parentWaitingForFinalize = await storage.getById('te_processing_parent', {})
-  expect(parentWaitingForFinalize).toBeDefined()
-  expect(parentWaitingForFinalize!.status).toBe('waiting_for_finalize')
-  expect(parentWaitingForFinalize!.finalize).toBeDefined()
-  expect(parentWaitingForFinalize!.finalize!.taskId).toBe('processing-finalize')
-
-  const processingFinalizeTask = createTaskExecutionStorageValue({
-    now,
-    root: { taskId: 'processing-parent', executionId: 'te_processing_parent' },
-    parent: {
-      taskId: 'processing-parent',
-      executionId: 'te_processing_parent',
+      taskId: unrelatedExecution1.taskId,
+      executionId: unrelatedExecution1.executionId,
       indexInParentChildTaskExecutions: 0,
       isFinalizeTaskOfParentTask: true,
     },
-    taskId: 'processing-finalize',
-    executionId: 'te_processing_finalize',
-    retryOptions: { maxAttempts: 1 },
-    sleepMsBeforeRun: 0,
-    timeoutMs: 3000,
-    input: JSON.stringify({ finalize: true }),
   })
 
-  await storage.insert([processingFinalizeTask])
+  await storage.insertMany([
+    parentExecution,
+    ...childrenExecutions,
+    unrelatedExecution1,
+    unrelatedExecution2,
+  ])
 
-  await storage.updateById(
-    'te_processing_finalize',
-    {},
-    {
-      status: 'completed',
-      output: JSON.stringify({ finalized: true }),
-      finishedAt: now,
-      updatedAt: now,
-    },
+  const foundChildrenExecutions = await storage.getByParentExecutionId(parentExecution.executionId)
+  expect(foundChildrenExecutions).toHaveLength(3)
+
+  const childrenTaskIds = childrenExecutions.map((c) => c.taskId).sort()
+  const foundChildrenTaskIds = foundChildrenExecutions.map((c) => c.taskId).sort()
+  expect(foundChildrenTaskIds).toEqual(childrenTaskIds)
+
+  const childrenExecutionIds = childrenExecutions.map((c) => c.executionId).sort()
+  const foundChildrenExecutionIds = foundChildrenExecutions.map((c) => c.executionId).sort()
+  expect(foundChildrenExecutionIds).toEqual(childrenExecutionIds)
+
+  for (const child of foundChildrenExecutions) {
+    expect(child.parent).toBeDefined()
+    assert(child.parent)
+    expect(child.parent.executionId).toBe(parentExecution.executionId)
+    expect(child.parent.taskId).toBe(parentExecution.taskId)
+  }
+
+  const nonFoundChildrenExecutions = await storage.getByParentExecutionId('non-existent-id')
+  expect(nonFoundChildrenExecutions).toHaveLength(0)
+
+  const emptyChildrenExecutions = await storage.getByParentExecutionId(
+    unrelatedExecution2.executionId,
   )
-
-  await storage.updateById(
-    'te_processing_parent',
-    {},
-    {
-      status: 'completed',
-      output: JSON.stringify({ parent: 'completed' }),
-      finishedAt: now,
-      updatedAt: now,
-    },
-  )
-
-  const parentCompleted = await storage.getById('te_processing_parent', {})
-  expect(parentCompleted).toBeDefined()
-  expect(parentCompleted!.status).toBe('completed')
-  expect(parentCompleted!.output).toBe(JSON.stringify({ parent: 'completed' }))
+  expect(emptyChildrenExecutions).toHaveLength(0)
 }
 
-export function createTaskExecutionStorageValue({
+async function testUpdateByParentExecutionIdAndIsFinished(storage: TaskExecutionsStorage) {
+  const parentExecution = createTaskExecutionStorageValue()
+  const childrenExecutions = [
+    createTaskExecutionStorageValue({
+      parent: {
+        taskId: parentExecution.taskId,
+        executionId: parentExecution.executionId,
+        indexInParentChildTaskExecutions: 0,
+        isFinalizeTaskOfParentTask: false,
+      },
+    }),
+    createTaskExecutionStorageValue({
+      parent: {
+        taskId: parentExecution.taskId,
+        executionId: parentExecution.executionId,
+        indexInParentChildTaskExecutions: 1,
+        isFinalizeTaskOfParentTask: false,
+      },
+    }),
+    createTaskExecutionStorageValue({
+      parent: {
+        taskId: parentExecution.taskId,
+        executionId: parentExecution.executionId,
+        indexInParentChildTaskExecutions: 1,
+        isFinalizeTaskOfParentTask: false,
+      },
+    }),
+  ]
+
+  childrenExecutions[0]!.status = 'ready'
+  childrenExecutions[0]!.isFinished = false
+  childrenExecutions[1]!.status = 'completed'
+  childrenExecutions[1]!.isFinished = true
+  childrenExecutions[2]!.status = 'running'
+  childrenExecutions[2]!.isFinished = false
+
+  await storage.insertMany([parentExecution, ...childrenExecutions])
+
+  let now = new Date()
+  await storage.updateByParentExecutionIdAndIsFinished(parentExecution.executionId, false, {
+    status: 'cancelled',
+    isFinished: true,
+    error: {
+      message: 'Parent task cancelled',
+      errorType: 'cancelled',
+      isRetryable: false,
+      isInternal: false,
+    },
+    finishedAt: now,
+    updatedAt: now,
+  })
+
+  let childExecution1 = await storage.getById(childrenExecutions[0]!.executionId, {})
+  let childExecution2 = await storage.getById(childrenExecutions[1]!.executionId, {})
+  let childExecution3 = await storage.getById(childrenExecutions[2]!.executionId, {})
+
+  expect(childExecution1?.status).toBe('cancelled')
+  expect(childExecution1?.isFinished).toBe(true)
+  expect(childExecution1?.error).toBeDefined()
+  assert(childExecution1?.error)
+  expect(childExecution1?.error.message).toBe('Parent task cancelled')
+
+  expect(childExecution2?.status).toBe('completed')
+  expect(childExecution2?.isFinished).toBe(true)
+
+  expect(childExecution3?.status).toBe('cancelled')
+  expect(childExecution3?.isFinished).toBe(true)
+  expect(childExecution3?.error).toBeDefined()
+  assert(childExecution3?.error)
+  expect(childExecution3?.error.message).toBe('Parent task cancelled')
+
+  const newChildTaskExecution = createTaskExecutionStorageValue({
+    parent: {
+      taskId: parentExecution.taskId,
+      executionId: parentExecution.executionId,
+      indexInParentChildTaskExecutions: 2,
+      isFinalizeTaskOfParentTask: false,
+    },
+  })
+
+  newChildTaskExecution.status = 'running'
+  newChildTaskExecution.isFinished = false
+
+  await storage.insertMany([newChildTaskExecution])
+
+  now = new Date()
+  await storage.updateByParentExecutionIdAndIsFinished(parentExecution.executionId, true, {
+    closeStatus: 'ready',
+    updatedAt: now,
+  })
+
+  childExecution1 = await storage.getById(childrenExecutions[0]!.executionId, {})
+  childExecution2 = await storage.getById(childrenExecutions[1]!.executionId, {})
+  childExecution3 = await storage.getById(childrenExecutions[2]!.executionId, {})
+  const childTaskExecution4 = await storage.getById(newChildTaskExecution.executionId, {})
+
+  expect(childExecution1?.closeStatus).toBe('ready')
+  expect(childExecution2?.closeStatus).toBe('ready')
+  expect(childExecution3?.closeStatus).toBe('ready')
+  expect(childTaskExecution4?.closeStatus).toBe('idle')
+}
+
+async function testUpdateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
+  storage: TaskExecutionsStorage,
+) {
+  let now = new Date()
+  const past = new Date(now.getTime() - 1000)
+  const future = new Date(now.getTime() + 1000)
+
+  const parent1 = createTaskExecutionStorageValue()
+  parent1.status = 'waiting_for_children'
+  parent1.activeChildrenCount = 3
+
+  const parent2 = createTaskExecutionStorageValue()
+  parent2.status = 'waiting_for_children'
+  parent2.activeChildrenCount = 2
+
+  const childrenExecutions = [
+    createTaskExecutionStorageValue({
+      parent: {
+        taskId: parent1.taskId,
+        executionId: parent1.executionId,
+        indexInParentChildTaskExecutions: 0,
+        isFinalizeTaskOfParentTask: false,
+      },
+    }),
+    createTaskExecutionStorageValue({
+      parent: {
+        taskId: parent1.taskId,
+        executionId: parent1.executionId,
+        indexInParentChildTaskExecutions: 1,
+        isFinalizeTaskOfParentTask: false,
+      },
+    }),
+    createTaskExecutionStorageValue({
+      parent: {
+        taskId: parent2.taskId,
+        executionId: parent2.executionId,
+        indexInParentChildTaskExecutions: 0,
+        isFinalizeTaskOfParentTask: false,
+      },
+    }),
+    createTaskExecutionStorageValue({
+      parent: {
+        taskId: parent2.taskId,
+        executionId: parent2.executionId,
+        indexInParentChildTaskExecutions: 1,
+        isFinalizeTaskOfParentTask: false,
+      },
+    }),
+  ]
+
+  childrenExecutions[0]!.status = 'completed'
+  childrenExecutions[0]!.isFinished = true
+  childrenExecutions[0]!.updatedAt = past
+  childrenExecutions[1]!.status = 'waiting_for_children'
+  childrenExecutions[1]!.isFinished = false
+  childrenExecutions[1]!.updatedAt = past
+  childrenExecutions[2]!.status = 'completed'
+  childrenExecutions[2]!.isFinished = true
+  childrenExecutions[2]!.updatedAt = future
+  childrenExecutions[3]!.status = 'failed'
+  childrenExecutions[3]!.isFinished = true
+  childrenExecutions[3]!.updatedAt = now
+
+  await storage.insertMany([parent1, parent2, ...childrenExecutions])
+
+  now = new Date()
+  let updatedCount =
+    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
+      true,
+      'idle',
+      {
+        closeStatus: 'ready',
+        updatedAt: now,
+      },
+      2,
+    )
+
+  expect(updatedCount).toBe(2)
+
+  const updatedChildExecution1 = await storage.getById(childrenExecutions[0]!.executionId, {})
+  const updatedChildExecution2 = await storage.getById(childrenExecutions[3]!.executionId, {})
+  expect(updatedChildExecution1?.closeStatus).toBe('ready')
+  expect(updatedChildExecution2?.closeStatus).toBe('ready')
+
+  const updatedParentExecution1 = await storage.getById(parent1.executionId, {})
+  const updatedParentExecution2 = await storage.getById(parent2.executionId, {})
+  expect(updatedParentExecution1?.activeChildrenCount).toBe(2)
+  expect(updatedParentExecution2?.activeChildrenCount).toBe(1)
+
+  const nonUpdatedChildExecution1 = await storage.getById(childrenExecutions[1]!.executionId, {})
+  const nonUpdatedChildExecution2 = await storage.getById(childrenExecutions[2]!.executionId, {})
+  expect(nonUpdatedChildExecution1?.closeStatus).toBe('idle')
+  expect(nonUpdatedChildExecution2?.closeStatus).toBe('idle')
+
+  now = new Date()
+  updatedCount =
+    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
+      true,
+      'idle',
+      {
+        closeStatus: 'ready',
+        updatedAt: now,
+      },
+      10,
+    )
+
+  expect(updatedCount).toBe(1)
+
+  const updatedChildExecution3 = await storage.getById(childrenExecutions[2]!.executionId, {})
+  expect(updatedChildExecution3?.closeStatus).toBe('ready')
+
+  const finalParentExecution1 = await storage.getById(parent1.executionId, {})
+  const finalParentExecution2 = await storage.getById(parent2.executionId, {})
+  expect(finalParentExecution1?.activeChildrenCount).toBe(2)
+  expect(finalParentExecution2?.activeChildrenCount).toBe(0)
+
+  now = new Date()
+  updatedCount =
+    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
+      true,
+      'idle',
+      { updatedAt: new Date() },
+      10,
+    )
+  expect(updatedCount).toBe(0)
+}
+
+function createTaskExecutionStorageValue({
   now,
   root,
   parent,
   taskId,
   executionId,
+  isSleepingTask,
+  sleepingTaskUniqueId,
   retryOptions,
   sleepMsBeforeRun,
   timeoutMs,
   input,
 }: {
-  now: Date
-  root?: {
-    taskId: string
-    executionId: string
-  }
-  parent?: {
-    taskId: string
-    executionId: string
-    indexInParentChildTaskExecutions: number
-    isFinalizeTaskOfParentTask: boolean
-  }
-  taskId: string
-  executionId: string
-  retryOptions: TaskRetryOptions
-  sleepMsBeforeRun: number
-  timeoutMs: number
-  input: string
-}): TaskExecutionStorageValue {
+  now?: Date
+  root?: TaskExecutionSummary
+  parent?: ParentTaskExecutionSummary
+  taskId?: string
+  executionId?: string
+  isSleepingTask?: boolean
+  sleepingTaskUniqueId?: string
+  retryOptions?: TaskRetryOptions
+  sleepMsBeforeRun?: number
+  timeoutMs?: number
+  input?: string
+} = {}): TaskExecutionStorageValue {
+  now = now ?? new Date()
+  taskId = taskId ?? generateTaskId()
+  executionId = executionId ?? generateTaskExecutionId()
+  isSleepingTask = isSleepingTask ?? false
+  retryOptions = retryOptions ?? { maxAttempts: 0 }
+  sleepMsBeforeRun = sleepMsBeforeRun ?? 0
+  timeoutMs = timeoutMs ?? 1000
+  input = input ?? ''
   return {
     root,
     parent,
     taskId,
     executionId,
+    isSleepingTask,
+    sleepingTaskUniqueId: isSleepingTask ? (sleepingTaskUniqueId ?? '') : undefined,
     retryOptions,
     sleepMsBeforeRun,
     timeoutMs,
     input,
-    status: 'ready',
+    status: isSleepingTask ? 'running' : 'ready',
+    isFinished: false,
     retryAttempts: 0,
     startAt: new Date(now.getTime() + sleepMsBeforeRun),
     activeChildrenCount: 0,
@@ -2090,6 +1888,256 @@ function expectDateApproximatelyEqual(date1: Date, date2: Date) {
   expect(Math.abs(date1.getTime() - date2.getTime())).toBeLessThanOrEqual(1000)
 }
 
+const STORAGE_BENCH_EXECUTOR_COUNT = 3
+
+/**
+ * Runs a benchmark suite to measure the performance of a TaskExecutionsStorage implementation.
+ *
+ * @example
+ * ```ts
+ * import { InMemoryTaskExecutionsStorage } from 'durable-execution'
+ * import { runStorageBench } from 'durable-execution-storage-test-utils'
+ *
+ * const storage = new InMemoryTaskExecutionsStorage()
+ * await runStorageBench("in memory", storage)
+ * ```
+ *
+ * @example
+ * ```ts
+ * // With cleanup for database storage
+ * const storage = new CustomTaskExecutionsStorage({ url: process.env.DATABASE_URL! })
+ * await runStorageBench("custom", storage, async () => {
+ *   await db.delete(taskExecutions)
+ * })
+ * ```
+ *
+ * @param name - Name of the storage implementation to test
+ * @param storage - A TaskExecutionsStorage implementation to test
+ * @param cleanup - Optional cleanup function to run after tests complete (e.g., to remove test
+ *   database)
+ */
+export async function runStorageBench(
+  name: string,
+  storage: TaskExecutionsStorage,
+  cleanup?: () => void | Promise<void>,
+) {
+  console.log('\n========================================')
+  console.log(`Running benchmark for ${name} storage\n`)
+
+  let activeExecutors: Array<DurableExecutor> = []
+  let isShuttingDown = false
+
+  const gracefulShutdown = (signal: string) => {
+    if (isShuttingDown) {
+      return
+    }
+
+    isShuttingDown = true
+    console.log(`\n=> Received ${signal}, shutting down gracefully...`)
+    const shutdownAsync = async () => {
+      try {
+        if (activeExecutors.length > 0) {
+          console.log(`=> Shutting down ${activeExecutors.length} executor(s)...`)
+          const shutdownPromises = activeExecutors.map((executor) => executor.shutdown())
+          await Promise.all(shutdownPromises)
+          console.log('=> Executors shut down successfully')
+        }
+
+        if (cleanup) {
+          console.log('=> Running cleanup...')
+          await cleanup()
+          console.log('=> Cleanup completed')
+        }
+      } catch (error) {
+        console.error('=> Error during graceful shutdown', error)
+      }
+
+      // eslint-disable-next-line unicorn/no-process-exit
+      process.exit(0)
+    }
+
+    void shutdownAsync()
+  }
+
+  process.on('SIGINT', () => {
+    gracefulShutdown('SIGINT')
+  })
+  process.on('SIGTERM', () => {
+    gracefulShutdown('SIGTERM')
+  })
+
+  try {
+    const durations: Array<number> = []
+    for (let i = 0; i < 4; i++) {
+      if (isShuttingDown) {
+        break
+      }
+
+      const executors = Array.from(
+        { length: STORAGE_BENCH_EXECUTOR_COUNT },
+        () =>
+          new DurableExecutor(storage, {
+            logLevel: 'error',
+          }),
+      )
+      activeExecutors = executors
+
+      let parentTask: Task<number, string> | undefined
+      for (const executor of executors) {
+        const childTask = executor.task({
+          id: 'child',
+          timeoutMs: 60_000,
+          run: async (
+            ctx,
+            input: {
+              parentIndex: number
+              childIndex: number
+            },
+          ) => {
+            await sleep(1)
+            return `child_output_${input.parentIndex}_${input.childIndex}`
+          },
+        })
+        parentTask = executor.parentTask({
+          id: 'parent',
+          timeoutMs: 60_000,
+          runParent: async (ctx, parentIndex: number) => {
+            await sleep(1)
+            return {
+              output: 'parent_output',
+              children: Array.from({ length: 100 }, (_, index) => ({
+                task: childTask,
+                input: {
+                  parentIndex: parentIndex,
+                  childIndex: index,
+                },
+              })),
+            }
+          },
+          finalize: {
+            id: 'finalize',
+            timeoutMs: 60_000,
+            run: (ctx, { output, children }) => {
+              if (output !== 'parent_output') {
+                throw new Error('Invalid parent output')
+              }
+              if (children.some((child) => child.status !== 'completed')) {
+                const first3Errors = children
+                  .filter((child) => child.status !== 'completed')
+                  .slice(0, 3)
+                  .map((child) => child.error)
+                throw new Error(
+                  `${children.filter((child) => child.status !== 'completed').length}/${children.length} children failed:\n${first3Errors.map((error) => `- ${error?.message}`).join('\n')}`,
+                )
+              }
+              return 'finalize_output'
+            },
+          },
+        })
+      }
+
+      if (!parentTask) {
+        throw new Error('Parent task is not defined')
+      }
+
+      await storage.deleteAll()
+      for (const executor of executors) {
+        executor.startBackgroundProcesses()
+      }
+
+      const iterationName = i === 0 ? 'warmup iteration' : `iteration ${i}`
+      console.log(`=> Running ${iterationName} for ${name} storage`)
+      try {
+        await storage.deleteAll()
+        const startTime = performance.now()
+        await runDurableExecutorBench(executors[0]!, parentTask)
+        const endTime = performance.now()
+        console.log(
+          `=> Completed ${iterationName} for ${name} storage: ${(endTime - startTime).toFixed(2)}ms`,
+        )
+        if (i > 0) {
+          durations.push(endTime - startTime)
+        }
+      } finally {
+        const promises = executors.map((executor) => executor.shutdown())
+        await Promise.all(promises)
+        activeExecutors = []
+      }
+    }
+
+    const mean = durations.reduce((a, b) => a + b, 0) / durations.length
+    const min = Math.min(...durations)
+    const max = Math.max(...durations)
+    const median = durations.sort((a, b) => a - b)[Math.floor(durations.length / 2)]
+    console.log(
+      `\nBenchmark results for ${name} storage:\n    mean: ${mean}ms\n     min: ${min}ms\n     max: ${max}ms\n  median: ${median}ms`,
+    )
+  } catch (error) {
+    console.error(`Error running benchmark for ${name} storage:`, error)
+    throw error
+  } finally {
+    console.log('\n========================================\n')
+
+    process.removeAllListeners('SIGINT')
+    process.removeAllListeners('SIGTERM')
+    if (cleanup) {
+      console.log('=> Running cleanup...')
+      await cleanup()
+      console.log('=> Cleanup completed')
+    }
+  }
+}
+
+async function runDurableExecutorBench(
+  executor: DurableExecutor,
+  parentTask: Task<number, string>,
+) {
+  console.log('=> Enqueuing tasks')
+  const handles = await Promise.all(
+    Array.from({ length: 100 }, async (_, i) => {
+      return await executor.enqueueTask(parentTask, i)
+    }),
+  )
+
+  console.log('=> Waiting for tasks')
+  for (const handle of handles) {
+    const finalExecution = await handle.waitAndGetFinishedExecution()
+    if (finalExecution.status !== 'completed') {
+      console.error(
+        `=> Final execution status is not completed: ${JSON.stringify(finalExecution.error)}`,
+      )
+      throw new Error('Final execution status is not completed')
+    }
+    if (finalExecution.output !== 'finalize_output') {
+      console.error(
+        `=> Final execution output is not finalize_output: ${JSON.stringify(finalExecution)}`,
+      )
+      throw new Error('Final execution output is not finalize_output')
+    }
+  }
+  console.log('=> Completed tasks')
+}
+
+/**
+ * Executes a function with a temporary directory that is automatically cleaned up.
+ *
+ * Creates a temporary directory with a unique name prefixed with '.tmp_' and ensures it's
+ * removed after the function completes, even if an error occurs.
+ *
+ * @example
+ * ```ts
+ * await withTemporaryDirectory(async (tmpDir) => {
+ *   const testFile = path.join(tmpDir, 'test.db')
+ *   // Use the temporary directory...
+ *   await fs.writeFile(testFile, 'test data')
+ * })
+ * // Directory is automatically cleaned up
+ * ```
+ *
+ *
+ * @param fn - Function to execute with the temporary directory path
+ * @throws Re-throws any error from the provided function
+ */
 export async function withTemporaryDirectory(fn: (dirPath: string) => Promise<void>) {
   const dirPath = await fs.mkdtemp('.tmp_')
   try {
@@ -2099,6 +2147,26 @@ export async function withTemporaryDirectory(fn: (dirPath: string) => Promise<vo
   }
 }
 
+/**
+ * Executes a function with a temporary file path that is automatically cleaned up.
+ *
+ * Creates a temporary directory, constructs a file path with the given filename, and ensures the
+ * directory is removed after the function completes. The file itself doesn't need to be created -
+ * this just provides a safe file path.
+ *
+ * @example
+ * ```ts
+ * await withTemporaryFile('test.db', async (filePath) => {
+ *   const storage = new CustomTaskExecutionsStorage(filePath)
+ *   await runStorageTest(storage)
+ * })
+ * // Temporary directory and file are automatically cleaned up
+ * ```
+ *
+ * @param filename - Name of the file within the temporary directory
+ * @param fn - Function to execute with the temporary file path
+ * @throws Re-throws any error from the provided function
+ */
 export async function withTemporaryFile(filename: string, fn: (file: string) => Promise<void>) {
   return withTemporaryDirectory(async (dirPath) => {
     const filePath = path.join(dirPath, filename)
@@ -2106,6 +2174,30 @@ export async function withTemporaryFile(filename: string, fn: (file: string) => 
   })
 }
 
+/**
+ * Cleans up any remaining temporary files and directories created by this library.
+ *
+ * Searches the current working directory for files and directories starting with '.tmp_' and
+ * removes them. This function is safe to call multiple times and ignores any errors during
+ * cleanup.
+ *
+ * Useful for test cleanup hooks or when temporary files weren't properly cleaned up due to
+ * unexpected process termination.
+ *
+ * @example
+ * ```ts
+ * // In a test suite
+ * afterAll(async () => {
+ *   await cleanupTemporaryFiles()
+ * })
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Manual cleanup
+ * await cleanupTemporaryFiles()
+ * ```
+ */
 export async function cleanupTemporaryFiles() {
   const tmpDir = process.cwd()
   try {
@@ -2123,4 +2215,16 @@ export async function cleanupTemporaryFiles() {
   } catch {
     // ignore errors
   }
+}
+
+const _ALPHABET = '0123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstwxyz'
+
+const generateId = customAlphabet(_ALPHABET, 24)
+
+function generateTaskId(): string {
+  return `t_${generateId(24)}`
+}
+
+function generateTaskExecutionId(): string {
+  return `te_${generateId(24)}`
 }

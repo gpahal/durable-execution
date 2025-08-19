@@ -27,10 +27,12 @@ pnpm add durable-execution durable-execution-storage-test-utils
 The main test suite that comprehensively validates storage implementations through complex scenarios.
 
 **Parameters:**
+
 - `storage: TaskExecutionsStorage` - The storage implementation to test
 - `cleanup?: () => void | Promise<void>` - Optional cleanup function called after tests complete
 
 **Features tested:**
+
 - **DurableExecutor integration**: Complex task hierarchies with parent-child relationships
 - **Concurrency**: 250+ concurrent tasks with proper coordination
 - **Retry mechanisms**: Automatic retry logic with configurable options
@@ -41,6 +43,7 @@ The main test suite that comprehensively validates storage implementations throu
 - **Background processing**: Task expiration, closure processes, and cleanup
 
 **Example:**
+
 ```ts
 import { runStorageTest } from 'durable-execution-storage-test-utils'
 import { InMemoryTaskExecutionsStorage } from 'durable-execution'
@@ -52,23 +55,6 @@ describe('My Storage Implementation', () => {
   })
 })
 ```
-
-### `createTaskExecutionStorageValue(options)`
-
-Factory function to create test task execution storage values for manual testing.
-
-**Parameters:**
-- `options.now: Date` - Base timestamp for the execution
-- `options.taskId: string` - Unique task identifier
-- `options.executionId: string` - Unique execution identifier
-- `options.retryOptions: TaskRetryOptions` - Retry configuration
-- `options.sleepMsBeforeRun: number` - Delay before execution
-- `options.timeoutMs: number` - Task timeout in milliseconds
-- `options.input: string` - Serialized input data
-- `options.root?: { taskId: string; executionId: string }` - Root task reference
-- `options.parent?: ParentTaskReference` - Parent task relationship
-
-**Returns:** `TaskExecutionStorageValue` - A complete storage value ready for insertion
 
 ### Temporary Resource Helpers
 
@@ -90,7 +76,7 @@ import { MyDatabaseStorage } from './my-storage'
 describe('MyDatabaseStorage', () => {
   test('validates complete storage behavior', async () => {
     const storage = new MyDatabaseStorage(connectionString)
-    
+
     await runStorageTest(storage, async () => {
       // Cleanup database after tests
       await storage.close()
@@ -100,6 +86,7 @@ describe('MyDatabaseStorage', () => {
 ```
 
 The test suite will automatically verify:
+
 - ✅ Task lifecycle management (ready → running → completed/failed)
 - ✅ Parent-child task relationships and coordination
 - ✅ Retry logic with exponential backoff

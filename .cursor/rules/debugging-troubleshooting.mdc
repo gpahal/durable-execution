@@ -1,0 +1,143 @@
+---
+description: Debugging and troubleshooting guide for durable execution
+---
+
+# Debugging and Troubleshooting
+
+## Common Issues
+
+### Task stuck in 'ready'
+
+- Ensure `executor.startBackgroundProcesses()` was called
+- Verify storage connectivity and credentials
+- Confirm the task was registered on the same `DurableExecutor` before enqueue
+
+### Frequent timeouts
+
+- Compare execution duration with `timeoutMs`
+- Check CPU and memory pressure on workers
+- Split work into smaller tasks or increase `timeoutMs`
+
+### Parent/finalize problems
+
+- Use `storage.getByParentExecutionId(parentExecutionId)` to inspect children
+- Ensure the `finalize` task is registered and reachable
+
+```ts
+async function inspectChildren(storage: TaskExecutionsStorage, parentExecutionId: string) {
+  const children = await storage.getByParentExecutionId(parentExecutionId)
+  return children.map((c) => ({
+    taskId: c.taskId,
+    executionId: c.executionId,
+    status: c.status,
+    error: c.error?.message,
+  }))
+}
+```
+
+## Minimal inspector
+
+```ts
+class TaskInspector {
+  constructor(private readonly storage: TaskExecutionsStorage) {}
+
+  async inspect(executionId: string) {
+    const exec = await this.storage.getById(executionId, {})
+    if (!exec) {
+      console.log('Not found')
+      return
+    }
+
+    const durationMs = exec.startedAt && exec.finishedAt
+      ? exec.finishedAt.getTime() - exec.startedAt.getTime()
+      : undefined
+
+    console.log({
+      taskId: exec.taskId,
+      executionId: exec.executionId,
+      status: exec.status,
+      attempt: exec.retryAttempts,
+      startedAt: exec.startedAt,
+      finishedAt: exec.finishedAt,
+      durationMs,
+      error: exec.error?.message,
+    })
+
+    if (exec.status === 'waiting_for_children' || exec.status === 'waiting_for_finalize') {
+      const children = await this.storage.getByParentExecutionId(executionId)
+      console.log('Children:', children.map((c) => ({ id: c.executionId, status: c.status })))
+    }
+  }
+}
+```
+
+## Executor diagnostics
+
+```ts
+const stats = executor.getExecutorStats()
+console.log('Executor stats:', stats)
+/*
+{
+  expireLeewayMs,
+  backgroundProcessIntraBatchSleepMs,
+  currConcurrentTaskExecutions,
+  maxConcurrentTaskExecutions,
+  maxTaskExecutionsPerBatch,
+  maxChildrenPerTaskExecution,
+  maxSerializedInputDataSize,
+  maxSerializedOutputDataSize,
+  registeredTasksCount,
+  isShutdown,
+}
+*/
+```
+
+## Production monitoring (SQL)
+
+```sql
+-- Queue depth
+SELECT status, COUNT(*) FROM task_executions GROUP BY status;
+
+-- Long-running tasks
+SELECT execution_id, task_id, started_at
+FROM task_executions
+WHERE status = 'running' AND started_at < NOW() - INTERVAL '5 minutes';
+
+-- Expired processing windows
+SELECT execution_id, task_id
+FROM task_executions
+WHERE expires_at IS NOT NULL AND expires_at < NOW();
+```
+
+## Structured logging
+
+```ts
+const logger: Logger = {
+  debug: (m) => console.debug('[DEBUG]', m),
+  info: (m) => console.info('[INFO]', m),
+  error: (m, err) => console.error('[ERROR]', m, err),
+}
+
+const executor = new DurableExecutor(storage, { logger, logLevel: 'debug' })
+```
+
+## Testing strategies
+
+```ts
+it('retries on retryable errors', async () => {
+  let attempts = 0
+  const flaky = executor.task({
+    id: 'flaky',
+    retryOptions: { maxAttempts: 3, baseDelayMs: 100 },
+    timeoutMs: 5000,
+    run: async () => {
+      attempts++
+      if (attempts < 3) throw DurableExecutionError.retryable('temporary')
+      return { attempts }
+    },
+  })
+
+  const result = await (await executor.enqueueTask(flaky)).waitAndGetFinishedExecution()
+  expect(result.status).toBe('completed')
+})
+```

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { sleep } from '@gpahal/std/promises'
 
 import {
+  ChildTask,
   DurableExecutionError,
   DurableExecutor,
   InMemoryTaskExecutionsStorage,
@@ -231,14 +232,8 @@ describe('examples', () => {
         return {
           output: `Hello from parent task, ${input.name}!`,
           children: [
-            {
-              task: taskA,
-              input: { name: input.name },
-            },
-            {
-              task: taskB,
-              input: { name: input.name },
-            },
+            new ChildTask(taskA, { name: input.name }),
+            new ChildTask(taskB, { name: input.name }),
           ],
         }
       },
@@ -291,14 +286,8 @@ describe('examples', () => {
         return {
           output: `Hello from parent task, ${input.name}!`,
           children: [
-            {
-              task: taskA,
-              input: { name: input.name },
-            },
-            {
-              task: taskB,
-              input: { name: input.name },
-            },
+            new ChildTask(taskA, { name: input.name }),
+            new ChildTask(taskB, { name: input.name }),
           ],
         }
       },
@@ -364,15 +353,7 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from parent task, ${input.name}!`,
-          children: [
-            {
-              task: taskA,
-              input: { name: input.name },
-            },
-            {
-              task: taskB,
-            },
-          ],
+          children: [new ChildTask(taskA, { name: input.name }), new ChildTask(taskB)],
         }
       },
       finalize: {
@@ -437,7 +418,7 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from parent task, ${input.name}!`,
-          children: [{ task: taskA, input: { name: input.name } }, { task: taskB }],
+          children: [new ChildTask(taskA, { name: input.name }), new ChildTask(taskB)],
         }
       },
       finalize: {
@@ -520,14 +501,14 @@ describe('examples', () => {
       },
     })
 
-    const task = executor.sequentialTasks(taskA, taskB, taskC)
+    const task = executor.sequentialTasks('seq', taskA, taskB, taskC)
 
     const handle = await executor.enqueueTask(task, { name: 'world' })
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
-    expect(finishedExecution.taskId).toContain('st_')
+    expect(finishedExecution.taskId).toBe('seq')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.taskAOutput).toBe('Hello from task A, world!')
@@ -565,7 +546,7 @@ describe('examples', () => {
         runParent: (ctx, { output }) => {
           return {
             output: output.taskBOutput,
-            children: [{ task: taskC, input: { name: output.name } }],
+            children: [new ChildTask(taskC, { name: output.name })],
           }
         },
         finalize: {
@@ -602,7 +583,7 @@ describe('examples', () => {
         runParent: (ctx, { output }) => {
           return {
             output: output.taskAOutput,
-            children: [{ task: taskB, input: { name: output.name } }],
+            children: [new ChildTask(taskB, { name: output.name })],
           }
         },
         finalize: {
@@ -686,8 +667,8 @@ describe('examples', () => {
             taskAOutput: `Hello from task A, ${input.name}!`,
           },
           children: [
-            { task: taskA1, input: { name: input.name } },
-            { task: taskA2, input: { name: input.name } },
+            new ChildTask(taskA1, { name: input.name }),
+            new ChildTask(taskA2, { name: input.name }),
           ],
         }
       },
@@ -725,8 +706,8 @@ describe('examples', () => {
             taskBOutput: `Hello from task B, ${input.name}!`,
           },
           children: [
-            { task: taskB1, input: { name: input.name } },
-            { task: taskB2, input: { name: input.name } },
+            new ChildTask(taskB1, { name: input.name }),
+            new ChildTask(taskB2, { name: input.name }),
           ],
         }
       },
@@ -749,14 +730,14 @@ describe('examples', () => {
       },
     })
 
-    const task = executor.sequentialTasks(taskA, taskB)
+    const task = executor.sequentialTasks('seq', taskA, taskB)
 
     const handle = await executor.enqueueTask(task, { name: 'world' })
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
-    expect(finishedExecution.taskId).toContain('st_')
+    expect(finishedExecution.taskId).toBe('seq')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.taskAOutput).toBe('Hello from task A, world!')
@@ -805,7 +786,7 @@ describe('examples', () => {
         }
       },
     })
-    const taskB = executor.sequentialTasks(taskB1, taskB2, taskB3)
+    const taskB = executor.sequentialTasks('b', taskB1, taskB2, taskB3)
 
     const taskA1 = executor.task({
       id: 'a1',
@@ -835,9 +816,9 @@ describe('examples', () => {
         return {
           output: `Hello from task A, ${input.name}!`,
           children: [
-            { task: taskA1, input: { name: input.name } },
-            { task: taskA2, input: { name: input.name } },
-            { task: taskA3, input: { name: input.name } },
+            new ChildTask(taskA1, { name: input.name }),
+            new ChildTask(taskA2, { name: input.name }),
+            new ChildTask(taskA3, { name: input.name }),
           ],
         }
       },
@@ -873,8 +854,8 @@ describe('examples', () => {
         return {
           output: `Hello from root task, ${input.name}!`,
           children: [
-            { task: taskA, input: { name: input.name } },
-            { task: taskB, input: { name: input.name } },
+            new ChildTask(taskA, { name: input.name }),
+            new ChildTask(taskB, { name: input.name }),
           ],
         }
       },
@@ -946,7 +927,7 @@ describe('examples', () => {
           return {
             output: undefined,
             children:
-              input.index >= 9 ? [] : [{ task: recursiveTask, input: { index: input.index + 1 } }],
+              input.index >= 9 ? [] : [new ChildTask(recursiveTask, { index: input.index + 1 })],
           }
         },
         finalize: {
@@ -989,7 +970,48 @@ describe('examples', () => {
     let value: number | undefined
     setTimeout(() => {
       value = 10
-    }, 2000)
+    }, 1000)
+
+    const pollTask = executor.task({
+      id: 'poll',
+      sleepMsBeforeRun: 100,
+      timeoutMs: 1000,
+      run: () => {
+        return value == null
+          ? {
+              isDone: false,
+            }
+          : {
+              isDone: true,
+              output: value,
+            }
+      },
+    })
+
+    const pollingTask = executor.pollingTask('polling', pollTask, 20, 100)
+    const handle = await executor.enqueueTask(pollingTask)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBeDefined()
+    expect(finishedExecution.output.isSuccess).toBe(true)
+    assert(finishedExecution.output.isSuccess)
+    expect(finishedExecution.output.output).toBe(10)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete polling task manually', { timeout: 10_000 }, async () => {
+    let value: number | undefined
+    setTimeout(() => {
+      value = 10
+    }, 1000)
 
     const pollingTask: Task<{ prevCount: number }, { count: number; value: number }> = executor
       .inputSchema(z.object({ prevCount: z.number().int().min(0) }))
@@ -1018,7 +1040,7 @@ describe('examples', () => {
             } as
               | { isDone: false; value: undefined; prevCount: number }
               | { isDone: true; value: number; prevCount: number },
-            children: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
+            children: [new ChildTask(pollingTask, { prevCount: input.prevCount + 1 })],
           }
         },
         finalize: {
@@ -1053,13 +1075,71 @@ describe('examples', () => {
     expect(finishedExecution.taskId).toBe('polling')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
-    expect(finishedExecution.output.count).toBeGreaterThanOrEqual(5)
-    expect(finishedExecution.output.count).toBeLessThan(25)
+    expect(finishedExecution.output.count).toBeGreaterThanOrEqual(2)
+    expect(finishedExecution.output.count).toBeLessThan(20)
     expect(finishedExecution.output.value).toBe(10)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
       finishedExecution.startedAt.getTime(),
     )
+  })
+
+  it('should complete parent with child sleeping task', async () => {
+    const waitForWebhookTask = executor.sleepingTask<string>({
+      id: 'wait_for_webhook',
+      timeoutMs: 60 * 60 * 1000, // 1 hour
+    })
+
+    const parentTask = executor.parentTask({
+      id: 'parent',
+      timeoutMs: 1000,
+      runParent: () => {
+        // ... generate entity id and wait for webhook or event to wake up the sleeping task
+        const entityId = 'entity_id'
+        return {
+          output: 'parent_output',
+          children: [new ChildTask(waitForWebhookTask, entityId)],
+        }
+      },
+      finalize: {
+        id: 'finalizeTask',
+        timeoutMs: 1000,
+        run: (ctx, { children }) => {
+          const child = children[0]!
+          if (child.status !== 'completed') {
+            throw new Error(`Webhook task failed: ${child.error.message}`)
+          }
+          return child.output
+        },
+      },
+    })
+
+    const handle = await executor.enqueueTask(parentTask)
+    while (true) {
+      const execution = await handle.getExecution()
+      if (execution.status === 'waiting_for_children') {
+        break
+      }
+      await sleep(100)
+    }
+
+    await sleep(100)
+    const childExecution = await executor.wakeupSleepingTaskExecution(
+      waitForWebhookTask,
+      'entity_id',
+      {
+        status: 'completed',
+        output: 'webhook_output',
+      },
+    )
+    expect(childExecution.status).toBe('completed')
+    assert(childExecution.status === 'completed')
+    expect(childExecution.output).toBe('webhook_output')
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.output).toBe('webhook_output')
   })
 })

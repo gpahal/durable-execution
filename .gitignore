@@ -15,6 +15,7 @@ out-tsc
 # Temporary files
 tmp
 .tmp
+.tmp_*
 .cache
 .eslintcache
 tsconfig.tsbuildinfo

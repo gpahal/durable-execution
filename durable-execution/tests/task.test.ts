@@ -788,7 +788,7 @@ describe('simpleTask', () => {
       },
     })
 
-    const task = executor.sequentialTasks(taskString, taskNumber, taskBoolean)
+    const task = executor.sequentialTasks('seq', taskString, taskNumber, taskBoolean)
 
     let handle = await executor.enqueueTask(task, '10.5')
 
@@ -796,7 +796,7 @@ describe('simpleTask', () => {
     expect(executionCount).toBe(3)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
-    expect(finishedExecution.taskId).toContain('st_')
+    expect(finishedExecution.taskId).toBe('seq')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
@@ -811,7 +811,7 @@ describe('simpleTask', () => {
     expect(executionCount).toBe(6)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
-    expect(finishedExecution.taskId).toContain('st_')
+    expect(finishedExecution.taskId).toBe('seq')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
@@ -886,7 +886,7 @@ describe('simpleTask', () => {
       },
     })
 
-    const sequentialTask = executor.sequentialTasks(task1, task2, task3)
+    const sequentialTask = executor.sequentialTasks('seq', task1, task2, task3)
 
     const handle = await executor.enqueueTask(sequentialTask)
     const finishedExecution = await handle.waitAndGetFinishedExecution()
@@ -906,7 +906,7 @@ describe('simpleTask', () => {
       timeoutMs: 5000,
       run: async () => {
         task1Started = true
-        await sleep(100)
+        await sleep(10)
         return 'task1'
       },
     })
@@ -916,15 +916,15 @@ describe('simpleTask', () => {
       timeoutMs: 5000,
       run: async () => {
         task2Started = true
-        await sleep(1000)
+        await sleep(2500)
         return 'task2'
       },
     })
 
-    const sequentialTask = executor.sequentialTasks(task1, task2)
+    const sequentialTask = executor.sequentialTasks('seq', task1, task2)
 
     const handle = await executor.enqueueTask(sequentialTask)
-    await sleep(500)
+    await sleep(1000)
     await handle.cancel()
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
@@ -951,7 +951,7 @@ describe('simpleTask', () => {
       },
     })
 
-    const sequentialTask = executor.sequentialTasks(task1, task2)
+    const sequentialTask = executor.sequentialTasks('seq', task1, task2)
 
     const handle = await executor.enqueueTask(sequentialTask)
     const finishedExecution = await handle.waitAndGetFinishedExecution()
@@ -963,7 +963,7 @@ describe('simpleTask', () => {
 
   it('should handle empty sequential task array', () => {
     // @ts-expect-error - Testing invalid input
-    expect(() => executor.sequentialTasks()).toThrow()
+    expect(() => executor.sequentialTasks('seq')).toThrow()
   })
 
   it('should complete single sequential task', async () => {
@@ -977,7 +977,7 @@ describe('simpleTask', () => {
       },
     })
 
-    const sequentialTask = executor.sequentialTasks(task1)
+    const sequentialTask = executor.sequentialTasks('seq', task1)
 
     const handle = await executor.enqueueTask(sequentialTask)
     const finishedExecution = await handle.waitAndGetFinishedExecution()
@@ -999,7 +999,7 @@ describe('simpleTask', () => {
       },
     })
 
-    const sequentialTask = executor.sequentialTasks(task1)
+    const sequentialTask = executor.sequentialTasks('seq', task1)
 
     const handle = await executor.enqueueTask(sequentialTask)
     const finishedExecution = await handle.waitAndGetFinishedExecution()
@@ -1008,6 +1008,279 @@ describe('simpleTask', () => {
     assert(finishedExecution.status === 'finalize_failed')
     expect(finishedExecution.error?.message).toContain('Task 1 failed')
     expect(executionCount).toBe(1)
+  })
+
+  it('should complete polling task', async () => {
+    let executionCount = 0
+    const pollTask = executor.task({
+      id: 'poll',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        return executionCount < 3
+          ? {
+              isDone: false,
+            }
+          : {
+              isDone: true,
+              output: 'poll_output',
+            }
+      },
+    })
+
+    const pollingTask = executor.pollingTask('polling', pollTask, 10)
+    const handle = await executor.enqueueTask(pollingTask)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(executionCount).toBe(3)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.output.isSuccess).toBe(true)
+    assert(finishedExecution.output.isSuccess)
+    expect(finishedExecution.output.output).toBe('poll_output')
+  })
+
+  it('should complete polling task with sleepMsBeforeRun number', async () => {
+    let executionCount = 0
+    const pollTask = executor.task({
+      id: 'poll',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        return executionCount < 2
+          ? {
+              isDone: false,
+            }
+          : {
+              isDone: true,
+              output: 'poll_output',
+            }
+      },
+    })
+
+    const pollingTask = executor.pollingTask('polling', pollTask, 10, 5)
+    const handle = await executor.enqueueTask(pollingTask)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(executionCount).toBe(2)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.output.isSuccess).toBe(true)
+    assert(finishedExecution.output.isSuccess)
+    expect(finishedExecution.output.output).toBe('poll_output')
+  })
+
+  it('should complete polling task with sleepMsBeforeRun function', async () => {
+    let executionCount = 0
+    const pollTask = executor.task({
+      id: 'poll',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        return executionCount < 2
+          ? {
+              isDone: false,
+            }
+          : {
+              isDone: true,
+              output: 'poll_output',
+            }
+      },
+    })
+
+    const pollingTask = executor.pollingTask('polling', pollTask, 10, (attempt) => attempt * 1)
+    const handle = await executor.enqueueTask(pollingTask)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(executionCount).toBe(2)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.output.isSuccess).toBe(true)
+    assert(finishedExecution.output.isSuccess)
+    expect(finishedExecution.output.output).toBe('poll_output')
+  })
+
+  it('should fail polling task', async () => {
+    let executionCount = 0
+    const pollTask = executor.task({
+      id: 'poll',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        if (executionCount === 2) {
+          throw new Error('unknown error')
+        }
+
+        return {
+          isDone: false,
+        }
+      },
+    })
+
+    const pollingTask = executor.pollingTask('polling', pollTask, 10)
+    const handle = await executor.enqueueTask(pollingTask)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(executionCount).toBe(2)
+    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.status).toBe('finalize_failed')
+    assert(finishedExecution.status === 'finalize_failed')
+    expect(finishedExecution.error?.message).toBe('Poll task poll failed: unknown error')
+  })
+
+  it('should complete polling task with max attempts exceeded', async () => {
+    let executionCount = 0
+    const pollTask = executor.task({
+      id: 'poll',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        return {
+          isDone: false,
+        }
+      },
+    })
+
+    const pollingTask = executor.pollingTask('polling', pollTask, 2)
+    const handle = await executor.enqueueTask(pollingTask)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(executionCount).toBe(2)
+    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.output.isSuccess).toBe(false)
+    assert(!finishedExecution.output.isSuccess)
+  })
+
+  it('should throw on polling task negative max attempts', () => {
+    const pollTask = executor.task({
+      id: 'poll',
+      timeoutMs: 1000,
+      run: () => {
+        return {
+          isDone: false,
+        }
+      },
+    })
+
+    expect(() => executor.pollingTask('polling', pollTask, -1)).toThrow()
+  })
+
+  it('should complete sleeping task', async () => {
+    const task = executor.sleepingTask<string>({
+      id: 'test',
+      timeoutMs: 1000,
+    })
+
+    const handle = await executor.enqueueTask(task, 'test_unique_id')
+    let execution = await handle.getExecution()
+    expect(execution.status).toBe('running')
+
+    execution = await executor.wakeupSleepingTaskExecution(task, 'test_unique_id', {
+      status: 'completed',
+      output: 'test_output',
+    })
+    expect(execution.status).toBe('completed')
+    assert(execution.status === 'completed')
+    expect(execution.output).toBe('test_output')
+  })
+
+  it('should fail sleeping task', async () => {
+    const task = executor.sleepingTask<string>({
+      id: 'test',
+      timeoutMs: 1000,
+    })
+
+    const handle = await executor.enqueueTask(task, 'test_unique_id')
+    let execution = await handle.getExecution()
+    expect(execution.status).toBe('running')
+
+    execution = await executor.wakeupSleepingTaskExecution(task, 'test_unique_id', {
+      status: 'failed',
+      error: new Error('test_error'),
+    })
+    expect(execution.status).toBe('failed')
+    assert(execution.status === 'failed')
+    expect(execution.error?.message).toBe('test_error')
+  })
+
+  it('should timeout sleeping task', async () => {
+    const task = executor.sleepingTask<string>({
+      id: 'test',
+      timeoutMs: 50,
+    })
+
+    const handle = await executor.enqueueTask(task, 'test_unique_id')
+    const execution = await handle.getExecution()
+    expect(execution.status).toBe('running')
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(finishedExecution.status).toBe('timed_out')
+    assert(finishedExecution.status === 'timed_out')
+    expect(finishedExecution.error?.message).toBe('Task execution timed out')
+  })
+
+  it('should cancel sleeping task', async () => {
+    const task = executor.sleepingTask<string>({
+      id: 'test',
+      timeoutMs: 1000,
+    })
+
+    const handle = await executor.enqueueTask(task, 'test_unique_id')
+    let execution = await handle.getExecution()
+    expect(execution.status).toBe('running')
+
+    await handle.cancel()
+    execution = await executor.wakeupSleepingTaskExecution(task, 'test_unique_id', {
+      status: 'completed',
+      output: 'test_output',
+    })
+    expect(execution.status).toBe('cancelled')
+    assert(execution.status === 'cancelled')
+    expect(execution.error?.message).toBe('Task execution cancelled')
+  })
+
+  it('should fail wakeup sleeping task execution with non-sleeping task', async () => {
+    const task = executor.task({
+      id: 'test',
+      timeoutMs: 1000,
+      run: (ctx, input: string) => {
+        return input
+      },
+    })
+
+    await executor.enqueueTask(task, 'test_unique_id')
+
+    await sleep(250)
+    await expect(
+      // @ts-expect-error - Testing invalid input
+      executor.wakeupSleepingTaskExecution(task, 'test_unique_id', {
+        status: 'failed',
+        error: new Error('test_error'),
+      }),
+    ).rejects.toThrow()
+  })
+
+  it('should fail wakeup sleeping task execution with invalid status', async () => {
+    const task = executor.sleepingTask<string>({
+      id: 'test',
+      timeoutMs: 1000,
+    })
+
+    await executor.enqueueTask(task, 'test_unique_id')
+
+    await sleep(250)
+    await expect(
+      executor.wakeupSleepingTaskExecution(task, 'test_unique_id', {
+        // @ts-expect-error - Testing invalid input
+        status: 'timed_out',
+        error: new Error('test_error'),
+      }),
+    ).rejects.toThrow()
   })
 
   it('should handle task closure', async () => {

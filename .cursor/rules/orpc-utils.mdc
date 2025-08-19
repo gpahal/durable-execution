@@ -1,0 +1,30 @@
+---
+globs: durable-execution-orpc-utils/**
+description: oRPC utilities package — single entry API in src/index.ts exporting createTasksRouter and convertProcedureClientToTask
+---
+
+# durable-execution-orpc-utils package guide
+
+This package integrates oRPC with durable-execution. It now has a single public entry file: [src/index.ts](mdc:durable-execution-orpc-utils/src/index.ts).
+
+## Public API
+
+- `createTasksRouter(osBuilder, executor, tasks)` — Builds an oRPC router exposing:
+  - `enqueueTask`
+  - `getTaskExecution`
+  - `wakeupSleepingTaskExecution`
+  Example usage and details are in [README.md](mdc:durable-execution-orpc-utils/README.md) and validated in [tests/index.test.ts](mdc:durable-execution-orpc-utils/tests/index.test.ts).
+
+- `convertProcedureClientToTask(executor, options, procedure, [clientOptions])` — Wraps an oRPC client procedure as a durable `Task`, handling error mapping and retry classification.
+
+## Structure and conventions
+
+- Import from the package root or `src/index.ts` during development.
+- Exports are defined in [package.json](mdc:durable-execution-orpc-utils/package.json) and point to the built output (`build/index.js` and `build/index.d.ts`).
+- Examples and end-to-end behavior are covered in [README.md](mdc:durable-execution-orpc-utils/README.md) and [tests/index.test.ts](mdc:durable-execution-orpc-utils/tests/index.test.ts).
+
+## When editing
+
+- Add new utilities by extending [src/index.ts](mdc:durable-execution-orpc-utils/src/index.ts). Prefer augmenting the existing router/task patterns over creating additional entry files.
+- Keep type-level contracts aligned with durable-execution types (`Task`, `TaskExecution`, etc.) and oRPC types.
+- Update examples in [README.md](mdc:durable-execution-orpc-utils/README.md) and add/adjust cases in [tests/index.test.ts](mdc:durable-execution-orpc-utils/tests/index.test.ts) with any API changes.

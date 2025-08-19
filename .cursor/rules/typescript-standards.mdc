@@ -37,8 +37,8 @@ const myTask = executor
   })
 
 // Type inference utilities (exported from core)
-export type InferTaskInput<T> = T extends Task<infer TInput, any> ? TInput : never
-export type InferTaskOutput<T> = T extends Task<any, infer TOutput> ? TOutput : never
+export type InferTaskInput<T> = T extends Task<infer TInput, unknown> ? TInput : never
+export type InferTaskOutput<T> = T extends Task<unknown, infer TOutput> ? TOutput : never
 ```
 
 ## Schema Validation

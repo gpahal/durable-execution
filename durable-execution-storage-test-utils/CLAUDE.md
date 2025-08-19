@@ -2,75 +2,166 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Development Commands
 
-This is a TypeScript library that provides test utilities for validating storage implementations in the durable-execution ecosystem. It's part of a monorepo with packages including `durable-execution` (core), `durable-execution-orpc-utils`, and `durable-execution-storage-drizzle`.
-
-## Essential Commands
-
-### Development
+### Essential Commands
 
 ```bash
-# Install dependencies (from monorepo root)
-pnpm install
-
-# Build the package
+# Build the library
 pnpm build
 
 # Run tests
-pnpm test
+pnpm test              # Run all tests
+pnpm test-coverage     # Run tests with coverage report
 
-# Run tests with coverage
-pnpm test:coverage
+# Type checking and linting
+pnpm type-check        # TypeScript type checking
+pnpm lint              # Run ESLint
+pnpm lint-fix          # Auto-fix linting issues
 
-# Lint code
-pnpm lint
+# Clean build artifacts
+pnpm clean
 
-# Format code
-pnpm format
+# Run benchmarks
+pnpm bench              # Performance benchmarks for storage implementations
 ```
 
-### Monorepo Context
+### Testing Specific Files
 
-This package uses Turbo for build orchestration and pnpm workspaces. When making changes, consider running commands from the monorepo root to ensure proper dependency coordination.
+```bash
+# Run a specific test file
+pnpm test tests/index.test.ts
 
-## Architecture
+# Run tests in watch mode
+pnpm test -w
 
-### Core Functionality
+# Run tests matching a pattern
+pnpm test -t 'should validate storage'
+```
 
-The package exports test utilities from `src/index.ts`:
+## Architecture Overview
 
-- **`runStorageTest(storage, cleanup?)`** - Main comprehensive test suite that validates storage implementations through complex scenarios including:
-  - DurableExecutor functionality with task hierarchies
-  - Concurrent execution (250+ tasks)
-  - Retry mechanisms and error handling
-  - Parent-child task relationships
+This package provides **comprehensive test utilities** for validating durable-execution storage implementations, ensuring they correctly handle all aspects of task execution.
 
-- **`createTaskExecutionStorageValue()`** - Factory for test storage values
-- **Temporary resource helpers** - `withTemporaryDirectory()`, `withTemporaryFile()`, `cleanupTemporaryFiles()`
+### Core Components
 
-### Dependencies
+**Storage Test Suite** (`src/index.ts`):
 
-- **Peer dependency**: `durable-execution` (workspace)
-- **Dev dependency**: `@gpahal/std` for utilities
-- **Runtime**: Node.js >=20.0.0, ESM modules
+- `runStorageTest()`: Main test function that validates complete storage behavior
+- Tests complex task hierarchies, concurrency, and error scenarios
+- Validates 250+ concurrent tasks with proper coordination
+- Ensures ACID properties and transaction isolation
 
-### Testing Strategy
+**Temporary Resource Utilities**:
 
-- Uses **Vitest** with 120-second timeouts for comprehensive storage tests
-- Tests demonstrate usage with `InMemoryTaskExecutionsStorage`
-- Coverage reporting via `@vitest/coverage-v8`
+- `withTemporaryDirectory()`: Creates and cleans up temporary directories
+- `withTemporaryFile()`: Creates and cleans up temporary files
+- `cleanupTemporaryFiles()`: Removes leftover temporary resources
+- Automatic cleanup on process exit
 
-## Key Configuration
+### Test Coverage Areas
 
-- **TypeScript**: Strict configuration with declaration generation
-- **Build**: tsup bundler with inherited config from parent
-- **Linting**: ESLint with `@gpahal/eslint-config/base`
-- **Package manager**: pnpm with workspace support
+**Task Lifecycle Management**:
 
-## Development Notes
+- State transitions: ready → running → completed/failed/timed_out
+- Parent-child task relationships and coordination
+- Sequential task chains and finalization
+- Cancellation and cleanup processes
 
-- This is a library package (not an application)
-- Uses semantic versioning and is published to NPM
-- Part of coordinated releases across the durable-execution ecosystem
-- When implementing new test utilities, ensure they work with the existing `runStorageTest` framework
+**Concurrency Testing**:
+
+- High concurrency scenarios (250+ tasks)
+- Race condition detection
+- Deadlock prevention
+- Optimistic concurrency control
+
+**Error Handling**:
+
+- Retry logic with exponential backoff
+- Error propagation in task hierarchies
+- Timeout handling and expiration
+- Graceful degradation patterns
+
+**Storage Operations**:
+
+- CRUD operations and batch updates
+- Transaction rollback scenarios
+- Index performance validation
+- Query optimization verification
+
+### Key Test Scenarios
+
+**Complex Task Hierarchies**: Tests nested parent-child relationships with multiple levels, ensuring proper state propagation and active child counting.
+
+**Background Processing**: Validates task expiration, closure processes, promise cancellation, and executor handoff scenarios.
+
+**Performance Under Load**: Stress tests with high task volumes, concurrent executors, and rapid state changes to ensure storage scalability.
+
+**Edge Cases**: Tests boundary conditions, null/undefined handling, maximum retry attempts, and timeout edge cases.
+
+### Implementation Strategy
+
+**Test Structure**:
+
+```ts
+await runStorageTest(storage, async () => {
+  // Optional cleanup function
+  await storage.close()
+})
+```
+
+**Validation Approach**:
+
+1. Create executor with storage implementation
+2. Execute complex task scenarios
+3. Verify state consistency
+4. Check background process behavior
+5. Validate cleanup and resource management
+
+### Testing Best Practices
+
+**Storage Implementation Requirements**:
+
+- Must implement complete `TaskExecutionsStorage` interface
+- Support concurrent transactions
+- Handle large batch operations efficiently
+- Maintain consistency under high load
+
+**Common Pitfalls to Test**:
+
+- Transaction isolation violations
+- Race conditions in parent-child updates
+- Incorrect active children counting
+- Missing index causing slow queries
+- Improper error serialization
+
+### Extending Test Suite
+
+**Custom Test Scenarios**:
+
+```ts
+import { runStorageTest } from 'durable-execution-storage-test-utils'
+
+// Add custom validations
+const customTest = async (storage: TaskExecutionsStorage) => {
+  await runStorageTest(storage)
+
+  // Additional custom tests
+  await testCustomScenario(storage)
+}
+```
+
+**Performance Benchmarking**:
+
+- Measure operation latencies
+- Track memory usage patterns
+- Monitor connection pool behavior
+- Analyze query execution plans
+
+### Important Conventions
+
+- All test utilities exported through `src/index.ts`
+- Tests should be deterministic and repeatable
+- Clean up all resources after test completion
+- Use realistic data volumes and patterns
+- Test both success and failure paths thoroughly

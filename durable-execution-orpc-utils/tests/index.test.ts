@@ -10,15 +10,14 @@ import {
 
 import { sleep } from '@gpahal/std/promises'
 
-import { createTaskClientHandles } from '../src/client'
-import { convertProcedureClientToTask, createTasksRouter } from '../src/server'
+import { convertProcedureClientToTask, createTasksRouter } from '../src'
 
 async function waitAndGetFinishedExecution<TInput, TOutput>(
   executor: DurableExecutor,
   task: Task<TInput, TOutput>,
   executionId: string,
 ): Promise<FinishedTaskExecution<TOutput>> {
-  const handle = await executor.getTaskHandle(task, executionId)
+  const handle = await executor.getTaskExecutionHandle(task, executionId)
   return await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
 }
 
@@ -29,6 +28,7 @@ describe('server', () => {
   beforeEach(() => {
     storage = new InMemoryTaskExecutionsStorage()
     executor = new DurableExecutor(storage, {
+      logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
     executor.startBackgroundProcesses()
@@ -50,18 +50,16 @@ describe('server', () => {
       },
     })
 
-    const tasks = { add1 }
+    const tasks = { add1 } as const
     const router = createTasksRouter(os, executor, tasks)
-
     const client = createRouterClient(router, { context: {} })
-    const handles = createTaskClientHandles(client, tasks)
 
-    const executionId = await handles.add1.enqueue({ n: 0 })
-    let execution = await handles.add1.getExecution(executionId)
+    const executionId = await client.enqueueTask({ taskId: 'add1', input: { n: 0 } })
+    let execution = await client.getTaskExecution({ taskId: 'add1', executionId })
     expect(['ready', 'running']).toContain(execution.status)
 
     await waitAndGetFinishedExecution(executor, add1, executionId)
-    execution = await handles.add1.getExecution(executionId)
+    execution = await client.getTaskExecution({ taskId: 'add1', executionId })
     expect(executionCount).toBe(1)
     expect(execution.status).toBe('completed')
     assert(execution.status === 'completed')
@@ -105,6 +103,84 @@ describe('server', () => {
     await expect(
       client.getTaskExecution({ taskId: 'add1', executionId: 'invalid' }),
     ).rejects.toThrow('Task execution invalid not found')
+  })
+
+  it('should wakeup sleeping task execution', async () => {
+    const sleepingTask = executor.sleepingTask<string>({
+      id: 'sleeping',
+      timeoutMs: 10_000,
+    })
+
+    const tasks = { sleepingTask }
+    const router = createTasksRouter(os, executor, tasks)
+    const client = createRouterClient(router, { context: {} })
+
+    const executionId = await client.enqueueTask({ taskId: 'sleepingTask', input: 'unique_id' })
+    expect(typeof executionId).toBe('string')
+    expect(executionId.length).toBeGreaterThan(0)
+
+    const execution = await client.getTaskExecution({ taskId: 'sleepingTask', executionId })
+    expect(['ready', 'running']).toContain(execution.status)
+
+    await sleep(250)
+    const finishedExecution = await client.wakeupSleepingTaskExecution({
+      taskId: 'sleepingTask',
+      sleepingTaskUniqueId: 'unique_id',
+      options: {
+        status: 'completed',
+        output: 'sleeping_output',
+      },
+    })
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.output).toBe('sleeping_output')
+  })
+
+  it('should handle invalid sleeping task unique id to wakeup sleeping task execution', async () => {
+    const sleepingTask = executor.sleepingTask<string>({
+      id: 'sleeping',
+      timeoutMs: 10_000,
+    })
+
+    const tasks = { sleepingTask }
+    const router = createTasksRouter(os, executor, tasks)
+    const client = createRouterClient(router, { context: {} })
+
+    const executionId = await client.enqueueTask({ taskId: 'sleepingTask', input: 'unique_id' })
+    expect(typeof executionId).toBe('string')
+    expect(executionId.length).toBeGreaterThan(0)
+
+    const execution = await client.getTaskExecution({ taskId: 'sleepingTask', executionId })
+    expect(['ready', 'running']).toContain(execution.status)
+
+    await sleep(250)
+    await expect(
+      client.wakeupSleepingTaskExecution({
+        taskId: 'sleepingTask',
+        sleepingTaskUniqueId: 'invalid',
+        options: {
+          status: 'completed',
+          output: 'sleeping_output',
+        },
+      }),
+    ).rejects.toThrow('Sleeping task execution invalid not found')
+  })
+
+  it('should handle invalid task id to wakeup sleeping task execution', async () => {
+    const router = createTasksRouter(os, executor, {})
+    const client = createRouterClient(router, { context: {} })
+
+    await expect(
+      // @ts-expect-error - Testing invalid input
+      client.wakeupSleepingTaskExecution({
+        taskId: 'invalid',
+        sleepingTaskUniqueId: 'unique_id',
+        options: {
+          status: 'completed',
+          output: 'sleeping_output' as never,
+        },
+      }),
+    ).rejects.toThrow('Task invalid not found')
   })
 
   it('should complete procedureClientTask', async () => {
@@ -358,7 +434,7 @@ describe('server', () => {
     const router = createTasksRouter(os, executor, tasks)
     const client = createRouterClient(router, { context: {} })
 
-    vi.spyOn(executor, 'getTaskHandle').mockRejectedValueOnce(
+    vi.spyOn(executor, 'getTaskExecutionHandle').mockRejectedValueOnce(
       DurableExecutionError.retryable('Storage error'),
     )
 
@@ -380,7 +456,9 @@ describe('server', () => {
     const router = createTasksRouter(os, executor, tasks)
     const client = createRouterClient(router, { context: {} })
 
-    vi.spyOn(executor, 'getTaskHandle').mockRejectedValueOnce(new TypeError('Network error'))
+    vi.spyOn(executor, 'getTaskExecutionHandle').mockRejectedValueOnce(
+      new TypeError('Network error'),
+    )
 
     await expect(
       client.getTaskExecution({ taskId: 'add1', executionId: 'test-id' }),
@@ -400,159 +478,28 @@ describe('server', () => {
     const tasks = { add1 }
     const router = createTasksRouter(os, executor, tasks)
     const client = createRouterClient(router, { context: {} })
-    const handles = createTaskClientHandles(client, tasks)
 
-    const executionId = await handles.add1.enqueue({ n: 5 }, { retryOptions: { maxAttempts: 3 } })
+    const executionId = await client.enqueueTask({
+      taskId: 'add1',
+      input: { n: 5 },
+      options: { retryOptions: { maxAttempts: 3 } },
+    })
     expect(typeof executionId).toBe('string')
     expect(executionId.length).toBeGreaterThan(0)
 
-    const execution = await handles.add1.getExecution(executionId)
+    const execution = await client.getTaskExecution({ taskId: 'add1', executionId })
     expect(['ready', 'running']).toContain(execution.status)
   })
 })
 
-describe('client', () => {
+describe('convertProcedureClientToTask', () => {
   let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
   beforeEach(() => {
     storage = new InMemoryTaskExecutionsStorage()
     executor = new DurableExecutor(storage, {
-      backgroundProcessIntraBatchSleepMs: 50,
-    })
-    executor.startBackgroundProcesses()
-  })
-
-  afterEach(async () => {
-    await executor.shutdown()
-  })
-
-  it('should create task client handles with correct types', () => {
-    const add1 = executor.task({
-      id: 'add1',
-      timeoutMs: 5000,
-      run: (_, input: { n: number }) => {
-        return { n: input.n + 1 }
-      },
-    })
-
-    const multiply2 = executor.task({
-      id: 'multiply2',
-      timeoutMs: 5000,
-      run: (_, input: { value: number }) => {
-        return { result: input.value * 2 }
-      },
-    })
-
-    const tasks = { add1, multiply2 }
-    const router = createTasksRouter(os, executor, tasks)
-    const client = createRouterClient(router, { context: {} })
-    const handles = createTaskClientHandles(client, tasks)
-
-    expect(handles).toHaveProperty('add1')
-    expect(handles).toHaveProperty('multiply2')
-    expect(typeof handles.add1.enqueue).toBe('function')
-    expect(typeof handles.add1.getExecution).toBe('function')
-    expect(typeof handles.multiply2.enqueue).toBe('function')
-    expect(typeof handles.multiply2.getExecution).toBe('function')
-  })
-
-  it('should handle enqueue with client handles', async () => {
-    const add1 = executor.task({
-      id: 'add1',
-      timeoutMs: 5000,
-      run: async (_, input: { n: number }) => {
-        await sleep(250)
-        return { n: input.n + 1 }
-      },
-    })
-
-    const tasks = { add1 }
-    const router = createTasksRouter(os, executor, tasks)
-    const client = createRouterClient(router, { context: {} })
-    const handles = createTaskClientHandles(client, tasks)
-
-    const executionId = await handles.add1.enqueue({ n: 10 })
-    expect(typeof executionId).toBe('string')
-    expect(executionId.length).toBeGreaterThan(0)
-
-    const execution = await handles.add1.getExecution(executionId)
-    expect(['ready', 'running']).toContain(execution.status)
-
-    const finishedExecution = await waitAndGetFinishedExecution(executor, add1, executionId)
-    expect(finishedExecution.status).toBe('completed')
-    assert(finishedExecution.status === 'completed')
-    expect(finishedExecution.output.n).toBe(11)
-  })
-
-  it('should handle multiple different tasks with handles', async () => {
-    const add1 = executor.task({
-      id: 'add1',
-      timeoutMs: 5000,
-      run: (_, input: { n: number }) => {
-        return { n: input.n + 1 }
-      },
-    })
-
-    const concat = executor.task({
-      id: 'concat',
-      timeoutMs: 5000,
-      run: (_, input: { a: string; b: string }) => {
-        return { result: input.a + input.b }
-      },
-    })
-
-    const tasks = { add1, concat }
-    const router = createTasksRouter(os, executor, tasks)
-    const client = createRouterClient(router, { context: {} })
-    const handles = createTaskClientHandles(client, tasks)
-
-    const addId = await handles.add1.enqueue({ n: 5 })
-    const concatId = await handles.concat.enqueue({ a: 'hello', b: 'world' })
-
-    const addFinished = await waitAndGetFinishedExecution(executor, add1, addId)
-    const concatFinished = await waitAndGetFinishedExecution(executor, concat, concatId)
-
-    expect(addFinished.status).toBe('completed')
-    expect(concatFinished.status).toBe('completed')
-    assert(addFinished.status === 'completed')
-    assert(concatFinished.status === 'completed')
-    expect(addFinished.output.n).toBe(6)
-    expect(concatFinished.output.result).toBe('helloworld')
-  })
-
-  it('should handle task with undefined input', async () => {
-    const noInput = executor.task({
-      id: 'noInput',
-      timeoutMs: 5000,
-      run: () => {
-        return { timestamp: Date.now() }
-      },
-    })
-
-    const tasks = { noInput }
-    const router = createTasksRouter(os, executor, tasks)
-    const client = createRouterClient(router, { context: {} })
-    const handles = createTaskClientHandles(client, tasks)
-
-    const executionId = await handles.noInput.enqueue()
-    const execution = await handles.noInput.getExecution(executionId)
-    expect(['ready', 'running']).toContain(execution.status)
-
-    const finishedExecution = await waitAndGetFinishedExecution(executor, noInput, executionId)
-    expect(finishedExecution.status).toBe('completed')
-    assert(finishedExecution.status === 'completed')
-    expect(typeof finishedExecution.output.timestamp).toBe('number')
-  })
-})
-
-describe('convertProcedureClientToTask edge cases', () => {
-  let storage: InMemoryTaskExecutionsStorage
-  let executor: DurableExecutor
-
-  beforeEach(() => {
-    storage = new InMemoryTaskExecutionsStorage()
-    executor = new DurableExecutor(storage, {
+      logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
     executor.startBackgroundProcesses()

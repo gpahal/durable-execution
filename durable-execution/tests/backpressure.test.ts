@@ -152,14 +152,14 @@ describe('backpressure', () => {
 
       taskCompletionSignals.shift()!()
 
-      await sleep(250)
+      await sleep(500)
 
       expect(taskStartTimes.length).toBe(3)
       expect(executor.getRunningTaskExecutionIds().size).toBe(2)
 
       while (taskCompletionSignals.length > 0) {
         taskCompletionSignals.shift()!()
-        await sleep(50)
+        await sleep(100)
       }
 
       await Promise.all(handles.map((handle) => handle.waitAndGetFinishedExecution()))
@@ -246,7 +246,7 @@ describe('backpressure', () => {
       storage = new InMemoryTaskExecutionsStorage()
       executor = new DurableExecutor(storage, {
         logLevel: 'error',
-        expireMs: 60_000,
+        expireLeewayMs: 60_000,
         backgroundProcessIntraBatchSleepMs: 50,
         maxConcurrentTaskExecutions: 4,
         maxTaskExecutionsPerBatch: 2,
@@ -268,7 +268,7 @@ describe('backpressure', () => {
       const stats = executor.getExecutorStats()
 
       expect(stats).toEqual({
-        expireMs: 60_000,
+        expireLeewayMs: 60_000,
         backgroundProcessIntraBatchSleepMs: 50,
         currConcurrentTaskExecutions: 0,
         maxConcurrentTaskExecutions: 4,

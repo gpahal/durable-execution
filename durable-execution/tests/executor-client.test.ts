@@ -38,7 +38,9 @@ describe('executorClient', () => {
 
     const tasks = { test: testTask }
 
-    const executorClient = new DurableExecutorClient(storage, tasks)
+    const executorClient = new DurableExecutorClient(storage, tasks, {
+      logLevel: 'error',
+    })
     const handle = await executorClient.enqueueTask('test')
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
@@ -68,7 +70,9 @@ describe('executorClient', () => {
 
     const tasks = { test: testTask }
 
-    const executorClient = new DurableExecutorClient(storage, tasks)
+    const executorClient = new DurableExecutorClient(storage, tasks, {
+      logLevel: 'error',
+    })
     const handle = await executorClient.enqueueTask('test')
 
     const finishedExecution = await handle.waitAndGetFinishedExecution()
@@ -106,7 +110,13 @@ describe('executorClient', () => {
   })
 
   it('should throw when enqueuing unknown task', async () => {
-    const executorClient = new DurableExecutorClient(storage, {})
+    const executorClient = new DurableExecutorClient(
+      storage,
+      {},
+      {
+        logLevel: 'error',
+      },
+    )
 
     await expect(async () => {
       // @ts-expect-error - Testing invalid input
@@ -115,11 +125,17 @@ describe('executorClient', () => {
   })
 
   it('should throw when getting handle for unknown task', async () => {
-    const executorClient = new DurableExecutorClient(storage, {})
+    const executorClient = new DurableExecutorClient(
+      storage,
+      {},
+      {
+        logLevel: 'error',
+      },
+    )
 
     await expect(async () => {
       // @ts-expect-error - Testing invalid input
-      await executorClient.getTaskHandle('unknown', 'some-execution-id')
+      await executorClient.getTaskExecutionHandle('unknown', 'some-execution-id')
     }).rejects.toThrow(DurableExecutionNotFoundError)
   })
 
@@ -131,10 +147,12 @@ describe('executorClient', () => {
     })
 
     const tasks = { test: testTask }
-    const executorClient = new DurableExecutorClient(storage, tasks)
+    const executorClient = new DurableExecutorClient(storage, tasks, {
+      logLevel: 'error',
+    })
 
     await expect(async () => {
-      await executorClient.getTaskHandle('test', 'non-existent-execution-id')
+      await executorClient.getTaskExecutionHandle('test', 'non-existent-execution-id')
     }).rejects.toThrow(DurableExecutionNotFoundError)
   })
 
@@ -152,13 +170,15 @@ describe('executorClient', () => {
     })
 
     const tasks = { test1: testTask1, test2: testTask2 }
-    const executorClient = new DurableExecutorClient(storage, tasks)
+    const executorClient = new DurableExecutorClient(storage, tasks, {
+      logLevel: 'error',
+    })
 
     const handle1 = await executorClient.enqueueTask('test1')
     const execution1 = await handle1.getExecution()
 
     await expect(async () => {
-      await executorClient.getTaskHandle('test2', execution1.executionId)
+      await executorClient.getTaskExecutionHandle('test2', execution1.executionId)
     }).rejects.toThrow(DurableExecutionNotFoundError)
   })
 
@@ -170,7 +190,9 @@ describe('executorClient', () => {
     })
 
     const tasks = { test: testTask }
-    const executorClient = new DurableExecutorClient(storage, tasks)
+    const executorClient = new DurableExecutorClient(storage, tasks, {
+      logLevel: 'error',
+    })
 
     expect(() => {
       executorClient.shutdown()
@@ -189,7 +211,9 @@ describe('executorClient', () => {
     })
 
     const tasks = { test: testTask }
-    const executorClient = new DurableExecutorClient(storage, tasks)
+    const executorClient = new DurableExecutorClient(storage, tasks, {
+      logLevel: 'error',
+    })
 
     executorClient.shutdown()
 
@@ -198,7 +222,7 @@ describe('executorClient', () => {
     }).rejects.toThrow(DurableExecutionError)
 
     await expect(async () => {
-      await executorClient.getTaskHandle('test', 'some-id')
+      await executorClient.getTaskExecutionHandle('test', 'some-id')
     }).rejects.toThrow(DurableExecutionError)
   })
 })

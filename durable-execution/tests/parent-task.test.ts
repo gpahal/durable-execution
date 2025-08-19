@@ -2,7 +2,12 @@ import { z } from 'zod'
 
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutionError, DurableExecutor, InMemoryTaskExecutionsStorage } from '../src'
+import {
+  ChildTask,
+  DurableExecutionError,
+  DurableExecutor,
+  InMemoryTaskExecutionsStorage,
+} from '../src'
 
 describe('parentTask', () => {
   let storage: InMemoryTaskExecutionsStorage
@@ -50,14 +55,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [
-            {
-              task: child1,
-            },
-            {
-              task: child2,
-            },
-          ],
+          children: [new ChildTask(child1), new ChildTask(child2)],
         }
       },
     })
@@ -152,14 +150,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [
-            {
-              task: child1,
-            },
-            {
-              task: child2,
-            },
-          ],
+          children: [new ChildTask(child1), new ChildTask(child2)],
         }
       },
       finalize: {
@@ -263,14 +254,7 @@ describe('parentTask', () => {
           await sleep(1)
           return {
             output: input.name,
-            children: [
-              {
-                task: child1,
-              },
-              {
-                task: child2,
-              },
-            ],
+            children: [new ChildTask(child1), new ChildTask(child2)],
           }
         },
       })
@@ -341,14 +325,7 @@ describe('parentTask', () => {
           await sleep(1)
           return {
             output: input.name,
-            children: [
-              {
-                task: child1,
-              },
-              {
-                task: child2,
-              },
-            ],
+            children: [new ChildTask(child1), new ChildTask(child2)],
           }
         },
       })
@@ -402,14 +379,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [
-            {
-              task: child1,
-            },
-            {
-              task: child2,
-            },
-          ],
+          children: [new ChildTask(child1), new ChildTask(child2)],
         }
       },
       finalize: {
@@ -476,14 +446,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [
-            {
-              task: child1,
-            },
-            {
-              task: child2,
-            },
-          ],
+          children: [new ChildTask(child1), new ChildTask(child2)],
         }
       },
       finalize: {
@@ -550,14 +513,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [
-            {
-              task: child1,
-            },
-            {
-              task: child2,
-            },
-          ],
+          children: [new ChildTask(child1), new ChildTask(child2)],
         }
       },
       finalize: {
@@ -638,14 +594,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [
-            {
-              task: child1,
-            },
-            {
-              task: child2,
-            },
-          ],
+          children: [new ChildTask(child1), new ChildTask(child2)],
         }
       },
       finalize: {
@@ -656,7 +605,7 @@ describe('parentTask', () => {
           await sleep(1)
           return {
             output: `${output}_${children.map((c) => (c.status === 'completed' ? c.output : '')).join('_')}`,
-            children: [{ task: finalizeTaskChild1 }, { task: finalizeTaskChild2 }],
+            children: [new ChildTask(finalizeTaskChild1), new ChildTask(finalizeTaskChild2)],
           }
         },
         finalize: {
@@ -715,7 +664,7 @@ describe('parentTask', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [{ task: slowChildTask }],
+          children: [new ChildTask(slowChildTask)],
         }
       },
     })
@@ -751,7 +700,7 @@ describe('parentTask', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [{ task: grandchildTask }],
+          children: [new ChildTask(grandchildTask)],
         }
       },
       finalize: {
@@ -771,7 +720,7 @@ describe('parentTask', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [{ task: childParentTask }],
+          children: [new ChildTask(childParentTask)],
         }
       },
       finalize: {
@@ -810,7 +759,7 @@ describe('parentTask', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [{ task: childTask }],
+          children: [new ChildTask(childTask)],
         }
       },
       finalize: {
@@ -832,6 +781,104 @@ describe('parentTask', () => {
     expect(finishedExecution.error?.message).toContain('Finalize task failed')
   })
 
+  it('should complete child sleeping task', async () => {
+    const task = executor.sleepingTask<string>({
+      id: 'test',
+      timeoutMs: 1000,
+    })
+
+    const parentTask = executor.parentTask({
+      id: 'parent',
+      timeoutMs: 1000,
+      runParent: () => {
+        return { output: 'parent_output', children: [new ChildTask(task, 'test_unique_id')] }
+      },
+      finalize: {
+        id: 'finalizeTask',
+        timeoutMs: 1000,
+        run: (ctx, { children }) => {
+          const child = children[0]!
+          if (child.status !== 'completed') {
+            throw new Error('Finalize task failed')
+          }
+          return child.output
+        },
+      },
+    })
+
+    const handle = await executor.enqueueTask(parentTask)
+    while (true) {
+      const execution = await handle.getExecution()
+      if (execution.status === 'waiting_for_children') {
+        break
+      }
+      await sleep(100)
+    }
+
+    await sleep(100)
+    const childExecution = await executor.wakeupSleepingTaskExecution(task, 'test_unique_id', {
+      status: 'completed',
+      output: 'test_output',
+    })
+    expect(childExecution.status).toBe('completed')
+    assert(childExecution.status === 'completed')
+    expect(childExecution.output).toBe('test_output')
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.output).toBe('test_output')
+  })
+
+  it('should fail child sleeping task', async () => {
+    const task = executor.sleepingTask<string>({
+      id: 'test',
+      timeoutMs: 1000,
+    })
+
+    const parentTask = executor.parentTask({
+      id: 'parent',
+      timeoutMs: 1000,
+      runParent: () => {
+        return { output: 'parent_output', children: [new ChildTask(task, 'test_unique_id')] }
+      },
+      finalize: {
+        id: 'finalizeTask',
+        timeoutMs: 1000,
+        run: (ctx, { children }) => {
+          const child = children[0]!
+          if (child.status !== 'completed') {
+            throw new Error('Finalize task failed')
+          }
+          return child.output
+        },
+      },
+    })
+
+    const handle = await executor.enqueueTask(parentTask)
+    while (true) {
+      const execution = await handle.getExecution()
+      if (execution.status === 'waiting_for_children') {
+        break
+      }
+      await sleep(100)
+    }
+
+    await sleep(100)
+    const childExecution = await executor.wakeupSleepingTaskExecution(task, 'test_unique_id', {
+      status: 'failed',
+      error: new Error('test_error'),
+    })
+    expect(childExecution.status).toBe('failed')
+    assert(childExecution.status === 'failed')
+    expect(childExecution.error?.message).toBe('test_error')
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    expect(finishedExecution.status).toBe('finalize_failed')
+    assert(finishedExecution.status === 'finalize_failed')
+    expect(finishedExecution.error?.message).toBe('Finalize task failed')
+  })
+
   it('should handle parent task closure', async () => {
     let executionCount = 0
     const task = executor.task({
@@ -847,7 +894,7 @@ describe('parentTask', () => {
       id: 'parent',
       timeoutMs: 1000,
       runParent: () => {
-        return { output: 'parent_output', children: [{ task }] }
+        return { output: 'parent_output', children: [new ChildTask(task)] }
       },
     })
 

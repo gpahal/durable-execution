@@ -32,12 +32,54 @@ import type { DurableExecutionErrorStorageValue } from './errors'
  * @category Task
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export type Task<TInput, TOutput> = {
+export type Task<TInput, TOutput, TIsSleepingTask extends boolean = boolean> = {
   id: string
+  isSleepingTask: TIsSleepingTask
   retryOptions: TaskRetryOptions
   sleepMsBeforeRun: number
   timeoutMs: number
 }
+
+/**
+ * Type alias for a task with unknown input and output.
+ *
+ * @category Task
+ */
+export type AnyTask =
+  | Task<unknown, unknown>
+  | Task<unknown, unknown, true>
+  | Task<unknown, unknown, false>
+
+/**
+ * Type-safe record of available tasks.
+ *
+ * This type ensures compile-time safety when enqueuing tasks, providing autocomplete for task names
+ * and type checking for inputs/outputs.
+ *
+ * @example
+ * ```ts
+ * // Define your tasks with proper types
+ * const emailTask = executor.task<{to: string}, {messageId: string}>({...})
+ * const reportTask = executor.task<{userId: string}, {reportUrl: string}>({...})
+ *
+ * // Create task registry
+ * const tasks = {
+ *   sendEmail: emailTask,
+ *   generateReport: reportTask,
+ * } as const  // Use 'as const' for better type inference
+ *
+ * // Client gets full type safety
+ * const client = new DurableExecutorClient(storage, tasks)
+ *
+ * // TypeScript knows available tasks and their types
+ * await client.enqueueTask('sendEmail', { to: 'user@example.com' })
+ * // Error: 'invalidTask' doesn't exist
+ * // await client.enqueueTask('invalidTask', {})
+ * ```
+ *
+ * @category Task
+ */
+export type AnyTasks = Record<string, AnyTask>
 
 /**
  * TypeScript utility type to extract the input type from a Task.
@@ -50,8 +92,7 @@ export type Task<TInput, TOutput> = {
  *
  * @category Task
  */
-export type InferTaskInput<TTask extends Task<unknown, unknown>> =
-  TTask extends Task<infer I, unknown> ? I : never
+export type InferTaskInput<TTask extends AnyTask> = TTask extends Task<infer I, unknown> ? I : never
 
 /**
  * TypeScript utility type to extract the output type from a Task.
@@ -64,8 +105,22 @@ export type InferTaskInput<TTask extends Task<unknown, unknown>> =
  *
  * @category Task
  */
-export type InferTaskOutput<TTask extends Task<unknown, unknown>> =
+export type InferTaskOutput<TTask extends AnyTask> =
   TTask extends Task<unknown, infer O> ? O : never
+
+/**
+ * TypeScript utility type to extract the sleeping task type from a Task.
+ *
+ * @example
+ * ```ts
+ * type EmailIsSleepingTask = InferTaskIsSleepingTask<typeof emailTask>
+ * // Result: false
+ * ```
+ *
+ * @category Task
+ */
+export type InferTaskIsSleepingTask<TTask extends AnyTask> =
+  TTask extends Task<unknown, unknown, true> ? true : false
 
 /**
  * Common options for a task. These options are used by both {@link TaskOptions} and
@@ -164,7 +219,7 @@ export type TaskRetryOptions = {
  * @example
  * ```ts
  * const extractFileTitle = executor
- *   .inputSchema(v.object({ filePath: v.string() }))
+ *   .inputSchema(z.object({ filePath: z.string() }))
  *   .task({
  *     id: 'extractFileTitle',
  *     timeoutMs: 30_000, // 30 seconds
@@ -198,6 +253,52 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
 }
 
 /**
+ * Options for a task that is asleep until it is marked completed or failed or timed out or
+ * cancelled. It is similar to {@link TaskOptions} but it does not have a `run` function. It
+ * just sleeps until it is marked completed or failed or timed out or cancelled.
+ *
+ * It is not very useful by itself but when combined with {@link ParentTaskOptions}, it can be used
+ * to create a task that is a parent task that runs a child task that is asleep until it is marked
+ * completed by a webhook or some other event.
+ *
+ * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
+ * section for more details on creating tasks.
+ *
+ * @example
+ * ```ts
+ * const waitForWebhook = executor
+ *   .sleepingTask<{ webhookId: string }>({
+ *     id: 'waitForWebhook',
+ *     timeoutMs: 24 * 60 * 60 * 1000, // 24 hours
+ *   })
+ *
+ * // Enqueue the sleeping task
+ * const handle = await executor.enqueueTask(waitForWebhook, 'uniqueId')
+ *
+ * // Wakeup using the unique id and executor (or execution client)
+ * await executor.wakeupSleepingTaskExecution(waitForWebhook, 'uniqueId', {
+ *   status: 'completed',
+ *   output: {
+ *     webhookId: '123',
+ *   },
+ * })
+ *
+ * // Or, wakeup in a webhook or event handler asynchronously using the unique id and executor
+ * // (or execution client)
+ * await executor.wakeupSleepingTaskExecution(waitForWebhook, 'uniqueId', {
+ *   status: 'completed',
+ *   output: {
+ *     webhookId: '123',
+ *   },
+ * })
+ * ```
+ *
+ * @category Task
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export type SleepingTaskOptions<TOutput = unknown> = Pick<CommonTaskOptions, 'id' | 'timeoutMs'>
+
+/**
  * Options for a parent task that can be run using a durable executor. It is similar to
  * {@link TaskOptions} but it returns children tasks to be run in parallel after the run
  * function completes, along with the output of the parent task.
@@ -227,7 +328,7 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
  * @example
  * ```ts
  * const extractFileTitle = executor
- *   .inputSchema(v.object({ filePath: v.string() }))
+ *   .inputSchema(z.object({ filePath: z.string() }))
  *   .task({
  *     id: 'extractFileTitle',
  *     timeoutMs: 30_000, // 30 seconds
@@ -260,7 +361,7 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
  *   })
  *
  * const uploadFile = executor
- *   .inputSchema(v.object({ filePath: v.string(), uploadUrl: v.string() }))
+ *   .inputSchema(z.object({ filePath: z.string(), uploadUrl: z.string() }))
  *   .parentTask({
  *     id: 'uploadFile',
  *     timeoutMs: 60_000, // 1 minute
@@ -274,14 +375,8 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
  *           fileSize: 100,
  *         },
  *         children: [
- *           {
- *             task: extractFileTitle,
- *             input: { filePath: input.filePath },
- *           },
- *           {
- *             task: summarizeFile,
- *             input: { filePath: input.filePath },
- *           },
+ *           new ChildTask(extractFileTitle, { filePath: input.filePath }),
+ *           new ChildTask(summarizeFile, { filePath: input.filePath }),
  *         ],
  *       }
  *     },
@@ -441,19 +536,11 @@ export type TaskRunContext = {
   /**
    * The root task execution.
    */
-  root?: {
-    taskId: string
-    executionId: string
-  }
+  root?: TaskExecutionSummary
   /**
    * The parent task execution.
    */
-  parent?: {
-    taskId: string
-    executionId: string
-    indexInParentChildTaskExecutions: number
-    isFinalizeTaskOfParentTask?: boolean
-  }
+  parent?: ParentTaskExecutionSummary
   /**
    * The task id.
    */
@@ -691,17 +778,23 @@ export type CancelledTaskExecution = Omit<ReadyTaskExecution, 'status' | 'error'
  *
  * @category Task
  */
-export type ChildTask<TInput = unknown, TOutput = unknown> = undefined extends TInput
-  ? {
-      task: Task<TInput, TOutput>
-      input?: TInput
-      options?: TaskEnqueueOptions
-    }
-  : {
-      task: Task<TInput, TOutput>
-      input: TInput
-      options?: TaskEnqueueOptions
-    }
+export class ChildTask<TTask extends AnyTask = AnyTask> {
+  readonly task: TTask
+  readonly input: InferTaskInput<TTask>
+  readonly options?: TaskEnqueueOptions<AnyTask>
+
+  constructor(
+    ...rest: undefined extends InferTaskInput<TTask>
+      ? [task: TTask, input?: InferTaskInput<TTask>, options?: TaskEnqueueOptions<TTask>]
+      : [task: TTask, input: InferTaskInput<TTask>, options?: TaskEnqueueOptions<TTask>]
+  ) {
+    this.task = rest[0]
+    this.input = (rest.length > 0 ? rest[1] : undefined)!
+    this.options = (rest.length > 2 ? rest[2] : undefined) as
+      | TaskEnqueueOptions<AnyTask>
+      | undefined
+  }
+}
 
 /**
  * A finished child task execution.
@@ -748,6 +841,16 @@ export type ErroredChildTaskExecution = {
 export type TaskExecutionSummary = {
   taskId: string
   executionId: string
+}
+
+/**
+ * A summary of a parent task execution.
+ *
+ * @category Task
+ */
+export type ParentTaskExecutionSummary = TaskExecutionSummary & {
+  indexInParentChildTaskExecutions: number
+  isFinalizeTaskOfParentTask: boolean
 }
 
 /**
@@ -852,9 +955,26 @@ export const ERRORED_TASK_EXECUTION_STATUSES = [
  *
  * @category Task
  */
-export type TaskEnqueueOptions = {
-  retryOptions?: TaskRetryOptions
-  sleepMsBeforeRun?: number
+export type TaskEnqueueOptions<TTask extends AnyTask = AnyTask> = {
+  /**
+   * Options for retrying the task. Has no effect on sleeping tasks.
+   */
+  retryOptions?: false extends InferTaskIsSleepingTask<TTask>
+    ? TaskRetryOptions
+    : true extends InferTaskIsSleepingTask<TTask>
+      ? undefined
+      : TaskRetryOptions
+  /**
+   * The number of milliseconds to wait before running the task. Has no effect on sleeping tasks.
+   */
+  sleepMsBeforeRun?: false extends InferTaskIsSleepingTask<TTask>
+    ? number
+    : true extends InferTaskIsSleepingTask<TTask>
+      ? undefined
+      : number
+  /**
+   * The number of milliseconds after which the task will be timed out.
+   */
   timeoutMs?: number
 }
 
@@ -1009,6 +1129,21 @@ export type TaskExecutionHandle<TOutput = unknown> = {
 }
 
 /**
+ * Options for waking up a sleeping task execution.
+ *
+ * @category Task
+ */
+export type WakeupSleepingTaskExecutionOptions<TOutput = unknown> =
+  | {
+      status: 'completed'
+      output: TOutput
+    }
+  | {
+      status: 'failed'
+      error?: unknown
+    }
+
+/**
  * Type constraint for sequential task execution where each task's output becomes the next task's
  * input.
  *
@@ -1037,7 +1172,7 @@ export type TaskExecutionHandle<TOutput = unknown> = {
  *
  * @category Task
  */
-export type SequentialTasks<T extends ReadonlyArray<Task<unknown, unknown>>> = T extends readonly []
+export type SequentialTasks<T extends ReadonlyArray<AnyTask>> = T extends readonly []
   ? never
   : SequentialTasksHelper<T>
 
@@ -1050,18 +1185,17 @@ export type SequentialTasks<T extends ReadonlyArray<Task<unknown, unknown>>> = T
  * @internal
  * @category Task
  */
-export type SequentialTasksHelper<T extends ReadonlyArray<Task<unknown, unknown>>> =
-  T extends readonly []
+export type SequentialTasksHelper<T extends ReadonlyArray<AnyTask>> = T extends readonly []
+  ? T
+  : T extends readonly [Task<infer _I1, infer _O1>]
     ? T
-    : T extends readonly [Task<infer _I1, infer _O1>]
-      ? T
-      : T extends readonly [Task<infer I1, infer O1>, Task<infer I2, infer O2>, ...infer Rest]
-        ? O1 extends I2
-          ? Rest extends ReadonlyArray<Task<unknown, unknown>>
-            ? readonly [Task<I1, O1>, ...SequentialTasksHelper<readonly [Task<I2, O2>, ...Rest]>]
-            : never
+    : T extends readonly [Task<infer I1, infer O1>, Task<infer I2, infer O2>, ...infer Rest]
+      ? O1 extends I2
+        ? Rest extends ReadonlyArray<AnyTask>
+          ? readonly [Task<I1, O1>, ...SequentialTasksHelper<readonly [Task<I2, O2>, ...Rest]>]
           : never
-        : T
+        : never
+      : T
 
 /**
  * Utility type to extract the last task from a sequential task array.
@@ -1081,5 +1215,9 @@ export type SequentialTasksHelper<T extends ReadonlyArray<Task<unknown, unknown>
  * @internal
  * @category Task
  */
-export type LastTaskElementInArray<T extends ReadonlyArray<Task<unknown, unknown>>> =
-  T extends readonly [...Array<Task<unknown, unknown>>, infer L] ? L : never
+export type LastTaskElementInArray<T extends ReadonlyArray<AnyTask>> = T extends readonly [
+  ...Array<AnyTask>,
+  infer L,
+]
+  ? L
+  : never

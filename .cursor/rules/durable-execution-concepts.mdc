@@ -104,7 +104,7 @@ const taskB = executor.task({
   }),
 })
 
-const sequentialTask = executor.sequentialTasks(taskA, taskB)
+const sequentialTask = executor.sequentialTasks('seq', taskA, taskB)
 ```
 
 ### Parent Task Pattern
@@ -118,8 +118,8 @@ const parentTask = executor.parentTask({
   runParent: (ctx, input: { name: string }) => ({
     output: `Parent output for ${input.name}`,
     children: [
-      { task: childTaskA, input: { name: input.name } },
-      { task: childTaskB, input: { name: input.name } },
+      new ChildTask(childTaskA, { name: input.name }),
+      new ChildTask(childTaskB, { name: input.name }),
     ],
   }),
   finalize: {
@@ -134,6 +134,47 @@ const parentTask = executor.parentTask({
     },
   },
 })
+```
+
+### Sleeping Task Pattern
+
+Sleeping tasks wait for an external signal (webhook, event) and complete when explicitly woken up. They are identified by a unique input string.
+
+```ts
+// Define a sleeping task that times out if not woken up
+const waitForWebhook = executor.sleepingTask<{ webhookId: string }>({
+  id: 'waitForWebhook',
+  timeoutMs: 24 * 60 * 60 * 1000,
+})
+
+// Enqueue with a unique id (e.g., correlation id)
+const handle = await executor.enqueueTask(waitForWebhook, 'uniqueId')
+
+// Later, e.g., in a webhook handler
+await executor.wakeupSleepingTaskExecution(waitForWebhook, 'uniqueId', {
+  status: 'completed',
+  output: { webhookId: '123' },
+})
+```
+
+### Polling Task Pattern
+
+Create a polling task that repeatedly runs a small check task until it reports done.
+
+```ts
+// Poll body returns either { isDone: true, output } or { isDone: false }
+const pollTask = executor.task<{},{ isDone: boolean; output?: number }>({
+  id: 'poll',
+  sleepMsBeforeRun: 100,
+  timeoutMs: 1000,
+  run: () => ({ isDone: Math.random() > 0.8, output: 42 }),
+})
+
+// maxAttempts=20, fixed sleep=100ms between attempts
+const pollingTask = executor.pollingTask('polling', pollTask, 20, 100)
+
+const pollingHandle = await executor.enqueueTask(pollingTask)
+const pollingFinished = await pollingHandle.waitAndGetFinishedExecution()
 ```
 
 ## Implementation Guidelines
@@ -204,12 +245,9 @@ const executor = new DurableExecutor(storage)
 
 ### Database Storage
 
-Use [durable-execution-storage-drizzle](mdc:durable-execution-storage-drizzle/) for production:
+**Production Storage Options**:
 
-- PostgreSQL, MySQL, SQLite support
-- Optimized indexes for query performance
-- Transaction support for atomicity
-- Proper data type mapping and serialization
+- **[durable-execution-storage-drizzle](mdc:durable-execution-storage-drizzle/)**: PostgreSQL, MySQL, SQLite support with optimized indexes and transactions
 
 ## Integration Points
 

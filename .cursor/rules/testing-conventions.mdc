@@ -50,13 +50,28 @@ Test executor functionality with realistic scenarios:
 - Timeout and cancellation scenarios
 - Graceful shutdown behavior
 
+### Sleeping and Polling Tasks
+
+```ts
+// Sleeping task: wakeup flow
+const sleeping = executor.sleepingTask<string>({ id: 'sleep', timeoutMs: 5_000 })
+const handle = await executor.enqueueTask(sleeping, 'unique')
+await executor.wakeupSleepingTaskExecution(sleeping, 'unique', { status: 'completed', output: 'ok' })
+const done = await handle.waitAndGetFinishedExecution()
+expect(done.status).toBe('completed')
+
+// Polling task: completes when inner poll returns isDone
+const pollBody = executor.task({ id: 'pollBody', timeoutMs: 1000, run: () => ({ isDone: true, output: 1 }) })
+const polling = executor.pollingTask('polling', pollBody, 3, 50)
+const pollingResult = await (await executor.enqueueTask(polling)).waitAndGetFinishedExecution()
+expect(pollingResult.status).toBe('completed')
+```
+
 ### Database Testing
 
 For storage implementations with real databases:
 
-- Use Testcontainers for MySQL testing
-- Use PGlite for PostgreSQL testing
-- Use in-memory SQLite for lightweight tests
+- **Drizzle**: Use Testcontainers (PostgreSQL and MySQL), in-memory SQLite
 - Clean up database state between tests
 
 ### Example Test Structure
@@ -68,12 +83,13 @@ describe('TaskExecution', () => {
 
   beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
-    executor = new DurableExecutor(createTaskMap(), storage)
-    await executor.start()
+    executor = new DurableExecutor(storage)
+    executor.startBackgroundProcesses()
   })
 
   afterEach(async () => {
     await executor.shutdown()
+    await storage.deleteAll()
   })
 
   it('should handle task retry on failure', async () => {
@@ -105,7 +121,7 @@ Create reusable task definitions for testing:
 ```ts
 const createTestTask = <TInput, TOutput>(id: string, overrides?: Partial<Task<TInput, TOutput>>) => ({
   id,
-  retryOptions: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0, backoffMultiplier: 1 },
+  retryOptions: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0, delayMultiplier: 1 },
   sleepMsBeforeRun: 0,
   timeoutMs: 1000,
   ...overrides
@@ -142,9 +158,9 @@ expect(execution.output).toEqual(expectedOutput)
 expect(execution.error).toBeUndefined()
 
 // Storage assertions
-const storedExecution = await storage.getByIds([execution.id])
-expect(storedExecution).toHaveLength(1)
-expect(storedExecution[0]).toMatchObject(expectedStorageValue)
+const storedExecution = await storage.getById(execution.executionId, {})
+expect(storedExecution).toBeDefined()
+expect(storedExecution).toMatchObject(expectedStorageValue)
 ```
 
 ## Test Documentation

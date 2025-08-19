@@ -1,0 +1,168 @@
+---
+description: Comprehensive error handling patterns for durable execution
+---
+
+# Error Handling Patterns
+
+## Error Types
+
+**Base class**: [DurableExecutionError](mdc:durable-execution/src/errors.ts) with retryable/non-retryable semantics
+
+**Classification**:
+
+- **Retryable**: Network timeouts, connection issues, rate limits, temporary unavailability
+- **Non-Retryable**: Invalid input, auth failures, business logic violations, data corruption
+
+## Task Error Handling
+
+```ts
+const task = executor.task({
+  id: 'robustTask',
+  retryOptions: { maxAttempts: 3, baseDelayMs: 1000 },
+  run: async (ctx, input) => {
+    if (!input.email?.includes('@')) {
+      throw DurableExecutionError.nonRetryable('Invalid email')
+    }
+
+    try {
+      return await externalService.call(input)
+    } catch (error) {
+      if ((error as any).code === 'NETWORK_TIMEOUT') {
+        throw DurableExecutionError.retryable('Service timeout')
+      }
+      throw DurableExecutionError.nonRetryable('Service error')
+    }
+  }
+})
+```
+
+## Parent Task Error Management
+
+```ts
+const parentTask = executor.parentTask({
+  id: 'workflow',
+  runParent: (ctx, input) => ({
+    output: { processedCount: 0 },
+    children: input.items.map(item => ({ task: processTask, input: { item } }))
+  }),
+  finalize: {
+    id: 'finalize',
+    run: (ctx, { output, children }) => {
+      const failed = children.filter(c => c.status !== 'completed')
+
+      // Fail if >50% children failed
+      if (failed.length > children.length * 0.5) {
+        throw DurableExecutionError.nonRetryable('Too many failures')
+      }
+
+      // Continue with partial success
+      return {
+        successCount: children.length - failed.length,
+        failureCount: failed.length
+      }
+    }
+  }
+})
+```
+
+## Storage error handling
+
+Storage operations are typically wrapped by `TaskExecutionsStorageInternal`, which retries
+retryable failures with backoff. When writing custom storage, surface transient errors as retryable
+and permanent errors as non-retryable using domain-appropriate error types, or let the internal
+wrapper convert unknown errors to retryable `DurableExecutionError`s.
+
+## Recovery Patterns
+
+**Retry with Exponential Backoff**:
+
+```ts
+const executeWithRetry = async <T>(
+  operation: () => Promise<T>,
+  maxAttempts: number = 3
+): Promise<T> => {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await operation()
+    } catch (error) {
+      if (attempt === maxAttempts) {
+        throw DurableExecutionError.nonRetryable('Max retries exceeded')
+      }
+
+      const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000)
+      await new Promise(resolve => setTimeout(resolve, delay))
+    }
+  }
+}
+```
+
+**Circuit Breaker**:
+
+```ts
+class CircuitBreaker {
+  private failures = 0
+  private state: 'closed' | 'open' | 'half-open' = 'closed'
+
+  async execute<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.state === 'open') {
+      throw DurableExecutionError.retryable('Circuit breaker open')
+    }
+
+    try {
+      const result = await operation()
+      this.failures = 0
+      this.state = 'closed'
+      return result
+    } catch (error) {
+      this.failures++
+      if (this.failures >= 5) this.state = 'open'
+      throw error
+    }
+  }
+}
+```
+
+## Testing Error Scenarios
+
+```ts
+// Test retryable vs non-retryable behavior
+it('should handle retryable errors with backoff', async () => {
+  let attempts = 0
+  const flakyTask = executor.task({
+    id: 'flaky',
+    retryOptions: { maxAttempts: 3, baseDelayMs: 100 },
+    run: async (ctx) => {
+      attempts++
+      if (attempts < 3) {
+        throw DurableExecutionError.retryable('Simulated failure')
+      }
+      return { attempts }
+    }
+  })
+
+  const result = await (await executor.enqueueTask(flakyTask, {}))
+    .waitAndGetFinishedExecution()
+
+  expect(result.status).toBe('completed')
+  expect(result.output.attempts).toBe(3)
+})
+```
+
+## Error Context Guidelines
+
+**Include actionable, serializable context in logs and messages**:
+
+```ts
+// Example: enrich logs, keep error objects simple
+logger.error('Database failed', { host: config.db.host })
+throw DurableExecutionError.retryable('Database failed')
+```
+
+## Monitoring
+
+Track error patterns for production monitoring:
+
+- Error rates by task type and category
+- Retry success rates and attempt distributions
+- Parent task failure patterns
+- Storage error frequencies

@@ -12,17 +12,21 @@ import {
   type TaskExecutionsStorage,
 } from './storage'
 import {
+  type AnyTasks,
+  type FinishedTaskExecution,
   type InferTaskInput,
   type InferTaskOutput,
   type Task,
   type TaskEnqueueOptions,
   type TaskExecutionHandle,
+  type WakeupSleepingTaskExecutionOptions,
 } from './task'
 import {
   generateTaskExecutionId,
-  getTaskHandleInternal,
+  getTaskExecutionHandleInternal,
   overrideTaskEnqueueOptions,
   validateEnqueueOptions,
+  wakeupSleepingTaskExecutionInternal,
 } from './task-internal'
 
 const zDurableExecutorClientOptions = zDurableExecutorOptions.pick({
@@ -148,15 +152,15 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
       ? [
           taskId: TTaskId,
           input?: InferTaskInput<TTasks[TTaskId]>,
-          options?: TaskEnqueueOptions & {
-            taskExecutionsStorageTransaction?: Pick<TaskExecutionsStorage, 'insert'>
+          options?: TaskEnqueueOptions<TTasks[TTaskId]> & {
+            taskExecutionsStorageTransaction?: Pick<TaskExecutionsStorage, 'insertMany'>
           },
         ]
       : [
           taskId: TTaskId,
           input: InferTaskInput<TTasks[TTaskId]>,
-          options?: TaskEnqueueOptions & {
-            taskExecutionsStorageTransaction?: Pick<TaskExecutionsStorage, 'insert'>
+          options?: TaskEnqueueOptions<TTasks[TTaskId]> & {
+            taskExecutionsStorageTransaction?: Pick<TaskExecutionsStorage, 'insertMany'>
           },
         ]
   ): Promise<TaskExecutionHandle<InferTaskOutput<TTasks[TTaskId]>>> {
@@ -183,11 +187,12 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
         : undefined,
     )
     const finalEnqueueOptions = overrideTaskEnqueueOptions(task, validatedEnqueueOptions)
-    await (options?.taskExecutionsStorageTransaction ?? this.storage).insert([
+    await (options?.taskExecutionsStorageTransaction ?? this.storage).insertMany([
       createTaskExecutionStorageValue({
         now,
         taskId: task.id,
         executionId,
+        isSleepingTask: task.isSleepingTask,
         retryOptions: finalEnqueueOptions.retryOptions,
         sleepMsBeforeRun: finalEnqueueOptions.sleepMsBeforeRun,
         timeoutMs: finalEnqueueOptions.timeoutMs,
@@ -196,7 +201,13 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
     ])
 
     this.logger.debug(`Enqueued task ${task.id} with execution id ${executionId}`)
-    return getTaskHandleInternal(this.storage, this.serializer, this.logger, task.id, executionId)
+    return getTaskExecutionHandleInternal(
+      this.storage,
+      this.serializer,
+      this.logger,
+      task.id,
+      executionId,
+    )
   }
 
   /**
@@ -206,7 +217,7 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
    * @param executionId - The id of the execution to get the handle for.
    * @returns The handle to the task execution.
    */
-  async getTaskHandle<TTaskId extends keyof TTasks & string>(
+  async getTaskExecutionHandle<TTaskId extends keyof TTasks & string>(
     taskId: TTaskId,
     executionId: string,
   ): Promise<TaskExecutionHandle<InferTaskOutput<TTasks[TTaskId]>>> {
@@ -220,11 +231,43 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
     }
     if (execution.taskId !== taskId) {
       throw new DurableExecutionNotFoundError(
-        `Task execution ${executionId} not found for task ${taskId} (belongs to ${execution.taskId})`,
+        `Task execution ${executionId} belongs to task ${execution.taskId}`,
       )
     }
 
-    return getTaskHandleInternal(this.storage, this.serializer, this.logger, taskId, executionId)
+    return getTaskExecutionHandleInternal(
+      this.storage,
+      this.serializer,
+      this.logger,
+      taskId,
+      executionId,
+    )
+  }
+
+  /**
+   * Wake up a sleeping task execution. The `sleepingTaskUniqueId` is the input passed to the
+   * sleeping task when it was enqueued.
+   *
+   * @param task - The task to wake up.
+   * @param sleepingTaskUniqueId - The unique id of the sleeping task to wake up.
+   * @param options - The options to wake up the sleeping task execution.
+   * @returns The finished task execution.
+   */
+  async wakeupSleepingTaskExecution<TTask extends Task<unknown, unknown, true>>(
+    task: TTask,
+    sleepingTaskUniqueId: string,
+    options: WakeupSleepingTaskExecutionOptions<InferTaskOutput<TTask>>,
+  ): Promise<FinishedTaskExecution<InferTaskOutput<TTask>>> {
+    this.throwIfShutdown()
+
+    return await wakeupSleepingTaskExecutionInternal(
+      this.storage,
+      this.serializer,
+      this.logger,
+      task,
+      sleepingTaskUniqueId,
+      options,
+    )
   }
 
   /**
@@ -239,34 +282,3 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
     this.logger.info('Durable executor cancelled. Durable executor client shut down')
   }
 }
-
-/**
- * Type-safe record of available tasks for a DurableExecutorClient.
- *
- * This type ensures compile-time safety when enqueuing tasks, providing autocomplete for task names
- * and type checking for inputs/outputs.
- *
- * @example
- * ```ts
- * // Define your tasks with proper types
- * const emailTask = executor.task<{to: string}, {messageId: string}>({...})
- * const reportTask = executor.task<{userId: string}, {reportUrl: string}>({...})
- *
- * // Create task registry
- * const tasks = {
- *   sendEmail: emailTask,
- *   generateReport: reportTask,
- * } as const  // Use 'as const' for better type inference
- *
- * // Client gets full type safety
- * const client = new DurableExecutorClient(storage, tasks)
- *
- * // TypeScript knows available tasks and their types
- * await client.enqueueTask('sendEmail', { to: 'user@example.com' })
- * // Error: 'invalidTask' doesn't exist
- * // await client.enqueueTask('invalidTask', {})
- * ```
- *
- * @category ExecutorClient
- */
-export type AnyTasks = Record<string, Task<unknown, unknown>>

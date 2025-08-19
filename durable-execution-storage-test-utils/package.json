@@ -1,6 +1,6 @@
 {
   "name": "durable-execution-storage-test-utils",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "Test utilities for validating durable-execution storage implementations",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
@@ -48,6 +48,7 @@
     "clean": "premove build",
     "test": "vitest run",
     "test-coverage": "vitest run --coverage",
+    "bench": "tsx scripts/bench.ts",
     "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/index.ts",
     "lint": "eslint .",
     "lint-fix": "eslint . --fix"
@@ -55,8 +56,11 @@
   "peerDependencies": {
     "durable-execution": "workspace:*"
   },
-  "devDependencies": {
+  "dependencies": {
     "@gpahal/std": "catalog:prod",
+    "nanoid": "catalog:prod"
+  },
+  "devDependencies": {
     "durable-execution": "workspace:*"
   }
 }

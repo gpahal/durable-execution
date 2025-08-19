@@ -6,7 +6,6 @@ import {
   text,
   uniqueIndex,
   type BaseSQLiteDatabase,
-  type SQLiteTransaction,
 } from 'drizzle-orm/sqlite-core'
 import {
   TaskExecutionsStorageWithMutex,
@@ -15,7 +14,7 @@ import {
   type TaskExecutionOnChildrenFinishedProcessingStatus,
   type TaskExecutionsStorage,
   type TaskExecutionStatus,
-  type TaskExecutionStorageGetByIdsFilters,
+  type TaskExecutionStorageGetByIdFilters,
   type TaskExecutionStorageUpdate,
   type TaskExecutionStorageValue,
   type TaskExecutionSummary,
@@ -23,9 +22,9 @@ import {
 } from 'durable-execution'
 
 import {
-  taskExecutionSelectValueToStorageValue,
-  taskExecutionStorageValueToInsertValue,
-  taskExecutionStorageValueToUpdateValue,
+  taskExecutionDBValueToStorageValue,
+  taskExecutionStorageUpdateToDBUpdate,
+  taskExecutionStorageValueToDBValue,
 } from './common'
 
 /**
@@ -75,7 +74,11 @@ export function createSQLiteTaskExecutionsTable(tableName = 'task_executions') {
       sleepMsBeforeRun: integer('sleep_ms_before_run').notNull(),
       timeoutMs: integer('timeout_ms').notNull(),
       input: text('input').notNull(),
+      executorId: text('executor_id'),
+      isSleepingTask: integer('is_sleeping_task', { mode: 'boolean' }).notNull(),
+      sleepingTaskUniqueId: text('sleeping_task_unique_id'),
       status: text('status').$type<TaskExecutionStatus>().notNull(),
+      isFinished: integer('is_finished', { mode: 'boolean' }).notNull(),
       runOutput: text('run_output'),
       output: text('output'),
       error: text('error', { mode: 'json' }).$type<DurableExecutionErrorStorageValue>(),
@@ -110,7 +113,7 @@ export function createSQLiteTaskExecutionsTable(tableName = 'task_executions') {
     },
     (table) => [
       uniqueIndex(`ix_${tableName}_execution_id`).on(table.executionId),
-      index(`ix_${tableName}_execution_id_status`).on(table.executionId, table.status),
+      uniqueIndex(`ix_${tableName}_sleeping_task_unique_id`).on(table.sleepingTaskUniqueId),
       index(`ix_${tableName}_status_start_at`).on(table.status, table.startAt),
       index(`ix_${tableName}_status_ocfp_status_acc_updated_at`).on(
         table.status,
@@ -118,17 +121,25 @@ export function createSQLiteTaskExecutionsTable(tableName = 'task_executions') {
         table.activeChildrenCount,
         table.updatedAt,
       ),
-      index(`ix_${tableName}_status_close_status_updated_at`).on(
-        table.status,
-        table.closeStatus,
-        table.updatedAt,
+      index(`ix_${tableName}_close_status_updated_at`).on(table.closeStatus, table.updatedAt),
+      index(`ix_${tableName}_is_sleeping_task_expires_at`).on(
+        table.isSleepingTask,
+        table.expiresAt,
       ),
-      index(`ix_${tableName}_expires_at`).on(table.expiresAt),
       index(`ix_${tableName}_on_ocfp_expires_at`).on(table.onChildrenFinishedProcessingExpiresAt),
       index(`ix_${tableName}_close_expires_at`).on(table.closeExpiresAt),
-      index(`ix_${tableName}_npc_execution_id_updated_at`).on(
+      index(`ix_${tableName}_executor_id_npc_updated_at`).on(
+        table.executorId,
         table.needsPromiseCancellation,
-        table.executionId,
+        table.updatedAt,
+      ),
+      index(`ix_${tableName}_parent_execution_id_is_finished`).on(
+        table.parentExecutionId,
+        table.isFinished,
+      ),
+      index(`ix_${tableName}_is_finished_close_status_updated_at`).on(
+        table.isFinished,
+        table.closeStatus,
         table.updatedAt,
       ),
     ],
@@ -196,6 +207,8 @@ export type TaskExecutionsSQLiteTable = ReturnType<typeof createSQLiteTaskExecut
  *
  * @param db - A Drizzle SQLite database instance.
  * @param taskExecutionsTable - The table created by `createSQLiteTaskExecutionsTable()`.
+ * @param options - The options for the storage.
+ * @param options.enableTestMode - Whether to enable test mode. Defaults to false.
  * @returns A TaskExecutionsStorage implementation for use with DurableExecutor.
  */
 export function createSQLiteTaskExecutionsStorage<
@@ -205,9 +218,12 @@ export function createSQLiteTaskExecutionsStorage<
 >(
   db: BaseSQLiteDatabase<'async', TRunResult, TFullSchema, TSchema>,
   taskExecutionsTable: TaskExecutionsSQLiteTable,
+  options: {
+    enableTestMode?: boolean
+  } = {},
 ): TaskExecutionsStorage {
   return new TaskExecutionsStorageWithMutex(
-    new SQLiteTaskExecutionsStorageNonAtomic(db, taskExecutionsTable),
+    new SQLiteTaskExecutionsStorageNonAtomic(db, taskExecutionsTable, options),
   )
 }
 
@@ -219,116 +235,82 @@ class SQLiteTaskExecutionsStorageNonAtomic<
 {
   private readonly db: BaseSQLiteDatabase<'async', TRunResult, TFullSchema, TSchema>
   private readonly taskExecutionsTable: TaskExecutionsSQLiteTable
+  private readonly enableTestMode: boolean
 
   constructor(
     db: BaseSQLiteDatabase<'async', TRunResult, TFullSchema, TSchema>,
     taskExecutionsTable: TaskExecutionsSQLiteTable,
+    {
+      enableTestMode = false,
+    }: {
+      enableTestMode?: boolean
+    } = {},
   ) {
     this.db = db
     this.taskExecutionsTable = taskExecutionsTable
+    this.enableTestMode = enableTestMode
   }
 
-  private async decrementParentActiveChildrenCount(
-    tx: SQLiteTransaction<'async', TRunResult, TFullSchema, TSchema>,
-    executionIds: Array<string>,
-    updatedAt: Date,
-  ): Promise<void> {
-    if (executionIds.length === 0) {
-      return
-    }
-
-    await tx
-      .update(this.taskExecutionsTable)
-      .set({
-        activeChildrenCount: sql`${this.taskExecutionsTable.activeChildrenCount} - 1`,
-        updatedAt,
-      })
-      .where(
-        inArray(
-          this.taskExecutionsTable.executionId,
-          sql`(
-            SELECT parent_execution_id
-            FROM ${this.taskExecutionsTable}
-            WHERE ${inArray(this.taskExecutionsTable.executionId, executionIds)}
-            AND parent_execution_id IS NOT NULL
-          )`,
-        ),
-      )
-  }
-
-  async insert(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+  async insertMany(executions: Array<TaskExecutionStorageValue>): Promise<void> {
     if (executions.length === 0) {
       return
     }
-    const rows = executions.map((execution) => taskExecutionStorageValueToInsertValue(execution))
-    await this.db.insert(this.taskExecutionsTable).values(rows)
-  }
 
-  async getByIds(
-    executionIds: Array<string>,
-  ): Promise<Array<TaskExecutionStorageValue | undefined>> {
-    const rows = await this.db
-      .select()
-      .from(this.taskExecutionsTable)
-      .where(inArray(this.taskExecutionsTable.executionId, executionIds))
-    const rowsMap = new Map<string, TaskExecutionStorageValue>()
-    for (const row of rows) {
-      rowsMap.set(row.executionId, taskExecutionSelectValueToStorageValue(row))
-    }
-    return executionIds.map((executionId) => rowsMap.get(executionId))
+    const rows = executions.map((execution) => taskExecutionStorageValueToDBValue(execution))
+    await this.db.insert(this.taskExecutionsTable).values(rows)
   }
 
   async getById(
     executionId: string,
-    filters: TaskExecutionStorageGetByIdsFilters,
+    filters: TaskExecutionStorageGetByIdFilters,
   ): Promise<TaskExecutionStorageValue | undefined> {
     const rows = await this.db
       .select()
       .from(this.taskExecutionsTable)
       .where(getByIdWhereCondition(this.taskExecutionsTable, executionId, filters))
       .limit(1)
-    return rows.length > 0 ? taskExecutionSelectValueToStorageValue(rows[0]!) : undefined
+    return rows.length > 0 ? taskExecutionDBValueToStorageValue(rows[0]!) : undefined
+  }
+
+  async getBySleepingTaskUniqueId(
+    sleepingTaskUniqueId: string,
+  ): Promise<TaskExecutionStorageValue | undefined> {
+    const rows = await this.db
+      .select()
+      .from(this.taskExecutionsTable)
+      .where(eq(this.taskExecutionsTable.sleepingTaskUniqueId, sleepingTaskUniqueId))
+      .limit(1)
+    return rows.length > 0 ? taskExecutionDBValueToStorageValue(rows[0]!) : undefined
   }
 
   async updateById(
     executionId: string,
-    filters: TaskExecutionStorageGetByIdsFilters,
+    filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
   ): Promise<void> {
-    const { dbUpdate, decrementParentActiveChildrenCount } =
-      taskExecutionStorageValueToUpdateValue(update)
+    const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    await (!decrementParentActiveChildrenCount
-      ? this.db
-          .update(this.taskExecutionsTable)
-          .set(dbUpdate)
-          .where(getByIdWhereCondition(this.taskExecutionsTable, executionId, filters))
-      : this.db.transaction(async (tx) => {
-          const updateResult = await tx
-            .update(this.taskExecutionsTable)
-            .set(dbUpdate)
-            .where(getByIdWhereCondition(this.taskExecutionsTable, executionId, filters))
-            .returning({ executionId: this.taskExecutionsTable.executionId })
-
-          if (updateResult.length > 0) {
-            await this.decrementParentActiveChildrenCount(
-              tx,
-              updateResult.map((row) => row.executionId),
-              dbUpdate.updatedAt,
-            )
-          }
-        }))
+    await this.db
+      .update(this.taskExecutionsTable)
+      .set(dbUpdate)
+      .where(getByIdWhereCondition(this.taskExecutionsTable, executionId, filters))
   }
 
-  async updateByIdAndInsertIfUpdated(
+  async updateByIdAndInsertManyIfUpdated(
     executionId: string,
-    filters: TaskExecutionStorageGetByIdsFilters,
+    filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
     executionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
   ): Promise<void> {
-    const { dbUpdate, decrementParentActiveChildrenCount } =
-      taskExecutionStorageValueToUpdateValue(update)
+    const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
+    if (executionsToInsertIfAnyUpdated.length === 0) {
+      return await this.updateById(executionId, filters, update)
+    }
+
+    const rowsToInsert = executionsToInsertIfAnyUpdated.map((execution) =>
+      taskExecutionStorageValueToDBValue(execution),
+    )
     await this.db.transaction(async (tx) => {
       const updateResult = await tx
         .update(this.taskExecutionsTable)
@@ -337,68 +319,21 @@ class SQLiteTaskExecutionsStorageNonAtomic<
         .returning({ executionId: this.taskExecutionsTable.executionId })
 
       if (updateResult.length > 0) {
-        if (decrementParentActiveChildrenCount) {
-          await this.decrementParentActiveChildrenCount(tx, [executionId], dbUpdate.updatedAt)
-        }
-
-        if (executionsToInsertIfAnyUpdated.length > 0) {
-          const rows = executionsToInsertIfAnyUpdated.map((execution) =>
-            taskExecutionStorageValueToInsertValue(execution),
-          )
-          await tx.insert(this.taskExecutionsTable).values(rows)
-        }
+        await tx.insert(this.taskExecutionsTable).values(rowsToInsert)
       }
     })
-  }
-
-  async updateByIdsAndStatuses(
-    executionIds: Array<string>,
-    statuses: Array<TaskExecutionStatus>,
-    update: TaskExecutionStorageUpdate,
-  ): Promise<void> {
-    if (executionIds.length === 0) {
-      return
-    }
-
-    const { dbUpdate, decrementParentActiveChildrenCount } =
-      taskExecutionStorageValueToUpdateValue(update)
-    const conditions = [inArray(this.taskExecutionsTable.executionId, executionIds)]
-    if (statuses.length > 0) {
-      conditions.push(inArray(this.taskExecutionsTable.status, statuses))
-    }
-
-    await (!decrementParentActiveChildrenCount
-      ? this.db
-          .update(this.taskExecutionsTable)
-          .set(dbUpdate)
-          .where(and(...conditions))
-      : this.db.transaction(async (tx) => {
-          const updateResult = await tx
-            .update(this.taskExecutionsTable)
-            .set(dbUpdate)
-            .where(and(...conditions))
-            .returning({ executionId: this.taskExecutionsTable.executionId })
-
-          if (updateResult.length > 0) {
-            await this.decrementParentActiveChildrenCount(
-              tx,
-              updateResult.map((row) => row.executionId),
-              dbUpdate.updatedAt,
-            )
-          }
-        }))
   }
 
   async updateByStatusAndStartAtLessThanAndReturn(
     status: TaskExecutionStatus,
     startAtLessThan: Date,
     update: TaskExecutionStorageUpdate,
+    updateExpiresAtWithStartedAt: Date,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
-    const { dbUpdate, decrementParentActiveChildrenCount } =
-      taskExecutionStorageValueToUpdateValue(update)
+    const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(async (tx) => {
+    const updatedRows = await this.db.transaction(async (tx) => {
       const rows = await tx
         .select()
         .from(this.taskExecutionsTable)
@@ -414,25 +349,22 @@ class SQLiteTaskExecutionsStorageNonAtomic<
       if (rows.length > 0) {
         await tx
           .update(this.taskExecutionsTable)
-          .set(dbUpdate)
+          .set({
+            ...dbUpdate,
+            expiresAt: sql`${updateExpiresAtWithStartedAt.getTime()} + timeout_ms`,
+          })
           .where(
             inArray(
               this.taskExecutionsTable.executionId,
               rows.map((row) => row.executionId),
             ),
           )
-
-        if (decrementParentActiveChildrenCount) {
-          await this.decrementParentActiveChildrenCount(
-            tx,
-            rows.map((row) => row.executionId),
-            dbUpdate.updatedAt,
-          )
-        }
       }
-
-      return rows.map((row) => taskExecutionSelectValueToStorageValue(row))
+      return rows
     })
+    return updatedRows.map((row) =>
+      taskExecutionDBValueToStorageValue(row, update, updateExpiresAtWithStartedAt),
+    )
   }
 
   async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
@@ -442,7 +374,9 @@ class SQLiteTaskExecutionsStorageNonAtomic<
     update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.db.transaction(async (tx) => {
+    const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
+
+    const updatedRows = await this.db.transaction(async (tx) => {
       const rows = await tx
         .select()
         .from(this.taskExecutionsTable)
@@ -460,9 +394,6 @@ class SQLiteTaskExecutionsStorageNonAtomic<
         .limit(limit)
 
       if (rows.length > 0) {
-        const { dbUpdate, decrementParentActiveChildrenCount } =
-          taskExecutionStorageValueToUpdateValue(update)
-
         await tx
           .update(this.taskExecutionsTable)
           .set(dbUpdate)
@@ -472,83 +403,65 @@ class SQLiteTaskExecutionsStorageNonAtomic<
               rows.map((row) => row.executionId),
             ),
           )
-
-        if (decrementParentActiveChildrenCount) {
-          await this.decrementParentActiveChildrenCount(
-            tx,
-            rows.map((row) => row.executionId),
-            dbUpdate.updatedAt,
-          )
-        }
       }
-
-      return rows.map((row) => taskExecutionSelectValueToStorageValue(row))
+      return rows
     })
+    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByStatusesAndCloseStatusAndReturn(
-    statuses: Array<TaskExecutionStatus>,
+  async updateByCloseStatusAndReturn(
     closeStatus: TaskExecutionCloseStatus,
     update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.db.transaction(async (tx) => {
+    const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
+
+    const updatedRows = await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select()
+        .from(this.taskExecutionsTable)
+        .where(eq(this.taskExecutionsTable.closeStatus, closeStatus))
+        .orderBy(asc(this.taskExecutionsTable.updatedAt))
+        .limit(limit)
+
+      if (rows.length > 0) {
+        await tx
+          .update(this.taskExecutionsTable)
+          .set(dbUpdate)
+          .where(
+            inArray(
+              this.taskExecutionsTable.executionId,
+              rows.map((row) => row.executionId),
+            ),
+          )
+      }
+      return rows
+    })
+    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
+  }
+
+  async updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+    isSleepingTask: boolean,
+    expiresAtLessThan: Date,
+    update: TaskExecutionStorageUpdate,
+    limit: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
+
+    const updatedRows = await this.db.transaction(async (tx) => {
       const rows = await tx
         .select()
         .from(this.taskExecutionsTable)
         .where(
           and(
-            inArray(this.taskExecutionsTable.status, statuses),
-            eq(this.taskExecutionsTable.closeStatus, closeStatus),
+            eq(this.taskExecutionsTable.isSleepingTask, isSleepingTask),
+            lt(this.taskExecutionsTable.expiresAt, expiresAtLessThan),
           ),
         )
-        .orderBy(asc(this.taskExecutionsTable.updatedAt))
-        .limit(limit)
-
-      if (rows.length > 0) {
-        const { dbUpdate, decrementParentActiveChildrenCount } =
-          taskExecutionStorageValueToUpdateValue(update)
-
-        await tx
-          .update(this.taskExecutionsTable)
-          .set(dbUpdate)
-          .where(
-            inArray(
-              this.taskExecutionsTable.executionId,
-              rows.map((row) => row.executionId),
-            ),
-          )
-
-        if (decrementParentActiveChildrenCount) {
-          await this.decrementParentActiveChildrenCount(
-            tx,
-            rows.map((row) => row.executionId),
-            dbUpdate.updatedAt,
-          )
-        }
-      }
-
-      return rows.map((row) => taskExecutionSelectValueToStorageValue(row))
-    })
-  }
-
-  async updateByExpiresAtLessThanAndReturn(
-    expiresAtLessThan: Date,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.db.transaction(async (tx) => {
-      const rows = await tx
-        .select()
-        .from(this.taskExecutionsTable)
-        .where(lt(this.taskExecutionsTable.expiresAt, expiresAtLessThan))
         .orderBy(asc(this.taskExecutionsTable.expiresAt))
         .limit(limit)
 
       if (rows.length > 0) {
-        const { dbUpdate, decrementParentActiveChildrenCount } =
-          taskExecutionStorageValueToUpdateValue(update)
-
         await tx
           .update(this.taskExecutionsTable)
           .set(dbUpdate)
@@ -558,18 +471,10 @@ class SQLiteTaskExecutionsStorageNonAtomic<
               rows.map((row) => row.executionId),
             ),
           )
-
-        if (decrementParentActiveChildrenCount) {
-          await this.decrementParentActiveChildrenCount(
-            tx,
-            rows.map((row) => row.executionId),
-            dbUpdate.updatedAt,
-          )
-        }
       }
-
-      return rows.map((row) => taskExecutionSelectValueToStorageValue(row))
+      return rows
     })
+    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
   async updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
@@ -577,7 +482,9 @@ class SQLiteTaskExecutionsStorageNonAtomic<
     update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.db.transaction(async (tx) => {
+    const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
+
+    const updatedRows = await this.db.transaction(async (tx) => {
       const rows = await tx
         .select()
         .from(this.taskExecutionsTable)
@@ -591,9 +498,6 @@ class SQLiteTaskExecutionsStorageNonAtomic<
         .limit(limit)
 
       if (rows.length > 0) {
-        const { dbUpdate, decrementParentActiveChildrenCount } =
-          taskExecutionStorageValueToUpdateValue(update)
-
         await tx
           .update(this.taskExecutionsTable)
           .set(dbUpdate)
@@ -603,18 +507,10 @@ class SQLiteTaskExecutionsStorageNonAtomic<
               rows.map((row) => row.executionId),
             ),
           )
-
-        if (decrementParentActiveChildrenCount) {
-          await this.decrementParentActiveChildrenCount(
-            tx,
-            rows.map((row) => row.executionId),
-            dbUpdate.updatedAt,
-          )
-        }
       }
-
-      return rows.map((row) => taskExecutionSelectValueToStorageValue(row))
+      return rows
     })
+    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
   async updateByCloseExpiresAtLessThanAndReturn(
@@ -622,7 +518,9 @@ class SQLiteTaskExecutionsStorageNonAtomic<
     update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.db.transaction(async (tx) => {
+    const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
+
+    const updatedRows = await this.db.transaction(async (tx) => {
       const rows = await tx
         .select()
         .from(this.taskExecutionsTable)
@@ -631,9 +529,108 @@ class SQLiteTaskExecutionsStorageNonAtomic<
         .limit(limit)
 
       if (rows.length > 0) {
-        const { dbUpdate, decrementParentActiveChildrenCount } =
-          taskExecutionStorageValueToUpdateValue(update)
+        await tx
+          .update(this.taskExecutionsTable)
+          .set(dbUpdate)
+          .where(
+            inArray(
+              this.taskExecutionsTable.executionId,
+              rows.map((row) => row.executionId),
+            ),
+          )
+      }
+      return rows
+    })
+    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
+  }
 
+  async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
+    executorId: string,
+    needsPromiseCancellation: boolean,
+    update: TaskExecutionStorageUpdate,
+    limit: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
+
+    const updatedRows = await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select()
+        .from(this.taskExecutionsTable)
+        .where(
+          and(
+            eq(this.taskExecutionsTable.executorId, executorId),
+            eq(this.taskExecutionsTable.needsPromiseCancellation, needsPromiseCancellation),
+          ),
+        )
+        .orderBy(asc(this.taskExecutionsTable.updatedAt))
+        .limit(limit)
+
+      if (rows.length > 0) {
+        await tx
+          .update(this.taskExecutionsTable)
+          .set(dbUpdate)
+          .where(
+            inArray(
+              this.taskExecutionsTable.executionId,
+              rows.map((row) => row.executionId),
+            ),
+          )
+      }
+      return rows
+    })
+    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
+  }
+
+  async getByParentExecutionId(
+    parentExecutionId: string,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    const rows = await this.db
+      .select()
+      .from(this.taskExecutionsTable)
+      .where(eq(this.taskExecutionsTable.parentExecutionId, parentExecutionId))
+    return rows.map((row) => taskExecutionDBValueToStorageValue(row))
+  }
+
+  async updateByParentExecutionIdAndIsFinished(
+    parentExecutionId: string,
+    isFinished: boolean,
+    update: TaskExecutionStorageUpdate,
+  ): Promise<void> {
+    const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
+
+    await this.db
+      .update(this.taskExecutionsTable)
+      .set(dbUpdate)
+      .where(
+        and(
+          eq(this.taskExecutionsTable.parentExecutionId, parentExecutionId),
+          eq(this.taskExecutionsTable.isFinished, isFinished),
+        ),
+      )
+  }
+
+  async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
+    isFinished: boolean,
+    closeStatus: TaskExecutionCloseStatus,
+    update: TaskExecutionStorageUpdate,
+    limit: number,
+  ): Promise<number> {
+    const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
+
+    return await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select()
+        .from(this.taskExecutionsTable)
+        .where(
+          and(
+            eq(this.taskExecutionsTable.isFinished, isFinished),
+            eq(this.taskExecutionsTable.closeStatus, closeStatus),
+          ),
+        )
+        .orderBy(asc(this.taskExecutionsTable.updatedAt))
+        .limit(limit)
+
+      if (rows.length > 0) {
         await tx
           .update(this.taskExecutionsTable)
           .set(dbUpdate)
@@ -644,87 +641,74 @@ class SQLiteTaskExecutionsStorageNonAtomic<
             ),
           )
 
-        if (decrementParentActiveChildrenCount) {
-          await this.decrementParentActiveChildrenCount(
-            tx,
-            rows.map((row) => row.executionId),
-            dbUpdate.updatedAt,
+        const parentExecutionIdToDecrementValueMap = new Map<string, number>()
+        for (const row of rows) {
+          if (row.parentExecutionId != null) {
+            parentExecutionIdToDecrementValueMap.set(
+              row.parentExecutionId,
+              (parentExecutionIdToDecrementValueMap.get(row.parentExecutionId) ?? 0) + 1,
+            )
+          }
+        }
+
+        if (parentExecutionIdToDecrementValueMap.size > 0) {
+          const parentIds = [...parentExecutionIdToDecrementValueMap.keys()].sort()
+          const caseStatements = parentIds.map(
+            (parentId) =>
+              sql`WHEN ${parentId} THEN ${parentExecutionIdToDecrementValueMap.get(parentId)}`,
           )
+
+          await tx.run(sql`
+            UPDATE ${this.taskExecutionsTable}
+            SET
+              active_children_count = active_children_count - (
+                CASE execution_id
+                  ${sql.join(caseStatements, sql` `)}
+                  ELSE 0
+                END
+              ),
+              updated_at = ${dbUpdate.updatedAt}
+            WHERE execution_id IN (${sql.join(parentIds, sql`, `)})
+          `)
         }
       }
-
-      return rows.map((row) => taskExecutionSelectValueToStorageValue(row))
+      return rows.length
     })
   }
 
-  async getByNeedsPromiseCancellationAndIds(
-    needsPromiseCancellation: boolean,
-    executionIds: Array<string>,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    if (executionIds.length === 0) {
-      return []
-    }
-
-    const rows = await this.db
-      .select()
-      .from(this.taskExecutionsTable)
-      .where(
-        and(
-          eq(this.taskExecutionsTable.needsPromiseCancellation, needsPromiseCancellation),
-          inArray(this.taskExecutionsTable.executionId, executionIds),
-        ),
-      )
-      .orderBy(asc(this.taskExecutionsTable.updatedAt))
-      .limit(limit)
-
-    return rows.map((row) => taskExecutionSelectValueToStorageValue(row))
-  }
-
-  async updateByNeedsPromiseCancellationAndIds(
-    needsPromiseCancellation: boolean,
-    executionIds: Array<string>,
-    update: TaskExecutionStorageUpdate,
-  ): Promise<void> {
-    if (executionIds.length === 0) {
+  async deleteById(executionId: string): Promise<void> {
+    if (!this.enableTestMode) {
       return
     }
 
-    const { dbUpdate, decrementParentActiveChildrenCount } =
-      taskExecutionStorageValueToUpdateValue(update)
-    const condition = and(
-      eq(this.taskExecutionsTable.needsPromiseCancellation, needsPromiseCancellation),
-      inArray(this.taskExecutionsTable.executionId, executionIds),
-    )
+    await this.db
+      .delete(this.taskExecutionsTable)
+      .where(eq(this.taskExecutionsTable.executionId, executionId))
+  }
 
-    await (!decrementParentActiveChildrenCount
-      ? this.db.update(this.taskExecutionsTable).set(dbUpdate).where(condition)
-      : this.db.transaction(async (tx) => {
-          const updateResult = await tx
-            .update(this.taskExecutionsTable)
-            .set(dbUpdate)
-            .where(condition)
-            .returning({ executionId: this.taskExecutionsTable.executionId })
+  async deleteAll(): Promise<void> {
+    if (!this.enableTestMode) {
+      return
+    }
 
-          if (updateResult.length > 0) {
-            await this.decrementParentActiveChildrenCount(
-              tx,
-              updateResult.map((row) => row.executionId),
-              dbUpdate.updatedAt,
-            )
-          }
-        }))
+    await this.db.delete(this.taskExecutionsTable)
   }
 }
 
 function getByIdWhereCondition(
   table: TaskExecutionsSQLiteTable,
   executionId: string,
-  filters: TaskExecutionStorageGetByIdsFilters,
+  filters: TaskExecutionStorageGetByIdFilters,
 ): SQL | undefined {
   const conditions: Array<SQL> = [eq(table.executionId, executionId)]
-  if (filters.statuses != null && filters.statuses.length > 0) {
-    conditions.push(inArray(table.status, filters.statuses))
+  if (filters.isSleepingTask != null) {
+    conditions.push(eq(table.isSleepingTask, filters.isSleepingTask))
+  }
+  if (filters.status != null) {
+    conditions.push(eq(table.status, filters.status))
+  }
+  if (filters.isFinished != null) {
+    conditions.push(eq(table.isFinished, filters.isFinished))
   }
   return and(...conditions)
 }

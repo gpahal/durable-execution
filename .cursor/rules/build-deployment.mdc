@@ -1,0 +1,61 @@
+---
+description: Build system and deployment workflow patterns
+---
+
+# Build and Deployment Workflows
+
+## Build System
+
+**Turbo Orchestration**: [turbo.json](mdc:turbo.json) manages parallel builds with dependency resolution and caching
+
+**Package Configuration**: Each package uses `tsup` configured via each package's [tsup.config.ts](mdc:durable-execution/tsup.config.ts):
+
+- ESM-only output (`"type": "module"`)
+- TypeScript declarations (`.d.ts`)
+- Tree shaking enabled
+- Source maps for debugging
+
+## Development Commands
+
+```bash
+# Essential workflow
+pnpm install && pnpm build      # Full setup
+pnpm -F <package> build/test    # Package-specific
+pnpm pre-commit                 # Validation pipeline
+```
+
+## Release Process
+
+**Changesets**: `pnpm cs` → `changeset version` → `pnpm cs-publish`
+
+**Categories**: Major (breaking), Minor (features), Patch (fixes)
+
+**Checklist**: Tests pass, docs updated, breaking changes documented
+
+## Documentation
+
+**API Docs**: `pnpm build-docs` generates TypeDoc with Mermaid support using [typedoc.json](mdc:typedoc.json)
+
+**Package Docs**: README.md (users), CLAUDE.md (AI guidance), CHANGELOG.md (versions)
+
+## Performance & CI/CD
+
+**Build Optimization**: Turbo caching, parallel execution, tree shaking (`sideEffects: false`)
+
+**CI outline**:
+
+```yaml
+- run: pnpm install --frozen-lockfile
+- run: pnpm pre-commit
+- run: pnpm test-coverage
+- run: pnpm cs-publish  # if main branch
+```
+
+**Requirements**: Node.js >=20.0.0, pnpm 10.14.0, catalog dependencies
+
+## Troubleshooting
+
+- **Build failures**: Check tsconfig.json, catalog references, tsup config
+- **Cache issues**: `turbo clean`
+- **Dependencies**: Verify workspace references, no circular deps
+- **Performance**: Check turbo inputs, bundle size, memory usage

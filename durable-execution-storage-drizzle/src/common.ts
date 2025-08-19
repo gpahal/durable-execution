@@ -1,12 +1,13 @@
-import type {
-  DurableExecutionErrorStorageValue,
-  TaskExecutionCloseStatus,
-  TaskExecutionOnChildrenFinishedProcessingStatus,
-  TaskExecutionStatus,
-  TaskExecutionStorageUpdate,
-  TaskExecutionStorageValue,
-  TaskExecutionSummary,
-  TaskRetryOptions,
+import {
+  applyTaskExecutionStorageUpdate,
+  type DurableExecutionErrorStorageValue,
+  type TaskExecutionCloseStatus,
+  type TaskExecutionOnChildrenFinishedProcessingStatus,
+  type TaskExecutionStatus,
+  type TaskExecutionStorageUpdate,
+  type TaskExecutionStorageValue,
+  type TaskExecutionSummary,
+  type TaskRetryOptions,
 } from 'durable-execution'
 
 export type TaskExecutionDBValue = {
@@ -19,11 +20,16 @@ export type TaskExecutionDBValue = {
 
   taskId: string
   executionId: string
+  isSleepingTask: boolean
+  sleepingTaskUniqueId?: string | null
   retryOptions: TaskRetryOptions
   sleepMsBeforeRun: number
   timeoutMs: number
   input: string
+
+  executorId?: string | null
   status: TaskExecutionStatus
+  isFinished: boolean
   runOutput?: string | null
   output?: string | null
   error?: DurableExecutionErrorStorageValue | null
@@ -51,8 +57,10 @@ export type TaskExecutionDBValue = {
   updatedAt: Date
 }
 
-export type TaskExecutionDBUpdateValue = {
+export type TaskExecutionDBUpdate = {
+  executorId?: string | null
   status?: TaskExecutionStatus
+  isFinished?: boolean
   runOutput?: string | null
   output?: string
   error?: DurableExecutionErrorStorageValue | null
@@ -64,7 +72,7 @@ export type TaskExecutionDBUpdateValue = {
 
   children?: Array<TaskExecutionSummary>
   activeChildrenCount?: number
-  decrementParentActiveChildrenCount?: boolean
+  shouldDecrementParentActiveChildrenCount?: boolean
   onChildrenFinishedProcessingStatus?: TaskExecutionOnChildrenFinishedProcessingStatus
   onChildrenFinishedProcessingExpiresAt?: Date | null
   onChildrenFinishedProcessingFinishedAt?: Date
@@ -80,7 +88,7 @@ export type TaskExecutionDBUpdateValue = {
   updatedAt: Date
 }
 
-export function taskExecutionStorageValueToInsertValue(
+export function taskExecutionStorageValueToDBValue(
   value: TaskExecutionStorageValue,
 ): TaskExecutionDBValue {
   return {
@@ -92,11 +100,15 @@ export function taskExecutionStorageValueToInsertValue(
     isFinalizeTaskOfParentTask: value.parent?.isFinalizeTaskOfParentTask,
     taskId: value.taskId,
     executionId: value.executionId,
+    isSleepingTask: value.isSleepingTask,
+    sleepingTaskUniqueId: value.sleepingTaskUniqueId,
     retryOptions: value.retryOptions,
     sleepMsBeforeRun: value.sleepMsBeforeRun,
     timeoutMs: value.timeoutMs,
     input: value.input,
+    executorId: value.executorId,
     status: value.status,
+    isFinished: value.isFinished,
     runOutput: value.runOutput,
     output: value.output,
     error: value.error,
@@ -120,104 +132,131 @@ export function taskExecutionStorageValueToInsertValue(
   }
 }
 
-export function taskExecutionSelectValueToStorageValue(
-  row: TaskExecutionDBValue,
+export function taskExecutionDBValueToStorageValue(
+  dbValue: TaskExecutionDBValue,
+  update?: TaskExecutionStorageUpdate,
+  updateExpiresAtWithStartedAt?: Date,
 ): TaskExecutionStorageValue {
-  const obj: TaskExecutionStorageValue = {
-    taskId: row.taskId,
-    executionId: row.executionId,
-    retryOptions: row.retryOptions,
-    sleepMsBeforeRun: row.sleepMsBeforeRun,
-    timeoutMs: row.timeoutMs,
-    input: row.input,
-    status: row.status,
-    retryAttempts: row.retryAttempts,
-    startAt: row.startAt,
-    activeChildrenCount: row.activeChildrenCount,
-    onChildrenFinishedProcessingStatus: row.onChildrenFinishedProcessingStatus,
-    closeStatus: row.closeStatus,
-    needsPromiseCancellation: row.needsPromiseCancellation,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
+  const value: TaskExecutionStorageValue = {
+    taskId: dbValue.taskId,
+    executionId: dbValue.executionId,
+    isSleepingTask: dbValue.isSleepingTask,
+    retryOptions: dbValue.retryOptions,
+    sleepMsBeforeRun: dbValue.sleepMsBeforeRun,
+    timeoutMs: dbValue.timeoutMs,
+    input: dbValue.input,
+    status: dbValue.status,
+    isFinished: dbValue.isFinished,
+    retryAttempts: dbValue.retryAttempts,
+    startAt: dbValue.startAt,
+    activeChildrenCount: dbValue.activeChildrenCount,
+    onChildrenFinishedProcessingStatus: dbValue.onChildrenFinishedProcessingStatus,
+    closeStatus: dbValue.closeStatus,
+    needsPromiseCancellation: dbValue.needsPromiseCancellation,
+    createdAt: dbValue.createdAt,
+    updatedAt: dbValue.updatedAt,
   }
 
-  if (row.rootTaskId && row.rootExecutionId) {
-    obj.root = {
-      taskId: row.rootTaskId,
-      executionId: row.rootExecutionId,
+  if (dbValue.rootTaskId && dbValue.rootExecutionId) {
+    value.root = {
+      taskId: dbValue.rootTaskId,
+      executionId: dbValue.rootExecutionId,
     }
   }
 
-  if (row.parentTaskId && row.parentExecutionId) {
-    obj.parent = {
-      taskId: row.parentTaskId,
-      executionId: row.parentExecutionId,
-      indexInParentChildTaskExecutions: row.indexInParentChildTaskExecutions ?? 0,
-      isFinalizeTaskOfParentTask: row.isFinalizeTaskOfParentTask ?? false,
+  if (dbValue.parentTaskId && dbValue.parentExecutionId) {
+    value.parent = {
+      taskId: dbValue.parentTaskId,
+      executionId: dbValue.parentExecutionId,
+      indexInParentChildTaskExecutions: dbValue.indexInParentChildTaskExecutions ?? 0,
+      isFinalizeTaskOfParentTask: dbValue.isFinalizeTaskOfParentTask ?? false,
     }
   }
 
-  if (row.runOutput != null) {
-    obj.runOutput = row.runOutput
+  if (dbValue.executorId) {
+    value.executorId = dbValue.executorId
   }
 
-  if (row.output != null) {
-    obj.output = row.output
+  if (dbValue.sleepingTaskUniqueId != null) {
+    value.sleepingTaskUniqueId = dbValue.sleepingTaskUniqueId
   }
 
-  if (row.error) {
-    obj.error = row.error
+  if (dbValue.runOutput != null) {
+    value.runOutput = dbValue.runOutput
   }
 
-  if (row.startedAt) {
-    obj.startedAt = row.startedAt
+  if (dbValue.output != null) {
+    value.output = dbValue.output
   }
 
-  if (row.expiresAt) {
-    obj.expiresAt = row.expiresAt
+  if (dbValue.error) {
+    value.error = dbValue.error
   }
 
-  if (row.finishedAt) {
-    obj.finishedAt = row.finishedAt
+  if (dbValue.startedAt) {
+    value.startedAt = dbValue.startedAt
   }
 
-  if (row.children) {
-    obj.children = row.children
+  if (dbValue.expiresAt) {
+    value.expiresAt = dbValue.expiresAt
   }
 
-  if (row.onChildrenFinishedProcessingExpiresAt) {
-    obj.onChildrenFinishedProcessingExpiresAt = row.onChildrenFinishedProcessingExpiresAt
+  if (updateExpiresAtWithStartedAt) {
+    value.expiresAt = new Date(updateExpiresAtWithStartedAt.getTime() + dbValue.timeoutMs)
   }
 
-  if (row.onChildrenFinishedProcessingFinishedAt) {
-    obj.onChildrenFinishedProcessingFinishedAt = row.onChildrenFinishedProcessingFinishedAt
+  if (dbValue.finishedAt) {
+    value.finishedAt = dbValue.finishedAt
   }
 
-  if (row.finalize) {
-    obj.finalize = row.finalize
+  if (dbValue.children) {
+    value.children = dbValue.children
   }
 
-  if (row.closeExpiresAt) {
-    obj.closeExpiresAt = row.closeExpiresAt
+  if (dbValue.onChildrenFinishedProcessingExpiresAt) {
+    value.onChildrenFinishedProcessingExpiresAt = dbValue.onChildrenFinishedProcessingExpiresAt
   }
 
-  if (row.closedAt) {
-    obj.closedAt = row.closedAt
+  if (dbValue.onChildrenFinishedProcessingFinishedAt) {
+    value.onChildrenFinishedProcessingFinishedAt = dbValue.onChildrenFinishedProcessingFinishedAt
   }
 
-  return obj
+  if (dbValue.finalize) {
+    value.finalize = dbValue.finalize
+  }
+
+  if (dbValue.closeExpiresAt) {
+    value.closeExpiresAt = dbValue.closeExpiresAt
+  }
+
+  if (dbValue.closedAt) {
+    value.closedAt = dbValue.closedAt
+  }
+
+  return update ? applyTaskExecutionStorageUpdate(value, update) : value
 }
 
-export function taskExecutionStorageValueToUpdateValue(update: TaskExecutionStorageUpdate): {
-  dbUpdate: TaskExecutionDBUpdateValue
-  decrementParentActiveChildrenCount: boolean
-} {
-  const dbUpdate: TaskExecutionDBUpdateValue = {
+export function taskExecutionStorageUpdateToDBUpdate(
+  update: TaskExecutionStorageUpdate,
+): TaskExecutionDBUpdate {
+  const dbUpdate: TaskExecutionDBUpdate = {
     updatedAt: update.updatedAt,
+  }
+
+  if (update.executorId != null) {
+    dbUpdate.executorId = update.executorId
+  }
+
+  if (update.unsetExecutorId) {
+    dbUpdate.executorId = null
   }
 
   if (update.status != null) {
     dbUpdate.status = update.status
+  }
+
+  if (update.isFinished != null) {
+    dbUpdate.isFinished = update.isFinished
   }
 
   if (update.runOutput != null) {
@@ -312,8 +351,5 @@ export function taskExecutionStorageValueToUpdateValue(update: TaskExecutionStor
     dbUpdate.needsPromiseCancellation = update.needsPromiseCancellation
   }
 
-  return {
-    dbUpdate,
-    decrementParentActiveChildrenCount: update.decrementParentActiveChildrenCount ?? false,
-  }
+  return dbUpdate
 }

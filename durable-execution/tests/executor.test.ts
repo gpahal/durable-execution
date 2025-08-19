@@ -1,6 +1,7 @@
 import { sleep } from '@gpahal/std/promises'
 
 import {
+  ChildTask,
   DurableExecutionError,
   DurableExecutionNotFoundError,
   DurableExecutor,
@@ -187,7 +188,7 @@ describe('executor', () => {
   it('should throw when getting handle for unknown task', async () => {
     await expect(async () => {
       // @ts-expect-error - Testing invalid input
-      await executor.getTaskHandle('unknown', 'some-execution-id')
+      await executor.getTaskExecutionHandle('unknown', 'some-execution-id')
     }).rejects.toThrow(DurableExecutionNotFoundError)
   })
 
@@ -199,7 +200,7 @@ describe('executor', () => {
     })
 
     await expect(async () => {
-      await executor.getTaskHandle(testTask, 'non-existent-execution-id')
+      await executor.getTaskExecutionHandle(testTask, 'non-existent-execution-id')
     }).rejects.toThrow(DurableExecutionNotFoundError)
   })
 
@@ -220,7 +221,7 @@ describe('executor', () => {
     const execution1 = await handle1.getExecution()
 
     await expect(async () => {
-      await executor.getTaskHandle(testTask2, execution1.executionId)
+      await executor.getTaskExecutionHandle(testTask2, execution1.executionId)
     }).rejects.toThrow(DurableExecutionNotFoundError)
   })
 
@@ -243,15 +244,15 @@ describe('executor', () => {
     }).rejects.toThrow(DurableExecutionError)
 
     await expect(async () => {
-      await executor.getTaskHandle(testTask, 'some-id')
+      await executor.getTaskExecutionHandle(testTask, 'some-id')
     }).rejects.toThrow(DurableExecutionError)
   })
 
   it('should handle storage insert failures during task enqueueing', async () => {
     const failingStorage = new InMemoryTaskExecutionsStorage()
-    const originalInsert = failingStorage.insert.bind(failingStorage)
+    const originalInsert = failingStorage.insertMany.bind(failingStorage)
     let insertCallCount = 0
-    failingStorage.insert = () => {
+    failingStorage.insertMany = () => {
       insertCallCount++
       throw new Error('Storage insert failed')
     }
@@ -273,7 +274,7 @@ describe('executor', () => {
 
     expect(insertCallCount).toBeGreaterThan(0)
 
-    failingStorage.insert = originalInsert
+    failingStorage.insertMany = originalInsert
     const handle = await failingExecutor.enqueueTask(testTask)
     const execution = await handle.waitAndGetFinishedExecution()
     expect(execution.status).toBe('completed')
@@ -405,12 +406,12 @@ describe('executor', () => {
     await executor2.shutdown()
   })
 
-  it('should handle storage failures within retry attempts during atomic updateByIdAndInsertIfUpdated operations', async () => {
+  it('should handle storage failures within retry attempts during atomic updateByIdAndInsertManyIfUpdated operations', async () => {
     const failingStorage = new InMemoryTaskExecutionsStorage()
-    const originalMethod = failingStorage.updateByIdAndInsertIfUpdated.bind(failingStorage)
+    const originalMethod = failingStorage.updateByIdAndInsertManyIfUpdated.bind(failingStorage)
     let failureCount = 0
 
-    failingStorage.updateByIdAndInsertIfUpdated = async (...args) => {
+    failingStorage.updateByIdAndInsertManyIfUpdated = async (...args) => {
       if (failureCount < 1) {
         failureCount++
         throw new Error('Atomic operation failed')
@@ -436,7 +437,7 @@ describe('executor', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [{ task: childTask }],
+          children: [new ChildTask(childTask)],
         }
       },
     })
@@ -452,12 +453,12 @@ describe('executor', () => {
     await failingExecutor.shutdown()
   })
 
-  it('should handle storage failures more than retry attempts during atomic updateByIdAndInsertIfUpdated operations', async () => {
+  it('should handle storage failures more than retry attempts during atomic updateByIdAndInsertManyIfUpdated operations', async () => {
     const failingStorage = new InMemoryTaskExecutionsStorage()
-    const originalMethod = failingStorage.updateByIdAndInsertIfUpdated.bind(failingStorage)
+    const originalMethod = failingStorage.updateByIdAndInsertManyIfUpdated.bind(failingStorage)
     let failureCount = 0
 
-    failingStorage.updateByIdAndInsertIfUpdated = async (...args) => {
+    failingStorage.updateByIdAndInsertManyIfUpdated = async (...args) => {
       if (failureCount < 2) {
         failureCount++
         throw new Error('Atomic operation failed')
@@ -483,7 +484,7 @@ describe('executor', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [{ task: childTask }],
+          children: [new ChildTask(childTask)],
         }
       },
     })
@@ -548,7 +549,7 @@ describe('executor', () => {
         runParent: () => {
           return {
             output: 'parent',
-            children: [{ task: childTask }],
+            children: [new ChildTask(childTask)],
           }
         },
         finalize: {
@@ -611,7 +612,7 @@ describe('executor', () => {
         runParent: () => {
           return {
             output: 'parent',
-            children: [{ task: childTask }],
+            children: [new ChildTask(childTask)],
           }
         },
         finalize: {

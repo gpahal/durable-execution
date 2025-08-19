@@ -17,6 +17,10 @@ This directory contains Cursor Rules that provide context and guidance to AI ass
 
 - **`durable-execution-concepts.mdc`** - Core domain concepts, architecture, and implementation patterns
 - **`package-development.mdc`** - Guidelines for developing and maintaining packages in the monorepo
+- **`build-deployment.mdc`** - Build system, CI/CD workflows, and deployment patterns
+- **`error-handling-patterns.mdc`** - Comprehensive error handling strategies for durable execution
+- **`performance-optimization.mdc`** - Performance tuning, monitoring, and optimization patterns
+- **`debugging-troubleshooting.mdc`** - Debugging tools, troubleshooting guides, and production monitoring
 
 ## Usage
 
@@ -26,6 +30,10 @@ These rules are automatically loaded by Cursor to provide AI assistants with:
 - Domain-specific knowledge about durable execution concepts
 - Development workflow and testing practices
 - Package management and release processes
+- Build system and deployment guidance
+- Error handling and recovery patterns
+- Performance optimization strategies
+- Debugging and troubleshooting techniques
 
 The rules use the `.mdc` extension and include frontmatter metadata to control when they are applied:
 

@@ -7,7 +7,7 @@ export default defineConfig((options: Options): Options => {
       : 'development'
   const isDevEnv = env === 'development'
   return {
-    entry: ['src/*'],
+    entry: ['src/**/*'],
     tsconfig: 'tsconfig.build.json',
     outDir: 'build',
     format: ['esm'],

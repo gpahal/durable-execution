@@ -2,103 +2,187 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
-
-This is `durable-execution-storage-drizzle`, a storage implementation for the durable-execution framework using Drizzle ORM. It provides database storage adapters for PostgreSQL, MySQL, and SQLite to persist task execution state in durable workflow systems.
-
 ## Development Commands
 
-### Build and Test
+### Essential Commands
 
-- `npm run build` - Build the TypeScript code using tsup
-- `npm run clean` - Remove build artifacts
-- `npm run test` - Run tests using Vitest
-- `npm run test-coverage` - Run tests with coverage report
-- `npm run type-check` - Type check with TypeScript and generate docs
-- `npm run lint` - Lint code with ESLint
-- `npm run lint-fix` - Auto-fix linting issues
+```bash
+# Build the library
+pnpm build
 
-### Testing
+# Run tests
+pnpm test              # Run all tests
+pnpm test-coverage     # Run tests with coverage report
 
-Tests use Vitest and include integration tests with real database containers (PostgreSQL via PGlite, MySQL via Testcontainers, SQLite in-memory). The test configuration inherits from the parent durable-execution workspace.
+# Type checking and linting
+pnpm type-check        # TypeScript type checking
+pnpm lint              # Run ESLint
+pnpm lint-fix          # Auto-fix linting issues
 
-## Architecture
+# Clean build artifacts
+pnpm clean
+```
 
-### Core Structure
+### Testing Specific Files
 
-The package follows a database-per-file organization:
+```bash
+# Run a specific test file
+pnpm test tests/index.test.ts
 
-- `src/index.ts` - Main exports for all database implementations
-- `src/common.ts` - Shared type definitions and data transformation utilities
-- `src/pg.ts` - PostgreSQL implementation with Drizzle schema and storage adapter
-- `src/mysql.ts` - MySQL implementation
-- `src/sqlite.ts` - SQLite implementation
+# Run tests in watch mode
+pnpm test -w
 
-### Data Model
+# Run tests matching a pattern
+pnpm test -t 'should handle PostgreSQL'
+```
 
-The storage layer implements the `TaskExecutionsStorage` interface from durable-execution. Key concepts:
+## Architecture Overview
 
-- **Task Executions** - Individual task runs with state, hierarchy, and metadata
-- **Parent-Child Relationships** - Tasks can spawn child tasks and finalize tasks
-- **Status Tracking** - Comprehensive state management (pending, running, completed, failed, etc.)
-- **Retry Logic** - Built-in retry mechanisms with configurable options
-- **Timeouts and Expiration** - Automatic cleanup of expired executions
+This package provides **production-ready database storage implementations** for the durable-execution framework using Drizzle ORM, supporting PostgreSQL, MySQL, and SQLite.
 
-### Database Schema
+### Core Components
 
-Each database implementation provides:
+**PostgreSQL Implementation** (`src/pg.ts`):
 
-- Table creation functions (`createPgTaskExecutionsTable`, etc.)
-- Storage adapter functions (`createPgTaskExecutionsStorage`, etc.)
-- Optimized indexes for performance queries
-- Transaction support for atomic operations
+- `createPgTaskExecutionsTable()`: Creates PostgreSQL table schema
+- `createPgTaskExecutionsStorage()`: Creates PostgreSQL storage instance
+- Optimized with JSONB columns and compound indexes
 
-### Key Data Transformations
+**MySQL Implementation** (`src/mysql.ts`):
 
-- `taskExecutionStorageValueToInsertValue` - Converts durable-execution format to DB format
-- `taskExecutionSelectValueToStorageValue` - Converts DB format back to durable-execution format
-- `taskExecutionStorageValueToUpdateValue` - Handles partial updates and special cases
+- `createMySqlTaskExecutionsTable()`: Creates MySQL table schema
+- `createMySqlTaskExecutionsStorage()`: Creates MySQL storage instance
+- Requires update count extractor function for affected rows
 
-## Database Support
+**SQLite Implementation** (`src/sqlite.ts`):
 
-### PostgreSQL
+- `createSQLiteTaskExecutionsTable()`: Creates SQLite table schema
+- `createSQLiteTaskExecutionsStorage()`: Creates SQLite storage instance
+- Lightweight option for development and testing
 
-- Uses `drizzle-orm/pg-core` with standard PostgreSQL types
-- Supports JSONB for complex data structures
-- Includes optimized indexes for common query patterns
+**Common Utilities** (`src/common.ts`):
 
-### MySQL
+- Shared logic for all database implementations
+- Transaction handling and batch operations
+- Query builders and update strategies
 
-- Uses `drizzle-orm/mysql-core` with MySQL-specific types
-- Requires affectedRows callback for proper update handling
-- JSON column support for complex data
+### Database Schema Design
 
-### SQLite
+**Table Structure**:
 
-- Uses `drizzle-orm/sqlite-core`
-- Lightweight option suitable for development and testing
-- Full feature parity with other database implementations
+- `executionId`: Primary key (VARCHAR 32)
+- `taskId`: Task identifier with index
+- `status`: Execution status with compound indexes
+- `input`/`output`: JSON/JSONB columns for data
+- `error`: Structured error information
+- Timestamps: `startedAt`, `finishedAt`, `updatedAt`
+- Parent-child tracking: `parentExecutionId`, `activeChildrenCount`
+- Timeout management: `expiresAt`, `ocfpExpiresAt`, `closeExpiresAt`
 
-## Dependencies
+**Optimized Indexes**:
 
-### Peer Dependencies
+- Status queries: `idx_status_startedAt`
+- Parent relationships: `idx_parentExecutionId_isFinished`
+- Background processing: `idx_closeStatus_updatedAt`
+- Timeout handling: `idx_expiresAt`, `idx_ocfpExpiresAt`
+- Executor management: `idx_executorId_needsPromiseCancellation`
 
-- `drizzle-orm` - The ORM framework (from catalog)
-- `durable-execution` - Core durable execution framework (workspace dependency)
+### Key Implementation Details
 
-### Development/Testing
+**Transaction Support**: All operations use database transactions to ensure ACID properties, critical for concurrent task execution.
 
-- Database drivers for testing: `@electric-sql/pglite`, `@libsql/client`, `@testcontainers/mysql`
-- `durable-execution-storage-test-utils` - Shared test utilities (workspace dependency)
-- `drizzle-kit` - Schema management and migrations
+**Batch Operations**: Bulk inserts and updates use configurable batch sizes to optimize performance without overwhelming the database.
 
-## Integration Notes
+**Update Strategies**:
 
-This package is designed to be used with the broader durable-execution ecosystem. Users typically:
+- Conditional updates with WHERE clauses for optimistic concurrency
+- Atomic counter updates for parent active children count
+- Status transition validation at database level
 
-1. Create a database table using the provided schema functions
-2. Export the table from their schema file for Drizzle Kit discovery
-3. Run migrations using Drizzle Kit
-4. Create a storage instance and pass it to `DurableExecutor`
+**Error Handling**: Follows durable-execution error patterns with proper serialization of error details into JSON columns.
 
-The storage implementations handle all the complexity of mapping between the durable-execution interfaces and database-specific operations.
+### Database-Specific Considerations
+
+**PostgreSQL**:
+
+- Uses JSONB for better query performance
+- Native UUID support available but uses VARCHAR for consistency
+- Connection pooling recommended for production
+
+**MySQL**:
+
+- Requires explicit affected rows extraction
+- JSON column type for structured data
+- Consider connection limits in serverless environments
+
+**SQLite**:
+
+- In-memory option for testing
+- File-based persistence for development
+- Limited concurrent write performance
+
+### Testing Approach
+
+Tests verify:
+
+- Complete storage interface implementation
+- Transaction isolation and rollback
+- Concurrent access patterns
+- Database-specific features
+- Performance under load (250+ concurrent tasks)
+
+Uses:
+
+- Testcontainers for PostgreSQL integration tests
+- Testcontainers for MySQL integration tests
+- SQLite in-memory for fast unit tests
+
+### Migration Strategy
+
+- Create table schema in your Drizzle schema file
+
+```ts
+export const taskExecutions = createPgTaskExecutionsTable('task_executions')
+```
+
+- Generate migration files
+
+```bash
+pnpx drizzle-kit generate
+```
+
+- Apply migrations
+
+```bash
+pnpx drizzle-kit migrate
+```
+
+### Performance Optimization
+
+**Connection Pooling**:
+
+```ts
+const db = drizzle(pool, {
+  logger: true // Enable query logging in development
+})
+```
+
+**Query Optimization**:
+
+- Use indexes for frequent query patterns
+- Batch operations to reduce round trips
+- Consider read replicas for query-heavy workloads
+
+**Transaction Isolation**:
+
+- Default isolation level sufficient for most cases
+- Consider READ COMMITTED for high concurrency
+- Monitor for deadlocks in production
+
+### Important Conventions
+
+- All public APIs exported through `src/index.ts`
+- Database-specific implementations in separate files
+- Shared logic extracted to `src/common.ts`
+- Follow Drizzle ORM best practices for schema definition
+- Test with realistic data volumes and concurrency levels

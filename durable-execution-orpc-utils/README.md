@@ -49,7 +49,7 @@ pnpm add durable-execution durable-execution-orpc-utils @orpc/client @orpc/contr
 // executor-server.ts
 import { os } from '@orpc/server'
 import { DurableExecutor, InMemoryTaskExecutionsStorage } from 'durable-execution'
-import { createTasksRouter } from 'durable-execution-orpc-utils/server'
+import { createTasksRouter } from 'durable-execution-orpc-utils'
 
 // Create executor (use persistent storage in production)
 const executor = new DurableExecutor(new InMemoryTaskExecutionsStorage())
@@ -68,7 +68,13 @@ const sendEmail = executor.task({
   },
 })
 
-export const tasks = { sendEmail }
+// Sleeping task for webhook/event-driven workflows
+const waitForWebhook = executor.sleepingTask<{ webhookId: string }>({
+  id: 'waitForWebhook',
+  timeoutMs: 60 * 60 * 1000, // 1 hour
+})
+
+export const tasks = { sendEmail, waitForWebhook }
 
 // Create router
 export const tasksRouter = createTasksRouter(os, executor, tasks)
@@ -84,28 +90,43 @@ executor.startBackgroundProcesses()
 // app.ts
 import { createORPCClient } from '@orpc/client'
 import { RPCLink } from '@orpc/client/fetch'
-import { createTaskClientHandles, type TasksRouterClient } from 'durable-execution-orpc-utils/client'
-import { tasks, type tasksRouter } from './executor-server'
+import type { RouterClient } from '@orpc/server'
+
+import type { tasksRouter } from './executor-server'
 
 // Create client
 const link = new RPCLink({ url: 'http://localhost:3000/rpc' })
-const client: TasksRouterClient<typeof tasksRouter> = createORPCClient(link)
+const client: RouterClient<typeof tasksRouter> = createORPCClient(link)
 
-// Create handles
-const handles = createTaskClientHandles(client, tasks)
-
-// Enqueue task
-const executionId = await handles.sendEmail.enqueue({
-  to: 'user@example.com',
-  subject: 'Welcome',
-  body: 'Thanks for signing up!',
+// Enqueue tasks
+const executionId = await client.enqueueTask({
+  taskId: 'sendEmail',
+  input: {
+    to: 'user@example.com',
+    subject: 'Welcome',
+    body: 'Thanks for signing up!',
+  },
+})
+const webhookExecutionId = await client.enqueueTask({
+  taskId: 'waitForWebhook',
+  input: 'webhook_unique_id',
 })
 
 // Check status
-const execution = await handles.sendEmail.getExecution(executionId)
+const execution = await client.getTaskExecution({ taskId: 'sendEmail', executionId })
 if (execution.status === 'completed') {
   console.log('Email sent:', execution.output.messageId)
 }
+
+// Wake up sleeping task execution (e.g., from webhook handler)
+const webhookExecution = await client.wakeupSleepingTaskExecution({
+  taskId: 'waitForWebhook',
+  sleepingTaskUniqueId: 'webhook_unique_id',
+  options: {
+    status: 'completed',
+    output: { webhookId: 'webhook_unique_id' },
+  },
+})
 ```
 
 ## Advanced: Remote Task Execution
@@ -141,7 +162,7 @@ export const appRouter = { processOrder }
 // executor-server.ts
 import { createORPCClient } from '@orpc/client'
 import { RPCLink } from '@orpc/client/fetch'
-import { convertProcedureClientToTask } from 'durable-execution-orpc-utils/server'
+import { convertProcedureClientToTask } from 'durable-execution-orpc-utils'
 
 const appClient = createORPCClient(new RPCLink({
   url: 'https://your-app.com/api/rpc'
@@ -163,62 +184,6 @@ const processOrderTask = convertProcedureClientToTask(
 export const tasks = { sendEmail, processOrder: processOrderTask }
 ```
 
-## Common Patterns
-
-### Parent Task with Children
-
-```ts
-const processBatch = executor.parentTask({
-  id: 'processBatch',
-  timeoutMs: 60_000,
-  runParent: async (ctx, input: { items: Array<string> }) => {
-    return {
-      output: { batchId: Date.now() },
-      children: input.items.map(item => ({
-        task: processItem,
-        input: { item },
-      })),
-    }
-  },
-  finalize: {
-    run: async (ctx, { output, children }) => {
-      const successful = children.filter(c => c.status === 'completed')
-      return {
-        batchId: output.batchId,
-        processed: successful.length,
-        total: children.length,
-      }
-    },
-  },
-})
-```
-
-### Webhook Processing
-
-```ts
-app.post('/webhook', async (req, res) => {
-  // Queue for processing
-  const executionId = await handles.sendEmail.enqueue(req.body)
-
-  // Respond immediately
-  res.json({ accepted: true, executionId })
-})
-```
-
-### Monitoring Execution
-
-```ts
-async function waitForCompletion(executionId: string) {
-  let execution
-  do {
-    await new Promise((r) => setTimeout(r, 1000))
-    execution = await handles.sendEmail.getExecution(executionId)
-  } while (!['completed', 'failed', 'timed_out', 'finalize_failed', 'cancelled'].includes(execution.status))
-
-  return execution
-}
-```
-
 ## Error Handling
 
 The library automatically maps oRPC errors to durable execution errors:
@@ -227,55 +192,10 @@ The library automatically maps oRPC errors to durable execution errors:
 - HTTP 408, 429, 500-504 → Retryable errors
 - HTTP 5xx → Internal errors
 
-## Production Tips
-
-### Storage
-
-Use persistent storage in production:
-
-```ts
-import { createPgTaskExecutionsTable, createPgTaskExecutionsStorage } from 'durable-execution-storage-drizzle'
-import { drizzle } from 'drizzle-orm/node-postgres'
-
-const db = drizzle(process.env.DATABASE_URL!)
-const taskExecutionsTable = createPgTaskExecutionsTable()
-const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable)
-const executor = new DurableExecutor(storage)
-```
-
-### Scaling
-
-Run multiple executor instances:
-
-```ts
-const executor = new DurableExecutor(storage, {
-  maxConcurrentTaskExecutions: 100,
-})
-```
-
-### Security
-
-Add authentication:
-
-```ts
-const tasksRouter = createTasksRouter(
-  os.use(authMiddleware),
-  executor,
-  tasks
-)
-```
-
 ## API Reference
 
-### Server
-
-- `createTasksRouter(osBuilder, executor, tasks)` - Creates oRPC router
+- `createTasksRouter(osBuilder, executor, tasks)` - Creates oRPC router with routes for task operations including sleeping task wake-up
 - `convertProcedureClientToTask(executor, options, procedure)` - Converts oRPC procedure to task
-
-### Client
-
-- `createTaskClientHandles(client, tasks)` - Creates typed task handles
-- Types: `TasksRouterClient`, `TaskClientHandle`, `InferTaskClientHandles`
 
 ## Links
 

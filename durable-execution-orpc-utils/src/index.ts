@@ -22,10 +22,13 @@ import {
   type AnyTasks,
   type CommonTaskOptions,
   type DurableExecutor,
+  type FinishedTaskExecution,
   type InferTaskInput,
+  type InferTaskOutput,
   type Task,
   type TaskEnqueueOptions,
   type TaskExecution,
+  type WakeupSleepingTaskExecutionOptions,
 } from 'durable-execution'
 
 import { getErrorMessage } from '@gpahal/std/errors'
@@ -39,17 +42,27 @@ export type EnqueueTaskProcedure<
   TCurrentContext extends Context,
   TErrorMap extends ErrorMap,
   TMeta extends Meta,
-> = DecoratedProcedure<
-  TInitialContext,
-  TCurrentContext,
-  Schema<
-    { taskId: keyof TTasks & string; input: unknown; options?: TaskEnqueueOptions },
-    { taskId: keyof TTasks & string; input: unknown; options?: TaskEnqueueOptions }
-  >,
-  Schema<string, string>,
-  TErrorMap,
-  TMeta
->
+> = {
+  [K in keyof TTasks]: DecoratedProcedure<
+    TInitialContext,
+    TCurrentContext,
+    Schema<
+      {
+        taskId: K & string
+        input: InferTaskInput<TTasks[K]>
+        options?: TaskEnqueueOptions<TTasks[K]>
+      },
+      {
+        taskId: K & string
+        input: InferTaskInput<TTasks[K]>
+        options?: TaskEnqueueOptions<TTasks[K]>
+      }
+    >,
+    Schema<string, string>,
+    TErrorMap,
+    TMeta
+  >
+}[keyof TTasks]
 
 /**
  * Type for the getTaskExecution procedure that retrieves task execution status.
@@ -60,17 +73,70 @@ export type GetTaskExecutionProcedure<
   TCurrentContext extends Context,
   TErrorMap extends ErrorMap,
   TMeta extends Meta,
-> = DecoratedProcedure<
-  TInitialContext,
-  TCurrentContext,
-  Schema<
-    { taskId: keyof TTasks & string; executionId: string },
-    { taskId: keyof TTasks & string; executionId: string }
-  >,
-  Schema<TaskExecution, TaskExecution>,
-  TErrorMap,
-  TMeta
->
+> = {
+  [K in keyof TTasks]: DecoratedProcedure<
+    TInitialContext,
+    TCurrentContext,
+    Schema<
+      {
+        taskId: K & string
+        executionId: string
+      },
+      {
+        taskId: K & string
+        executionId: string
+      }
+    >,
+    Schema<TaskExecution<InferTaskOutput<TTasks[K]>>, TaskExecution<InferTaskOutput<TTasks[K]>>>,
+    TErrorMap,
+    TMeta
+  >
+}[keyof TTasks]
+
+/**
+ * Type for the input schema of the wakeupSleepingTaskExecution procedure.
+ */
+export type WakeupSleepingTaskExecutionProcedureInputSchema<TTasks extends AnyTasks> = {
+  [K in keyof TTasks]: {
+    taskId: K & string
+    sleepingTaskUniqueId: string
+    options: WakeupSleepingTaskExecutionOptions<InferTaskOutput<TTasks[K]>>
+  }
+}[keyof TTasks]
+
+/**
+ * Type for the wakeupSleepingTaskExecution procedure that wakes up a sleeping task execution.
+ */
+export type WakeupSleepingTaskExecutionProcedure<
+  TTasks extends AnyTasks,
+  TInitialContext extends Context,
+  TCurrentContext extends Context,
+  TErrorMap extends ErrorMap,
+  TMeta extends Meta,
+> = {
+  [K in keyof TTasks]: DecoratedProcedure<
+    TInitialContext,
+    TCurrentContext,
+    Schema<
+      {
+        taskId: K & string
+        sleepingTaskUniqueId: string
+        options: WakeupSleepingTaskExecutionOptions<InferTaskOutput<TTasks[K]>>
+      },
+      {
+        taskId: K & string
+        sleepingTaskUniqueId: string
+        options: WakeupSleepingTaskExecutionOptions<InferTaskOutput<TTasks[K]>>
+      }
+    >,
+    Schema<
+      FinishedTaskExecution<InferTaskOutput<TTasks[K]>>,
+      FinishedTaskExecution<InferTaskOutput<TTasks[K]>>
+    >,
+    TErrorMap,
+    TMeta
+  >
+}[keyof TTasks]
 
 function createEnqueueTaskProcedure<
   TTasks extends AnyTasks,
@@ -95,8 +161,8 @@ function createEnqueueTaskProcedure<
     .input(
       type<{
         taskId: keyof TTasks & string
-        input: unknown
-        options?: TaskEnqueueOptions
+        input: InferTaskInput<TTasks[keyof TTasks]>
+        options?: TaskEnqueueOptions<TTasks[keyof TTasks]>
       }>(),
     )
     .output(type<string>())
@@ -171,7 +237,7 @@ function createGetTaskExecutionProcedure<
       }
 
       try {
-        const handle = await executor.getTaskHandle(task, input.executionId)
+        const handle = await executor.getTaskExecutionHandle(task, input.executionId)
         return await handle.getExecution()
       } catch (error) {
         if (error instanceof DurableExecutionError) {
@@ -190,7 +256,86 @@ function createGetTaskExecutionProcedure<
           message: getErrorMessage(error),
         })
       }
-    })
+    }) as GetTaskExecutionProcedure<TTasks, TInitialContext, TCurrentContext, TErrorMap, TMeta>
+}
+
+function createWakeupSleepingTaskExecutionProcedure<
+  TTasks extends AnyTasks,
+  TInitialContext extends Context,
+  TCurrentContext extends Context,
+  TErrorMap extends ErrorMap,
+  TMeta extends Meta,
+  TBuilder extends Builder<
+    TInitialContext,
+    TCurrentContext,
+    Schema<unknown, unknown>,
+    Schema<unknown, unknown>,
+    TErrorMap,
+    TMeta
+  >,
+>(
+  osBuilder: TBuilder,
+  executor: DurableExecutor,
+  tasks: TTasks,
+): WakeupSleepingTaskExecutionProcedure<
+  TTasks,
+  TInitialContext,
+  TCurrentContext,
+  TErrorMap,
+  TMeta
+> {
+  return osBuilder
+    .input(
+      type<{
+        taskId: keyof TTasks & string
+        sleepingTaskUniqueId: string
+        options: WakeupSleepingTaskExecutionOptions<InferTaskOutput<TTasks[keyof TTasks]>>
+      }>(),
+    )
+    .output(type<FinishedTaskExecution>())
+    .handler(async ({ input }) => {
+      const task = tasks[input.taskId as keyof TTasks]
+      if (!task) {
+        throw new ORPCError('NOT_FOUND', {
+          message: `Task ${input.taskId} not found`,
+        })
+      }
+      if (!task.isSleepingTask) {
+        throw new ORPCError('BAD_REQUEST', {
+          message: `Task ${input.taskId} is not a sleeping task`,
+        })
+      }
+
+      try {
+        return await executor.wakeupSleepingTaskExecution(
+          task as Task<unknown, unknown, true>,
+          input.sleepingTaskUniqueId,
+          input.options,
+        )
+      } catch (error) {
+        if (error instanceof DurableExecutionError) {
+          if (error instanceof DurableExecutionNotFoundError) {
+            throw new ORPCError('NOT_FOUND', {
+              message: error.message,
+            })
+          }
+
+          throw new ORPCError(error.isInternal ? 'INTERNAL_SERVER_ERROR' : 'BAD_REQUEST', {
+            message: error.message,
+          })
+        }
+
+        throw new ORPCError('INTERNAL_SERVER_ERROR', {
+          message: getErrorMessage(error),
+        })
+      }
+    }) as WakeupSleepingTaskExecutionProcedure<
+    TTasks,
+    TInitialContext,
+    TCurrentContext,
+    TErrorMap,
+    TMeta
+  >
 }
 
 /**
@@ -211,20 +356,28 @@ export type TasksRouter<
     TErrorMap,
     TMeta
   >
+  wakeupSleepingTaskExecution: WakeupSleepingTaskExecutionProcedure<
+    TTasks,
+    TInitialContext,
+    TCurrentContext,
+    TErrorMap,
+    TMeta
+  >
 }
 
 /**
  * Creates an oRPC router with procedures for managing durable task executions.
  *
- * Exposes two procedures:
+ * Exposes three procedures:
  * - `enqueueTask` - Submit a task for execution
  * - `getTaskExecution` - Get task execution status
+ * - `wakeupSleepingTaskExecution` - Wake up a sleeping task execution
  *
  * @example
  * ```ts
  * import { os } from '@orpc/server'
  * import { DurableExecutor, InMemoryTaskExecutionsStorage } from 'durable-execution'
- * import { createTasksRouter } from 'durable-execution-orpc-utils/server'
+ * import { createTasksRouter } from 'durable-execution-orpc-utils'
  *
  * // Create executor with storage implementation
  * const executor = new DurableExecutor(new InMemoryTaskExecutionsStorage())
@@ -239,7 +392,12 @@ export type TasksRouter<
  *   },
  * })
  *
- * const tasks = { sendEmail }
+ * const waitForWebhook = executor.sleepingTask<{ webhookId: string }>({
+ *   id: 'waitForWebhook',
+ *   timeoutMs: 60 * 60 * 1000, // 1 hour
+ * })
+ *
+ * const tasks = { sendEmail, waitForWebhook }
  *
  * // Create router
  * const tasksRouter = createTasksRouter(os, executor, tasks)
@@ -251,7 +409,8 @@ export type TasksRouter<
  * @param osBuilder - The oRPC builder instance used to construct the procedures
  * @param executor - The DurableExecutor instance that manages task execution and persistence
  * @param tasks - A record of Task objects that can be enqueued and executed
- * @returns A router object containing the `enqueueTask` and `getTaskExecution` procedures
+ * @returns A router object containing the `enqueueTask`, `getTaskExecution` and
+ *   `wakeupSleepingTaskExecution` procedures
  */
 export function createTasksRouter<
   TTasks extends AnyTasks,
@@ -275,6 +434,11 @@ export function createTasksRouter<
   return {
     enqueueTask: createEnqueueTaskProcedure(osBuilder, executor, tasks),
     getTaskExecution: createGetTaskExecutionProcedure(osBuilder, executor, tasks),
+    wakeupSleepingTaskExecution: createWakeupSleepingTaskExecutionProcedure(
+      osBuilder,
+      executor,
+      tasks,
+    ),
   }
 }
 
@@ -295,7 +459,7 @@ const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504])
  * ```ts
  * import { createORPCClient } from '@orpc/client'
  * import { RPCLink } from '@orpc/client/fetch'
- * import { convertProcedureClientToTask } from 'durable-execution-orpc-utils/server'
+ * import { convertProcedureClientToTask } from 'durable-execution-orpc-utils'
  *
  * // Create client for your web app's procedures
  * const webAppLink = new RPCLink({

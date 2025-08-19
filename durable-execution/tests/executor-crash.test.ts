@@ -29,7 +29,7 @@ describe('executorCrash', () => {
     const storage = await loadInMemoryTaskExecutionsStorageFromFile(storageFilePath)
     const executor = new DurableExecutor(storage, {
       logLevel: 'error',
-      expireMs: 1000,
+      expireLeewayMs: 1000,
       backgroundProcessIntraBatchSleepMs: 50,
     })
 
@@ -55,7 +55,7 @@ describe('executorCrash', () => {
         }
 
         for (const executionId of runningTaskExecutionIds) {
-          const handle = await executor.getTaskHandle(task, executionId)
+          const handle = await executor.getTaskExecutionHandle(task, executionId)
           const finishedExecution = await handle.waitAndGetFinishedExecution()
           console.log('Task finished', finishedExecution)
 

@@ -6,10 +6,11 @@ import { createMutex, type Mutex } from '@gpahal/std/promises'
 import { DurableExecutionError } from './errors'
 import { LoggerInternal, zLogger, zLogLevel, type Logger, type LogLevel } from './logger'
 import {
+  applyTaskExecutionStorageUpdate,
   type TaskExecutionCloseStatus,
   type TaskExecutionOnChildrenFinishedProcessingStatus,
   type TaskExecutionsStorage,
-  type TaskExecutionStorageGetByIdsFilters,
+  type TaskExecutionStorageGetByIdFilters,
   type TaskExecutionStorageUpdate,
   type TaskExecutionStorageValue,
 } from './storage'
@@ -34,6 +35,7 @@ const zInMemoryTaskExecutionsStorageOptions = z.object({
 export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
   private logger: LoggerInternal
   private taskExecutionsMap: Map<string, TaskExecutionStorageValue>
+  private sleepingTaskExecutionsMap: Map<string, string>
   private mutex: Mutex
 
   /**
@@ -57,6 +59,7 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
 
     this.logger = new LoggerInternal(logger, logLevel)
     this.taskExecutionsMap = new Map()
+    this.sleepingTaskExecutionsMap = new Map()
     this.mutex = createMutex()
   }
 
@@ -110,30 +113,31 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
 
   private insertTaskExecutionsInternal(executions: Array<TaskExecutionStorageValue>): void {
     for (const execution of executions) {
+      if (this.taskExecutionsMap.has(execution.executionId)) {
+        throw new Error(`Execution ${execution.executionId} already exists`)
+      }
+      if (
+        execution.sleepingTaskUniqueId != null &&
+        this.sleepingTaskExecutionsMap.has(execution.sleepingTaskUniqueId)
+      ) {
+        throw new Error(`Execution ${execution.sleepingTaskUniqueId} already exists`)
+      }
       this.taskExecutionsMap.set(execution.executionId, execution)
+      if (execution.sleepingTaskUniqueId != null) {
+        this.sleepingTaskExecutionsMap.set(execution.sleepingTaskUniqueId, execution.executionId)
+      }
     }
   }
 
-  async insert(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+  async insertMany(executions: Array<TaskExecutionStorageValue>): Promise<void> {
     await this.withMutex(() => {
       this.insertTaskExecutionsInternal(executions)
     })
   }
 
-  private getByIdsInternal(
-    executionIds: Array<string>,
-  ): Array<TaskExecutionStorageValue | undefined> {
-    const taskExecutions: Array<TaskExecutionStorageValue | undefined> = []
-    for (const executionId of executionIds) {
-      const execution = this.taskExecutionsMap.get(executionId)
-      taskExecutions.push(execution)
-    }
-    return taskExecutions
-  }
-
   private getByIdsWithFiltersAndLimitInternal(
     executionIds: Array<string>,
-    filters: TaskExecutionStorageGetByIdsFilters,
+    filters: TaskExecutionStorageGetByIdFilters,
     limit?: number,
   ): Array<TaskExecutionStorageValue> {
     if (limit != null && limit <= 0) {
@@ -143,7 +147,12 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     const taskExecutions: Array<TaskExecutionStorageValue> = []
     for (const executionId of executionIds) {
       const execution = this.taskExecutionsMap.get(executionId)
-      if (execution && (!filters.statuses || filters.statuses.includes(execution.status))) {
+      if (
+        execution &&
+        (filters.isSleepingTask == null || filters.isSleepingTask === execution.isSleepingTask) &&
+        (filters.status == null || filters.status === execution.status) &&
+        (filters.isFinished == null || filters.isFinished === execution.isFinished)
+      ) {
         taskExecutions.push(execution)
         if (limit != null && taskExecutions.length >= limit) {
           break
@@ -180,86 +189,18 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     return filteredTaskExecutions
   }
 
-  private updateTaskExecutionInternal(
-    taskExecution: TaskExecutionStorageValue,
-    update: TaskExecutionStorageUpdate,
-  ) {
-    for (const key in update) {
-      switch (key) {
-        case 'unsetRunOutput': {
-          if (update.unsetRunOutput) {
-            taskExecution.runOutput = undefined
-          }
-
-          break
-        }
-        case 'unsetError': {
-          if (update.unsetError) {
-            taskExecution.error = undefined
-          }
-
-          break
-        }
-        case 'unsetExpiresAt': {
-          if (update.unsetExpiresAt) {
-            taskExecution.expiresAt = undefined
-          }
-
-          break
-        }
-        case 'decrementParentActiveChildrenCount': {
-          if (update.decrementParentActiveChildrenCount && taskExecution.parent) {
-            const parentTaskExecution = this.taskExecutionsMap.get(taskExecution.parent.executionId)
-            if (parentTaskExecution) {
-              parentTaskExecution.activeChildrenCount--
-            }
-          }
-
-          break
-        }
-        case 'unsetOnChildrenFinishedProcessingExpiresAt': {
-          if (update.unsetOnChildrenFinishedProcessingExpiresAt) {
-            taskExecution.onChildrenFinishedProcessingExpiresAt = undefined
-          }
-
-          break
-        }
-        case 'unsetCloseExpiresAt': {
-          if (update.unsetCloseExpiresAt) {
-            taskExecution.closeExpiresAt = undefined
-          }
-
-          break
-        }
-        default: {
-          // @ts-expect-error - This is safe because we know the key is valid
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          taskExecution[key] = update[key]
-        }
-      }
-    }
-  }
-
   private updateTaskExecutionsInternal(
     taskExecutions: Array<TaskExecutionStorageValue>,
     update: TaskExecutionStorageUpdate,
   ) {
     for (const taskExecution of taskExecutions) {
-      this.updateTaskExecutionInternal(taskExecution, update)
+      applyTaskExecutionStorageUpdate(taskExecution, update)
     }
-  }
-
-  async getByIds(
-    executionIds: Array<string>,
-  ): Promise<Array<TaskExecutionStorageValue | undefined>> {
-    return await this.withMutex(() => {
-      return this.getByIdsInternal(executionIds)
-    })
   }
 
   async getById(
     executionId: string,
-    filters: TaskExecutionStorageGetByIdsFilters,
+    filters: TaskExecutionStorageGetByIdFilters,
   ): Promise<TaskExecutionStorageValue | undefined> {
     return await this.withMutex(() => {
       const taskExecutions = this.getByIdsWithFiltersAndLimitInternal([executionId], filters, 1)
@@ -267,9 +208,21 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
+  async getBySleepingTaskUniqueId(
+    sleepingTaskUniqueId: string,
+  ): Promise<TaskExecutionStorageValue | undefined> {
+    return await this.withMutex(() => {
+      const taskExecutions = this.getByFilterFnAndLimitInternal(
+        (execution) => execution.sleepingTaskUniqueId === sleepingTaskUniqueId,
+        1,
+      )
+      return taskExecutions.length > 0 ? taskExecutions[0] : undefined
+    })
+  }
+
   async updateById(
     executionId: string,
-    filters: TaskExecutionStorageGetByIdsFilters,
+    filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
   ): Promise<void> {
     return await this.withMutex(() => {
@@ -278,29 +231,18 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateByIdAndInsertIfUpdated(
+  async updateByIdAndInsertManyIfUpdated(
     executionId: string,
-    filters: TaskExecutionStorageGetByIdsFilters,
+    filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
     executionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
   ): Promise<void> {
     return await this.withMutex(() => {
       const taskExecutions = this.getByIdsWithFiltersAndLimitInternal([executionId], filters)
       this.updateTaskExecutionsInternal(taskExecutions, update)
-      if (executionsToInsertIfAnyUpdated.length > 0) {
+      if (taskExecutions.length > 0 && executionsToInsertIfAnyUpdated.length > 0) {
         this.insertTaskExecutionsInternal(executionsToInsertIfAnyUpdated)
       }
-    })
-  }
-
-  async updateByIdsAndStatuses(
-    executionIds: Array<string>,
-    statuses: Array<TaskExecutionStatus>,
-    update: TaskExecutionStorageUpdate,
-  ): Promise<void> {
-    return await this.withMutex(() => {
-      const taskExecutions = this.getByIdsWithFiltersAndLimitInternal(executionIds, { statuses })
-      this.updateTaskExecutionsInternal(taskExecutions, update)
     })
   }
 
@@ -308,6 +250,7 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     status: TaskExecutionStatus,
     startAtLessThan: Date,
     update: TaskExecutionStorageUpdate,
+    updateExpiresAtWithStartedAt: Date,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     return await this.withMutex(() => {
@@ -317,6 +260,9 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
         (a, b) => a.startAt.getTime() - b.startAt.getTime(),
       )
       this.updateTaskExecutionsInternal(taskExecutions, update)
+      for (const execution of taskExecutions) {
+        execution.expiresAt = new Date(updateExpiresAtWithStartedAt.getTime() + execution.timeoutMs)
+      }
       return taskExecutions
     })
   }
@@ -341,15 +287,14 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateByStatusesAndCloseStatusAndReturn(
-    statuses: Array<TaskExecutionStatus>,
+  async updateByCloseStatusAndReturn(
     closeStatus: TaskExecutionCloseStatus,
     update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     return await this.withMutex(() => {
       const taskExecutions = this.getByFilterFnAndLimitInternal(
-        (execution) => statuses.includes(execution.status) && execution.closeStatus === closeStatus,
+        (execution) => execution.closeStatus === closeStatus,
         limit,
       )
       this.updateTaskExecutionsInternal(taskExecutions, update)
@@ -357,14 +302,18 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateByExpiresAtLessThanAndReturn(
+  async updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+    isSleepingTask: boolean,
     expiresAtLessThan: Date,
     update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     return await this.withMutex(() => {
       const taskExecutions = this.getByFilterFnAndLimitInternal(
-        (execution) => execution.expiresAt != null && execution.expiresAt < expiresAtLessThan,
+        (execution) =>
+          execution.isSleepingTask === isSleepingTask &&
+          execution.expiresAt != null &&
+          execution.expiresAt < expiresAtLessThan,
         limit,
         (a, b) => a.expiresAt!.getTime() - b.expiresAt!.getTime(),
       )
@@ -411,39 +360,89 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async getByNeedsPromiseCancellationAndIds(
+  async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
+    executorId: string,
     needsPromiseCancellation: boolean,
-    executionIds: Array<string>,
+    update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     return await this.withMutex(() => {
-      return this.getByFilterFnAndLimitInternal(
+      const taskExecutions = this.getByFilterFnAndLimitInternal(
         (execution) =>
-          execution.needsPromiseCancellation === needsPromiseCancellation &&
-          executionIds.includes(execution.executionId),
+          execution.executorId === executorId &&
+          execution.needsPromiseCancellation === needsPromiseCancellation,
         limit,
+      )
+      this.updateTaskExecutionsInternal(taskExecutions, update)
+      return taskExecutions
+    })
+  }
+
+  async getByParentExecutionId(
+    parentExecutionId: string,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.withMutex(() => {
+      return this.getByFilterFnAndLimitInternal(
+        (execution) => execution.parent?.executionId === parentExecutionId,
       )
     })
   }
 
-  async updateByNeedsPromiseCancellationAndIds(
-    needsPromiseCancellation: boolean,
-    executionIds: Array<string>,
+  async updateByParentExecutionIdAndIsFinished(
+    parentExecutionId: string,
+    isFinished: boolean,
     update: TaskExecutionStorageUpdate,
   ): Promise<void> {
-    return await this.withMutex(() => {
+    await this.withMutex(() => {
       const taskExecutions = this.getByFilterFnAndLimitInternal(
         (execution) =>
-          execution.needsPromiseCancellation === needsPromiseCancellation &&
-          executionIds.includes(execution.executionId),
+          execution.parent?.executionId === parentExecutionId &&
+          execution.isFinished === isFinished,
       )
       this.updateTaskExecutionsInternal(taskExecutions, update)
     })
   }
 
+  async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
+    isFinished: boolean,
+    closeStatus: TaskExecutionCloseStatus,
+    update: TaskExecutionStorageUpdate,
+    limit: number,
+  ): Promise<number> {
+    return await this.withMutex(() => {
+      const taskExecutions = this.getByFilterFnAndLimitInternal(
+        (execution) => execution.isFinished === isFinished && execution.closeStatus === closeStatus,
+        limit,
+      )
+      this.updateTaskExecutionsInternal(taskExecutions, update)
+      for (const execution of taskExecutions) {
+        if (execution.parent != null) {
+          const parentExecution = this.taskExecutionsMap.get(execution.parent.executionId)
+          if (parentExecution != null) {
+            parentExecution.activeChildrenCount -= 1
+          }
+        }
+      }
+      return taskExecutions.length
+    })
+  }
+
   async deleteById(executionId: string): Promise<void> {
     return await this.withMutex(() => {
-      this.taskExecutionsMap.delete(executionId)
+      const taskExecution = this.taskExecutionsMap.get(executionId)
+      if (taskExecution != null) {
+        this.taskExecutionsMap.delete(executionId)
+        if (taskExecution.sleepingTaskUniqueId != null) {
+          this.sleepingTaskExecutionsMap.delete(taskExecution.sleepingTaskUniqueId)
+        }
+      }
+    })
+  }
+
+  async deleteAll(): Promise<void> {
+    return await this.withMutex(() => {
+      this.taskExecutionsMap.clear()
+      this.sleepingTaskExecutionsMap.clear()
     })
   }
 }

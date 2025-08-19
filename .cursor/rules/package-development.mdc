@@ -161,10 +161,7 @@ pnpm cs-publish         # Publish packages
 
 ### Storage Implementations
 
-- Implement full `TaskExecutionsStorage` interface
-- Pass all tests from `durable-execution-storage-test-utils`
-- Include database migration examples
-- Document performance characteristics
+- **Drizzle Storage**: Implement full `TaskExecutionsStorage` interface, pass test-utils, include migrations
 
 ### Utility Packages
 

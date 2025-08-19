@@ -5,6 +5,7 @@ import {
   createTimeoutCancelSignal,
   type CancelSignal,
 } from '@gpahal/std/cancel'
+import { getErrorMessage } from '@gpahal/std/errors'
 import { sleep } from '@gpahal/std/promises'
 
 import {
@@ -19,26 +20,30 @@ import type { SerializerInternal } from './serializer'
 import {
   convertTaskExecutionStorageValueToTaskExecution,
   type TaskExecutionsStorageInternal,
+  type TaskExecutionStorageUpdateInternal,
 } from './storage'
 import {
-  ACTIVE_TASK_EXECUTION_STATUSES,
   FINISHED_TASK_EXECUTION_STATUSES,
   isFinalizeTaskOptionsParentTaskOptions,
   isFinalizeTaskOptionsTaskOptions,
   type ChildTask,
   type CommonTaskOptions,
   type FinishedTaskExecution,
+  type InferTaskOutput,
   type ParentTaskOptions,
+  type SleepingTaskOptions,
+  type Task,
   type TaskEnqueueOptions,
   type TaskExecutionHandle,
   type TaskOptions,
   type TaskRetryOptions,
   type TaskRunContext,
+  type WakeupSleepingTaskExecutionOptions,
 } from './task'
 import { createCancellablePromiseCustom, generateId } from './utils'
 
 export type TaskOptionsInternal = {
-  isParentTaskOptions: boolean
+  taskType: 'task' | 'sleepingTask' | 'parentTask'
   id: string
   retryOptions: TaskRetryOptions | undefined
   sleepMsBeforeRun: number | undefined
@@ -59,7 +64,7 @@ function convertTaskOptionsOptionsInternal(
   validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
 ): TaskOptionsInternal {
   return {
-    isParentTaskOptions: false,
+    taskType: 'task',
     id: taskOptions.id,
     retryOptions: taskOptions.retryOptions,
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
@@ -76,12 +81,29 @@ function convertTaskOptionsOptionsInternal(
   }
 }
 
+function convertSleepingTaskOptionsOptionsInternal(
+  taskOptions: SleepingTaskOptions<unknown>,
+): TaskOptionsInternal {
+  return {
+    taskType: 'sleepingTask',
+    id: taskOptions.id,
+    retryOptions: undefined,
+    sleepMsBeforeRun: undefined,
+    timeoutMs: taskOptions.timeoutMs,
+    validateInputFn: undefined,
+    runParent: () => {
+      throw DurableExecutionError.any('Sleeping tasks cannot be run', false, true)
+    },
+    finalize: undefined,
+  }
+}
+
 function convertParentTaskOptionsOptionsInternal(
   taskOptions: ParentTaskOptions<unknown, unknown, unknown, unknown>,
   validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
 ): TaskOptionsInternal {
   return {
-    isParentTaskOptions: true,
+    taskType: 'parentTask',
     id: taskOptions.id,
     retryOptions: taskOptions.retryOptions,
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
@@ -185,10 +207,10 @@ const zSleepMsBeforeRun = z
     return val
   })
 
-const zTimeoutMs = z.number().int().min(1).max(3_600_000) // 1 hour
+const zTimeoutMs = z.number().int().min(1)
 
 export class TaskInternal {
-  readonly isParentTask: boolean
+  readonly taskType: 'task' | 'sleepingTask' | 'parentTask'
   readonly id: string
   readonly retryOptions: TaskRetryOptions
   readonly sleepMsBeforeRun: number
@@ -204,7 +226,7 @@ export class TaskInternal {
   readonly finalize: TaskInternal | undefined
 
   constructor(
-    isParentTask: boolean,
+    taskType: 'task' | 'sleepingTask' | 'parentTask',
     id: string,
     retryOptions: TaskRetryOptions,
     sleepMsBeforeRun: number,
@@ -219,7 +241,7 @@ export class TaskInternal {
     }>,
     finalize: TaskInternal | undefined,
   ) {
-    this.isParentTask = isParentTask
+    this.taskType = taskType
     this.id = id
     this.retryOptions = retryOptions
     this.sleepMsBeforeRun = sleepMsBeforeRun
@@ -245,7 +267,7 @@ export class TaskInternal {
       : undefined
 
     const taskInternal = new TaskInternal(
-      taskOptions.isParentTaskOptions,
+      taskOptions.taskType,
       taskOptions.id,
       validatedCommonTaskOptions.retryOptions,
       validatedCommonTaskOptions.sleepMsBeforeRun,
@@ -269,6 +291,16 @@ export class TaskInternal {
         taskOptions as TaskOptions<unknown, unknown>,
         validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
       ),
+    )
+  }
+
+  static fromSleepingTaskOptions<TOutput>(
+    taskInternalsMap: Map<string, TaskInternal>,
+    taskOptions: SleepingTaskOptions<TOutput>,
+  ): TaskInternal {
+    return TaskInternal.fromTaskOptionsInternal(
+      taskInternalsMap,
+      convertSleepingTaskOptionsOptionsInternal(taskOptions),
     )
   }
 
@@ -317,7 +349,7 @@ export class TaskInternal {
   }
 }
 
-export function getTaskHandleInternal<TOutput>(
+export function getTaskExecutionHandleInternal<TOutput>(
   storage: TaskExecutionsStorageInternal,
   serializer: SerializerInternal,
   logger: Logger,
@@ -345,7 +377,7 @@ export function getTaskHandleInternal<TOutput>(
         signal instanceof AbortSignal ? createCancelSignal({ abortSignal: signal })[0] : signal
 
       const resolvedPollingIntervalMs =
-        pollingIntervalMs && pollingIntervalMs > 0 ? pollingIntervalMs : 1000
+        pollingIntervalMs && pollingIntervalMs > 0 ? pollingIntervalMs : 2000
       let isFirstIteration = true
       while (true) {
         if (cancelSignal?.isCancelled()) {
@@ -385,7 +417,7 @@ export function getTaskHandleInternal<TOutput>(
         now,
         executionId,
         {
-          statuses: ACTIVE_TASK_EXECUTION_STATUSES,
+          isFinished: false,
         },
         {
           status: 'cancelled',
@@ -396,6 +428,83 @@ export function getTaskHandleInternal<TOutput>(
       logger.debug(`Cancelled task execution ${executionId}`)
     },
   }
+}
+
+export async function wakeupSleepingTaskExecutionInternal<
+  TTask extends Task<unknown, unknown, true>,
+>(
+  storage: TaskExecutionsStorageInternal,
+  serializer: SerializerInternal,
+  logger: Logger,
+  task: TTask,
+  sleepingTaskUniqueId: string,
+  options: WakeupSleepingTaskExecutionOptions<InferTaskOutput<TTask>>,
+): Promise<FinishedTaskExecution<InferTaskOutput<TTask>>> {
+  if (!task.isSleepingTask) {
+    throw DurableExecutionError.nonRetryable(`Task ${task.id} is not a sleeping task`)
+  }
+
+  const execution = await storage.getBySleepingTaskUniqueId(sleepingTaskUniqueId)
+  if (!execution) {
+    throw new DurableExecutionNotFoundError(
+      `Sleeping task execution ${sleepingTaskUniqueId} not found`,
+    )
+  }
+  if (execution.taskId !== task.id) {
+    throw new DurableExecutionNotFoundError(
+      `Sleeping task execution ${sleepingTaskUniqueId} belongs to task ${execution.taskId}`,
+    )
+  }
+  if (execution.isFinished) {
+    return convertTaskExecutionStorageValueToTaskExecution(
+      execution,
+      serializer,
+    ) as FinishedTaskExecution<InferTaskOutput<TTask>>
+  }
+
+  const now = new Date()
+  const update: TaskExecutionStorageUpdateInternal = {
+    status: options.status,
+  }
+  if (options.status === 'completed') {
+    update.output = serializer.serialize(options.output)
+  } else if (options.status === 'failed') {
+    update.error = convertDurableExecutionErrorToStorageValue(
+      DurableExecutionError.nonRetryable(getErrorMessage(options.error)),
+    )
+  } else {
+    throw DurableExecutionError.nonRetryable(
+      // @ts-expect-error - This is safe
+      `Invalid status for task execution ${executionId}: ${options.status}`,
+    )
+  }
+
+  await storage.updateById(
+    now,
+    execution.executionId,
+    {
+      isSleepingTask: true,
+      isFinished: false,
+    },
+    update,
+  )
+  logger.debug(`Woken up sleeping task execution ${execution.executionId}`)
+
+  const finishedExecution = await storage.getById(execution.executionId, {})
+  if (!finishedExecution) {
+    throw new DurableExecutionNotFoundError(
+      `Sleeping task execution ${execution.executionId} not found`,
+    )
+  }
+  if (!finishedExecution.isFinished) {
+    throw DurableExecutionError.nonRetryable(
+      `Task execution ${execution.executionId} is not a sleeping task execution`,
+    )
+  }
+  return convertTaskExecutionStorageValueToTaskExecution(
+    finishedExecution,
+    serializer,
+  ) as FinishedTaskExecution<InferTaskOutput<TTask>>
 }
 
 export function validateCommonTaskOptions(taskOptions: CommonTaskOptions): {

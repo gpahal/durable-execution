@@ -29,11 +29,12 @@ describe('getTaskExecutionStorageUpdate', () => {
   it('should handle empty update', () => {
     const now = new Date()
     const update = getTaskExecutionStorageUpdate(now, {})
+    expect(update.unsetExecutorId).toBeUndefined()
+    expect(update.isFinished).toBeUndefined()
     expect(update.unsetRunOutput).toBeUndefined()
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBeUndefined()
     expect(update.finishedAt).toBeUndefined()
-    expect(update.decrementParentActiveChildrenCount).toBeUndefined()
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -44,11 +45,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'ready',
     })
+    expect(update.unsetExecutorId).toBe(true)
+    expect(update.isFinished).toBeUndefined()
     expect(update.unsetRunOutput).toBe(true)
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBe(true)
     expect(update.finishedAt).toBeUndefined()
-    expect(update.decrementParentActiveChildrenCount).toBeUndefined()
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -59,11 +61,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'running',
     })
+    expect(update.unsetExecutorId).toBeUndefined()
+    expect(update.isFinished).toBeUndefined()
     expect(update.unsetRunOutput).toBeUndefined()
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBeUndefined()
     expect(update.finishedAt).toBeUndefined()
-    expect(update.decrementParentActiveChildrenCount).toBeUndefined()
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -74,11 +77,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'failed',
     })
+    expect(update.unsetExecutorId).toBe(true)
+    expect(update.isFinished).toBe(true)
     expect(update.unsetRunOutput).toBe(true)
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBe(true)
     expect(update.finishedAt).toBe(now)
-    expect(update.decrementParentActiveChildrenCount).toBe(true)
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -89,11 +93,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'timed_out',
     })
+    expect(update.unsetExecutorId).toBe(true)
+    expect(update.isFinished).toBe(true)
     expect(update.unsetRunOutput).toBe(true)
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBe(true)
     expect(update.finishedAt).toBe(now)
-    expect(update.decrementParentActiveChildrenCount).toBe(true)
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -104,11 +109,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'waiting_for_children',
     })
+    expect(update.unsetExecutorId).toBe(true)
+    expect(update.isFinished).toBeUndefined()
     expect(update.unsetRunOutput).toBeUndefined()
     expect(update.unsetError).toBe(true)
     expect(update.unsetExpiresAt).toBe(true)
     expect(update.finishedAt).toBeUndefined()
-    expect(update.decrementParentActiveChildrenCount).toBeUndefined()
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -119,11 +125,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'waiting_for_finalize',
     })
+    expect(update.unsetExecutorId).toBe(true)
+    expect(update.isFinished).toBeUndefined()
     expect(update.unsetRunOutput).toBeUndefined()
     expect(update.unsetError).toBe(true)
     expect(update.unsetExpiresAt).toBe(true)
     expect(update.finishedAt).toBeUndefined()
-    expect(update.decrementParentActiveChildrenCount).toBeUndefined()
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -134,11 +141,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'finalize_failed',
     })
+    expect(update.unsetExecutorId).toBe(true)
+    expect(update.isFinished).toBe(true)
     expect(update.unsetRunOutput).toBe(true)
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBe(true)
     expect(update.finishedAt).toBe(now)
-    expect(update.decrementParentActiveChildrenCount).toBe(true)
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -149,11 +157,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'completed',
     })
+    expect(update.unsetExecutorId).toBe(true)
+    expect(update.isFinished).toBe(true)
     expect(update.unsetRunOutput).toBe(true)
     expect(update.unsetError).toBe(true)
     expect(update.unsetExpiresAt).toBe(true)
     expect(update.finishedAt).toBe(now)
-    expect(update.decrementParentActiveChildrenCount).toBe(true)
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -164,11 +173,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'cancelled',
     })
+    expect(update.unsetExecutorId).toBe(true)
+    expect(update.isFinished).toBe(true)
     expect(update.unsetRunOutput).toBe(true)
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBe(true)
     expect(update.finishedAt).toBe(now)
-    expect(update.decrementParentActiveChildrenCount).toBe(true)
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -179,11 +189,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       onChildrenFinishedProcessingStatus: 'idle',
     })
+    expect(update.unsetExecutorId).toBeUndefined()
+    expect(update.isFinished).toBeUndefined()
     expect(update.unsetRunOutput).toBeUndefined()
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBeUndefined()
     expect(update.finishedAt).toBeUndefined()
-    expect(update.decrementParentActiveChildrenCount).toBeUndefined()
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBe(true)
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -194,11 +205,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       onChildrenFinishedProcessingStatus: 'processing',
     })
+    expect(update.unsetExecutorId).toBeUndefined()
+    expect(update.isFinished).toBeUndefined()
     expect(update.unsetRunOutput).toBeUndefined()
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBeUndefined()
     expect(update.finishedAt).toBeUndefined()
-    expect(update.decrementParentActiveChildrenCount).toBeUndefined()
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -209,11 +221,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       onChildrenFinishedProcessingStatus: 'processed',
     })
+    expect(update.unsetExecutorId).toBeUndefined()
+    expect(update.isFinished).toBeUndefined()
     expect(update.unsetRunOutput).toBeUndefined()
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBeUndefined()
     expect(update.finishedAt).toBeUndefined()
-    expect(update.decrementParentActiveChildrenCount).toBeUndefined()
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBe(true)
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -224,11 +237,28 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       closeStatus: 'idle',
     })
+    expect(update.unsetExecutorId).toBeUndefined()
+    expect(update.isFinished).toBeUndefined()
     expect(update.unsetRunOutput).toBeUndefined()
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBeUndefined()
     expect(update.finishedAt).toBeUndefined()
-    expect(update.decrementParentActiveChildrenCount).toBeUndefined()
+    expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
+    expect(update.unsetCloseExpiresAt).toBe(true)
+    expect(update.updatedAt).toBe(now)
+  })
+
+  it('should handle close_status ready update', () => {
+    const now = new Date()
+    const update = getTaskExecutionStorageUpdate(now, {
+      closeStatus: 'ready',
+    })
+    expect(update.unsetExecutorId).toBeUndefined()
+    expect(update.isFinished).toBeUndefined()
+    expect(update.unsetRunOutput).toBeUndefined()
+    expect(update.unsetError).toBeUndefined()
+    expect(update.unsetExpiresAt).toBeUndefined()
+    expect(update.finishedAt).toBeUndefined()
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBe(true)
     expect(update.updatedAt).toBe(now)
@@ -239,11 +269,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       closeStatus: 'closing',
     })
+    expect(update.unsetExecutorId).toBeUndefined()
+    expect(update.isFinished).toBeUndefined()
     expect(update.unsetRunOutput).toBeUndefined()
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBeUndefined()
     expect(update.finishedAt).toBeUndefined()
-    expect(update.decrementParentActiveChildrenCount).toBeUndefined()
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBeUndefined()
     expect(update.updatedAt).toBe(now)
@@ -254,11 +285,12 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       closeStatus: 'closed',
     })
+    expect(update.unsetExecutorId).toBeUndefined()
+    expect(update.isFinished).toBeUndefined()
     expect(update.unsetRunOutput).toBeUndefined()
     expect(update.unsetError).toBeUndefined()
     expect(update.unsetExpiresAt).toBeUndefined()
     expect(update.finishedAt).toBeUndefined()
-    expect(update.decrementParentActiveChildrenCount).toBeUndefined()
     expect(update.unsetOnChildrenFinishedProcessingExpiresAt).toBeUndefined()
     expect(update.unsetCloseExpiresAt).toBe(true)
     expect(update.updatedAt).toBe(now)
@@ -288,13 +320,16 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       taskId: 'taskId',
       executionId: 'executionId',
+      isSleepingTask: false,
       retryOptions: {
         maxAttempts: 1,
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       input: serializer.serialize({ name: 'test' }),
+      executorId: 'de_executor_id',
       status: 'ready',
+      isFinished: false,
       retryAttempts: 0,
       startAt: now,
       activeChildrenCount: 0,
@@ -349,13 +384,16 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       taskId: 'taskId',
       executionId: 'executionId',
+      isSleepingTask: false,
       retryOptions: {
         maxAttempts: 1,
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       input: serializer.serialize({ name: 'test' }),
+      executorId: 'de_executor_id',
       status: 'running',
+      isFinished: false,
       retryAttempts: 0,
       startAt: now,
       activeChildrenCount: 0,
@@ -415,13 +453,16 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       taskId: 'taskId',
       executionId: 'executionId',
+      isSleepingTask: false,
       retryOptions: {
         maxAttempts: 1,
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       input: serializer.serialize({ name: 'test' }),
+      executorId: 'de_executor_id',
       status: 'failed',
+      isFinished: true,
       retryAttempts: 0,
       startAt: now,
       activeChildrenCount: 0,
@@ -494,13 +535,16 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       taskId: 'taskId',
       executionId: 'executionId',
+      isSleepingTask: false,
       retryOptions: {
         maxAttempts: 1,
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       input: serializer.serialize({ name: 'test' }),
+      executorId: 'de_executor_id',
       status: 'timed_out',
+      isFinished: true,
       retryAttempts: 0,
       startAt: now,
       activeChildrenCount: 0,
@@ -573,13 +617,16 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       taskId: 'taskId',
       executionId: 'executionId',
+      isSleepingTask: false,
       retryOptions: {
         maxAttempts: 1,
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       input: serializer.serialize({ name: 'test' }),
+      executorId: 'de_executor_id',
       status: 'waiting_for_children',
+      isFinished: false,
       retryAttempts: 0,
       startAt: now,
       activeChildrenCount: 1,
@@ -651,13 +698,16 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       taskId: 'taskId',
       executionId: 'executionId',
+      isSleepingTask: false,
       retryOptions: {
         maxAttempts: 1,
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       input: serializer.serialize({ name: 'test' }),
+      executorId: 'de_executor_id',
       status: 'waiting_for_finalize',
+      isFinished: false,
       retryAttempts: 0,
       startAt: now,
       activeChildrenCount: 0,
@@ -737,13 +787,16 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       taskId: 'taskId',
       executionId: 'executionId',
+      isSleepingTask: false,
       retryOptions: {
         maxAttempts: 1,
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       input: serializer.serialize({ name: 'test' }),
+      executorId: 'de_executor_id',
       status: 'finalize_failed',
+      isFinished: true,
       retryAttempts: 0,
       startAt: now,
       activeChildrenCount: 0,
@@ -837,13 +890,16 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       taskId: 'taskId',
       executionId: 'executionId',
+      isSleepingTask: false,
       retryOptions: {
         maxAttempts: 1,
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       input: serializer.serialize({ name: 'test' }),
+      executorId: 'de_executor_id',
       status: 'completed',
+      isFinished: true,
       retryAttempts: 0,
       startAt: now,
       activeChildrenCount: 0,
@@ -927,13 +983,16 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       taskId: 'taskId',
       executionId: 'executionId',
+      isSleepingTask: false,
       retryOptions: {
         maxAttempts: 1,
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       input: serializer.serialize({ name: 'test' }),
+      executorId: 'de_executor_id',
       status: 'cancelled',
+      isFinished: true,
       retryAttempts: 0,
       startAt: now,
       activeChildrenCount: 0,
@@ -1027,6 +1086,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       taskId: 'taskId',
       executionId: 'executionId',
+      isSleepingTask: false,
       retryOptions: {
         maxAttempts: 1,
       },
@@ -1055,24 +1115,21 @@ describe('TaskExecutionsStorageWithMutex', () => {
   it('should handle all methods', async () => {
     let executionCount = 0
     const testStorage = {
-      insert: () => {
+      insertMany: () => {
         executionCount++
-      },
-      getByIds: () => {
-        executionCount++
-        return []
       },
       getById: () => {
+        executionCount++
+        return undefined
+      },
+      getBySleepingTaskUniqueId: () => {
         executionCount++
         return undefined
       },
       updateById: () => {
         executionCount++
       },
-      updateByIdAndInsertIfUpdated: () => {
-        executionCount++
-      },
-      updateByIdsAndStatuses: () => {
+      updateByIdAndInsertManyIfUpdated: () => {
         executionCount++
       },
       updateByStatusAndStartAtLessThanAndReturn: () => {
@@ -1084,11 +1141,11 @@ describe('TaskExecutionsStorageWithMutex', () => {
           executionCount++
           return []
         },
-      updateByStatusesAndCloseStatusAndReturn: () => {
+      updateByCloseStatusAndReturn: () => {
         executionCount++
         return []
       },
-      updateByExpiresAtLessThanAndReturn: () => {
+      updateByIsSleepingTaskAndExpiresAtLessThanAndReturn: () => {
         executionCount++
         return []
       },
@@ -1100,11 +1157,25 @@ describe('TaskExecutionsStorageWithMutex', () => {
         executionCount++
         return []
       },
-      getByNeedsPromiseCancellationAndIds: () => {
+      updateByExecutorIdAndNeedsPromiseCancellationAndReturn: () => {
         executionCount++
         return []
       },
-      updateByNeedsPromiseCancellationAndIds: () => {
+      getByParentExecutionId: () => {
+        executionCount++
+        return []
+      },
+      updateByParentExecutionIdAndIsFinished: () => {
+        executionCount++
+      },
+      updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus: () => {
+        executionCount++
+        return 0
+      },
+      deleteById: () => {
+        executionCount++
+      },
+      deleteAll: () => {
         executionCount++
       },
     } satisfies TaskExecutionsStorage
@@ -1112,13 +1183,13 @@ describe('TaskExecutionsStorageWithMutex', () => {
     const now = new Date()
     const storage = new TaskExecutionsStorageWithMutex(testStorage)
 
-    await storage.insert([])
+    await storage.insertMany([])
     expect(executionCount).toBe(1)
 
-    await storage.getByIds(['executionId'])
+    await storage.getById('executionId', {})
     expect(executionCount).toBe(2)
 
-    await storage.getById('executionId', {})
+    await storage.getBySleepingTaskUniqueId('sleepingTaskUniqueId')
     expect(executionCount).toBe(3)
 
     await storage.updateById(
@@ -1130,7 +1201,7 @@ describe('TaskExecutionsStorageWithMutex', () => {
     )
     expect(executionCount).toBe(4)
 
-    await storage.updateByIdAndInsertIfUpdated(
+    await storage.updateByIdAndInsertManyIfUpdated(
       'executionId',
       {},
       {
@@ -1140,20 +1211,16 @@ describe('TaskExecutionsStorageWithMutex', () => {
     )
     expect(executionCount).toBe(5)
 
-    await storage.updateByIdsAndStatuses([], [], {
-      updatedAt: now,
-    })
-    expect(executionCount).toBe(6)
-
     await storage.updateByStatusAndStartAtLessThanAndReturn(
       'completed',
       new Date(),
       {
         updatedAt: now,
       },
+      new Date(),
       0,
     )
-    expect(executionCount).toBe(7)
+    expect(executionCount).toBe(6)
 
     await storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
       'completed',
@@ -1164,26 +1231,26 @@ describe('TaskExecutionsStorageWithMutex', () => {
       },
       1,
     )
-    expect(executionCount).toBe(8)
+    expect(executionCount).toBe(7)
 
-    await storage.updateByStatusesAndCloseStatusAndReturn(
-      ['completed'],
+    await storage.updateByCloseStatusAndReturn(
       'idle',
       {
         updatedAt: now,
       },
       1,
     )
-    expect(executionCount).toBe(9)
+    expect(executionCount).toBe(8)
 
-    await storage.updateByExpiresAtLessThanAndReturn(
+    await storage.updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+      false,
       new Date(),
       {
         updatedAt: now,
       },
       1,
     )
-    expect(executionCount).toBe(10)
+    expect(executionCount).toBe(9)
 
     await storage.updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
       new Date(),
@@ -1192,7 +1259,7 @@ describe('TaskExecutionsStorageWithMutex', () => {
       },
       1,
     )
-    expect(executionCount).toBe(11)
+    expect(executionCount).toBe(10)
 
     await storage.updateByCloseExpiresAtLessThanAndReturn(
       new Date(),
@@ -1201,14 +1268,40 @@ describe('TaskExecutionsStorageWithMutex', () => {
       },
       1,
     )
+    expect(executionCount).toBe(11)
+
+    await storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
+      'de_executor_id',
+      true,
+      {
+        updatedAt: now,
+      },
+      1,
+    )
     expect(executionCount).toBe(12)
 
-    await storage.getByNeedsPromiseCancellationAndIds(true, [], 1)
+    await storage.getByParentExecutionId('executionId')
     expect(executionCount).toBe(13)
 
-    await storage.updateByNeedsPromiseCancellationAndIds(true, [], {
+    await storage.updateByParentExecutionIdAndIsFinished('executionId', true, {
       updatedAt: now,
     })
     expect(executionCount).toBe(14)
+
+    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
+      true,
+      'idle',
+      {
+        updatedAt: now,
+      },
+      1,
+    )
+    expect(executionCount).toBe(15)
+
+    await storage.deleteById('executionId')
+    expect(executionCount).toBe(16)
+
+    await storage.deleteAll()
+    expect(executionCount).toBe(17)
   })
 })

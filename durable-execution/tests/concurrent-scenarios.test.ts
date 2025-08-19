@@ -1,6 +1,6 @@
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutor, InMemoryTaskExecutionsStorage } from '../src'
+import { ChildTask, DurableExecutor, InMemoryTaskExecutionsStorage } from '../src'
 
 describe('concurrentScenarios', () => {
   let storage: InMemoryTaskExecutionsStorage
@@ -88,7 +88,7 @@ describe('concurrentScenarios', () => {
         runParent: () => {
           return {
             output: 'parent_output',
-            children: [{ task: child1 }, { task: child2 }, { task: child3 }],
+            children: [new ChildTask(child1), new ChildTask(child2), new ChildTask(child3)],
           }
         },
       })
@@ -98,7 +98,7 @@ describe('concurrentScenarios', () => {
         timeoutMs: 2000,
         runParent: () => ({
           output: 'parent_output',
-          children: [{ task: child1 }, { task: child2 }, { task: child3 }],
+          children: [new ChildTask(child1), new ChildTask(child2), new ChildTask(child3)],
         }),
       })
 

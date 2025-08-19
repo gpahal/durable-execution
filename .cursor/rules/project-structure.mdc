@@ -25,10 +25,16 @@ This is a TypeScript monorepo for the durable-execution ecosystem using pnpm wor
   - [src/task.ts](mdc:durable-execution/src/task.ts) - Task definitions and types
   - [src/storage.ts](mdc:durable-execution/src/storage.ts) - Storage interface
   - [src/in-memory-storage.ts](mdc:durable-execution/src/in-memory-storage.ts) - Default storage impl
+  - Sleeping tasks, parent tasks, sequential tasks, and polling tasks are documented in
+    [README.md](mdc:durable-execution/README.md) and surfaced via `DurableExecutor.sleepingTask`,
+    `DurableExecutor.parentTask`, `DurableExecutor.sequentialTasks`, and `DurableExecutor.pollingTask`.
 
 #### Extension Packages
 
 - [durable-execution-orpc-utils/](mdc:durable-execution-orpc-utils/) - oRPC integration utilities
+  - [src/index.ts](mdc:durable-execution-orpc-utils/src/index.ts) - Single public entrypoint exporting `createTasksRouter` and `convertProcedureClientToTask`
+  - [README.md](mdc:durable-execution-orpc-utils/README.md) - Usage examples for server/client and remote task execution
+  - [tests/index.test.ts](mdc:durable-execution-orpc-utils/tests/index.test.ts) - End-to-end tests for the API
 - [durable-execution-storage-drizzle/](mdc:durable-execution-storage-drizzle/) - Drizzle ORM storage implementations
 - [durable-execution-storage-test-utils/](mdc:durable-execution-storage-test-utils/) - Testing utilities for storage implementations
 

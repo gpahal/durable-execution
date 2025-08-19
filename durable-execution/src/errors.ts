@@ -120,7 +120,7 @@ export class DurableExecutionError extends CustomError {
  * @example
  * ```ts
  * try {
- *   const handle = await client.getTaskHandle('nonexistent', 'te_invalid')
+ *   const handle = await executor.getTaskExecutionHandle('nonexistent', 'te_invalid')
  * } catch (error) {
  *   if (error instanceof DurableExecutionNotFoundError) {
  *     console.log('Task execution not found')

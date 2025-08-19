@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module'
 
 import { MySqlContainer } from '@testcontainers/mysql'
+import { PostgreSqlContainer } from '@testcontainers/postgresql'
 import type {
   generateMySQLDrizzleJson as generateMySQLDrizzleJsonType,
   generateMySQLMigration as generateMySQLMigrationType,
@@ -9,13 +10,14 @@ import type {
 } from 'drizzle-kit/api'
 import { drizzle as drizzleLibsql } from 'drizzle-orm/libsql'
 import { drizzle as drizzleMySql } from 'drizzle-orm/mysql2'
-import { drizzle as drizzlePglite } from 'drizzle-orm/pglite'
+import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres'
 import {
   cleanupTemporaryFiles,
   runStorageTest,
-  withTemporaryDirectory,
   withTemporaryFile,
 } from 'durable-execution-storage-test-utils'
+import mysql from 'mysql2/promise'
+import { Pool } from 'pg'
 
 import {
   createMySqlTaskExecutionsStorage,
@@ -38,25 +40,39 @@ const { pushSchema, pushSQLiteSchema, generateMySQLDrizzleJson, generateMySQLMig
 describe('index', () => {
   afterAll(cleanupTemporaryFiles)
 
-  it('should complete with pg storage', { timeout: 120_000 }, async () => {
-    await withTemporaryDirectory(async (dirPath) => {
+  it('should complete with pg storage', { timeout: 300_000 }, async () => {
+    const container = await new PostgreSqlContainer('postgres:16.10').start()
+    let pool: Pool | undefined
+    try {
       const taskExecutionsTable = createPgTaskExecutionsTable()
-      const db = drizzlePglite(dirPath)
+      pool = new Pool({
+        connectionString: `postgresql://${container.getUsername()}:${container.getPassword()}@${container.getHost()}:${container.getPort()}/${container.getDatabase()}`,
+      })
+      const db = drizzlePg(pool)
       const { apply } = await pushSchema({ taskExecutionsTable }, db)
       await apply()
 
-      const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable)
+      const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable, {
+        enableTestMode: true,
+      })
       await runStorageTest(storage)
-    })
+    } finally {
+      if (pool) {
+        await pool.end()
+      }
+      await container.stop()
+    }
   })
 
   it('should complete with mysql storage', { timeout: 300_000 }, async () => {
     const container = await new MySqlContainer('mysql:8.4').start()
+    let pool: mysql.Pool | undefined
     try {
       const taskExecutionsTable = createMySqlTaskExecutionsTable()
-      const db = drizzleMySql(
-        `mysql://${container.getUsername()}:${container.getUserPassword()}@${container.getHost()}:${container.getPort()}/${container.getDatabase()}`,
-      )
+      pool = mysql.createPool({
+        uri: `mysql://${container.getUsername()}:${container.getUserPassword()}@${container.getHost()}:${container.getPort()}/${container.getDatabase()}`,
+      })
+      const db = drizzleMySql(pool)
 
       const emptyDrizzleJson = (await generateMySQLDrizzleJson({})) as Record<string, unknown>
       const drizzleJson = (await generateMySQLDrizzleJson({
@@ -71,9 +87,15 @@ describe('index', () => {
         db,
         taskExecutionsTable,
         (result) => result[0].affectedRows,
+        {
+          enableTestMode: true,
+        },
       )
       await runStorageTest(storage)
     } finally {
+      if (pool) {
+        await pool.end()
+      }
       await container.stop()
     }
   })
@@ -85,7 +107,9 @@ describe('index', () => {
       const { apply } = await pushSQLiteSchema({ taskExecutionsTable }, db)
       await apply()
 
-      const storage = createSQLiteTaskExecutionsStorage(db, taskExecutionsTable)
+      const storage = createSQLiteTaskExecutionsStorage(db, taskExecutionsTable, {
+        enableTestMode: true,
+      })
       await runStorageTest(storage)
     })
   })

@@ -1,6 +1,6 @@
 {
   "name": "durable-execution-storage-drizzle",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "Drizzle ORM storage implementation for durable-execution",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
@@ -47,6 +47,7 @@
     "clean": "premove build",
     "test": "vitest run",
     "test-coverage": "vitest run --coverage",
+    "bench": "tsx scripts/bench.ts",
     "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/index.ts",
     "lint": "eslint .",
     "lint-fix": "eslint . --fix"
@@ -57,13 +58,16 @@
   },
   "devDependencies": {
     "@gpahal/std": "catalog:prod",
-    "@electric-sql/pglite": "catalog:dev",
     "@libsql/client": "catalog:dev",
     "@testcontainers/mysql": "catalog:dev",
+    "@testcontainers/postgresql": "catalog:dev",
+    "@types/pg": "catalog:dev",
     "drizzle-kit": "catalog:dev",
     "drizzle-orm": "catalog:dev",
     "durable-execution": "workspace:*",
     "durable-execution-storage-test-utils": "workspace:*",
+    "mysql2": "catalog:dev",
+    "pg": "catalog:dev",
     "testcontainers": "catalog:dev"
   }
 }

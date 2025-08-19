@@ -23,8 +23,15 @@ failure or if the task is retried.
 ## Useful links
 
 - [Task examples](#task-examples) - examples of tasks
+- [TaskOptions](https://gpahal.github.io/durable-execution/types/TaskOptions.html) - details on
+  task options
+- [SleepingTaskOptions](https://gpahal.github.io/durable-execution/types/SleepingTaskOptions.html) -
+  details on sleeping task options - useful for webhooks and events
+- [ParentTaskOptions](https://gpahal.github.io/durable-execution/types/ParentTaskOptions.html) -
+  details on parent task options - useful for workflows
 - [DurableExecutionError](https://gpahal.github.io/durable-execution/classes/DurableExecutionError.html) -
   details on error handling
+- [Production tips](#production-tips) - tips for production usage
 - [Design](#design) - details on the internal workings
 
 ## Modes of operation
@@ -74,12 +81,12 @@ Create a storage implementation that implements the
 type. The implementation should support async transactions that allow running multiple
 transactions in parallel.
 
-- A storage implementation using Drizzle ORM is provided in the
-  [durable-execution-storage-drizzle](https://github.com/gpahal/durable-execution/tree/main/durable-execution-storage-drizzle)
-  package
 - A very simple in-memory implementation is provided in the
   [`src/in-memory-storage.ts`](https://github.com/gpahal/durable-execution/blob/main/durable-execution/src/in-memory-storage.ts)
   file for testing and simple use cases
+- A storage implementation using Drizzle ORM is provided in the
+  [durable-execution-storage-drizzle](https://github.com/gpahal/durable-execution/tree/main/durable-execution-storage-drizzle)
+  package
 
 ### Create a durable executor and manage its lifecycle
 
@@ -154,14 +161,8 @@ const uploadFile = executor
           fileSize: 100,
         },
         children: [
-          {
-            task: extractFileTitle,
-            input: { filePath: input.filePath },
-          },
-          {
-            task: summarizeFile,
-            input: { filePath: input.filePath },
-          },
+          new ChildTask(extractFileTitle, { filePath: input.filePath }),
+          new ChildTask(summarizeFile, { filePath: input.filePath }),
         ],
       }
     },
@@ -370,14 +371,8 @@ const parentTask = executor.parentTask({
     return {
       output: `Hello from parent task, ${input.name}!`,
       children: [
-        {
-          task: taskA,
-          input: { name: input.name },
-        },
-        {
-          task: taskB,
-          input: { name: input.name },
-        },
+        new ChildTask(taskA, { name: input.name }),
+        new ChildTask(taskB, { name: input.name }),
       ],
     }
   },
@@ -433,14 +428,8 @@ const parentTask = executor.parentTask({
     return {
       output: `Hello from parent task, ${input.name}!`,
       children: [
-        {
-          task: taskA,
-          input: { name: input.name },
-        },
-        {
-          task: taskB,
-          input: { name: input.name },
-        },
+        new ChildTask(taskA, { name: input.name }),
+        new ChildTask(taskB, { name: input.name }),
       ],
     }
   },
@@ -502,13 +491,8 @@ const parentTask = executor.parentTask({
     return {
       output: `Hello from parent task, ${input.name}!`,
       children: [
-        {
-          task: taskA,
-          input: { name: input.name },
-        },
-        {
-          task: taskB,
-        },
+        new ChildTask(taskA, { name: input.name }),
+        new ChildTask(taskB),
       ],
     }
   },
@@ -571,8 +555,8 @@ const resilientParentTask = executor.parentTask({
     return {
       output: `Hello from parent task, ${input.name}!`,
       children: [
-        { task: taskA, input: { name: input.name } },
-        { task: taskB },
+        new ChildTask(taskA, { name: input.name }),
+        new ChildTask(taskB),
       ],
     }
   },
@@ -660,7 +644,7 @@ const taskC = executor.task({
   },
 })
 
-const task = executor.sequentialTasks(taskA, taskB, taskC)
+const task = executor.sequentialTasks('seq', taskA, taskB, taskC)
 
 // Input: { name: 'world' }
 // Output: {
@@ -711,7 +695,7 @@ const taskB = executor.parentTask({
     runParent: (ctx, { output }) => {
       return {
         output: output.taskBOutput,
-        children: [{ task: taskC, input: { name: output.name } }],
+        children: [new ChildTask(taskC, { name: output.name })],
       }
     },
     finalize: {
@@ -748,7 +732,7 @@ const taskA = executor.parentTask({
     runParent: (ctx, { output }) => {
       return {
         output: output.taskAOutput,
-        children: [{ task: taskB, input: { name: output.name } }],
+        children: [new ChildTask(taskB, { name: output.name })],
       }
     },
     finalize: {
@@ -838,8 +822,8 @@ const taskA = executor.parentTask({
         taskAOutput: `Hello from task A, ${input.name}!`,
       },
       children: [
-        { task: taskA1, input: { name: input.name } },
-        { task: taskA2, input: { name: input.name } },
+        new ChildTask(taskA1, { name: input.name }),
+        new ChildTask(taskA2, { name: input.name }),
       ],
     }
   },
@@ -877,8 +861,8 @@ const taskB = executor.parentTask({
         taskBOutput: `Hello from task B, ${input.name}!`,
       },
       children: [
-        { task: taskB1, input: { name: input.name } },
-        { task: taskB2, input: { name: input.name } },
+        new ChildTask(taskB1, { name: input.name }),
+        new ChildTask(taskB2, { name: input.name }),
       ],
     }
   },
@@ -900,6 +884,8 @@ const taskB = executor.parentTask({
     },
   },
 })
+
+const task = executor.sequentialTasks('seq', taskA, taskB)
 
 // Input: { name: 'world' }
 // Output: {
@@ -960,7 +946,7 @@ const taskB3 = executor.task({
     }
   },
 })
-const taskB = executor.sequentialTasks(taskB1, taskB2, taskB3)
+const taskB = executor.sequentialTasks('b', taskB1, taskB2, taskB3)
 
 const taskA1 = executor.task({
   id: 'a1',
@@ -990,9 +976,9 @@ const taskA = executor.parentTask({
     return {
       output: `Hello from task A, ${input.name}!`,
       children: [
-        { task: taskA1, input: { name: input.name } },
-        { task: taskA2, input: { name: input.name } },
-        { task: taskA3, input: { name: input.name } },
+        new ChildTask(taskA1, { name: input.name }),
+        new ChildTask(taskA2, { name: input.name }),
+        new ChildTask(taskA3, { name: input.name }),
       ],
     }
   },
@@ -1028,8 +1014,8 @@ const rootTask = executor.parentTask({
     return {
       output: `Hello from root task, ${input.name}!`,
       children: [
-        { task: taskA, input: { name: input.name } },
-        { task: taskB, input: { name: input.name } },
+        new ChildTask(taskA, { name: input.name }),
+        new ChildTask(taskB, { name: input.name }),
       ],
     }
   },
@@ -1098,7 +1084,7 @@ const recursiveTask: Task<{ index: number }, { count: number }> = executor
       return {
         output: undefined,
         children:
-          input.index >= 9 ? [] : [{ task: recursiveTask, input: { index: input.index + 1 } }],
+          input.index >= 9 ? [] : [new ChildTask(recursiveTask, { index: input.index + 1 })],
       }
     },
     finalize: {
@@ -1128,6 +1114,41 @@ const recursiveTask: Task<{ index: number }, { count: number }> = executor
 ```
 
 ### Polling task
+
+Polling tasks are useful when you want to wait for a value to be available.
+
+```ts
+let value: number | undefined
+setTimeout(() => {
+  value = 10
+}, 1000)
+
+const pollTask = executor.task({
+  id: 'poll',
+  sleepMsBeforeRun: 100,
+  timeoutMs: 1000,
+  run: () => {
+    return value == null
+      ? {
+          isDone: false,
+        }
+      : {
+          isDone: true,
+          output: value,
+        }
+  },
+})
+
+const pollingTask = executor.pollingTask('polling', pollTask, 20, 100)
+
+// Input: undefined
+// Output: {
+//   isSuccess: true,
+//   output: 10,
+// }
+```
+
+### Polling task (manually)
 
 Polling tasks are useful when you want to wait for a value to be available. The `sleepMsBeforeRun`
 option is used to wait for a certain amount of time before attempting to get the value again. The
@@ -1166,7 +1187,7 @@ const pollingTask: Task<{ prevCount: number }, { count: number; value: number }>
         } as
           | { isDone: false; value: undefined; prevCount: number }
           | { isDone: true; value: number; prevCount: number },
-        children: [{ task: pollingTask, input: { prevCount: input.prevCount + 1 } }],
+        children: [new ChildTask(pollingTask, { prevCount: input.prevCount + 1 })],
       }
     },
     finalize: {
@@ -1198,6 +1219,92 @@ const pollingTask: Task<{ prevCount: number }, { count: number; value: number }>
 //   count: 15, // Can be anywhere between 10 and 20 depending on when tasks are picked
 //   value: 10,
 // }
+```
+
+### Sleeping task
+
+Sleeping tasks are useful for implementing webhook/event-driven workflows where you need to wait
+for external signals. The task remains in a `running` state until explicitly woken up via
+`wakeupSleepingTaskExecution()` with a completion status and output. This pattern is ideal for
+integrating with payment providers, approval workflows, or any asynchronous external process.
+
+```ts
+// Specify the type of the output of the sleeping task
+const waitForWebhookTask = executor.sleepingTask<string>({
+  id: 'wait_for_webhook',
+  timeoutMs: 60 * 60 * 1000, // 1 hour
+})
+
+// Use the sleeping task in a parent task
+const parentTask = executor.parentTask({
+  id: 'parent',
+  timeoutMs: 1000,
+  runParent: () => {
+    // ... generate entity id and wait for webhook or event to wake up the sleeping task
+    const entityId = 'entity_id'
+    return {
+      output: 'parent_output',
+      children: [new ChildTask(waitForWebhookTask, entityId)],
+    }
+  },
+  finalize: {
+    id: 'finalizeTask',
+    timeoutMs: 1000,
+    run: (ctx, { children }) => {
+      const child = children[0]!
+      if (child.status !== 'completed') {
+        throw new Error(`Webhook task failed: ${child.error.message}`)
+      }
+      return child.output
+    },
+  },
+})
+
+// Wakeup in a webhook or event handler asynchronously using the unique id and executor
+// (or execution client)
+const childExecution = await executor.wakeupSleepingTaskExecution(
+  waitForWebhookTask,
+  'entity_id',
+  {
+    status: 'completed',
+    output: 'webhook_output',
+  },
+)
+
+// Input: undefined
+// Output: 'webhook_output'
+```
+
+## Production tips
+
+### Storage
+
+Use persistent storage in production.
+
+```ts
+import { createPgTaskExecutionsTable, createPgTaskExecutionsStorage } from 'durable-execution-storage-drizzle'
+import { drizzle } from 'drizzle-orm/node-postgres'
+
+const db = drizzle(process.env.DATABASE_URL!)
+const taskExecutionsTable = createPgTaskExecutionsTable()
+const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable)
+const executor = new DurableExecutor(storage)
+```
+
+### Scaling
+
+Run multiple executor instances in different processes or even different machines.
+
+```ts
+// First executor instance
+const executor = new DurableExecutor(storage, {
+  maxConcurrentTaskExecutions: 100,
+})
+
+// Second executor instance on a beefier machine
+const executor = new DurableExecutor(storage, {
+  maxConcurrentTaskExecutions: 1000,
+})
 ```
 
 ## Design

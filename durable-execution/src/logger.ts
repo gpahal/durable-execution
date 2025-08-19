@@ -1,7 +1,5 @@
 import z from 'zod'
 
-import { getErrorMessage } from '@gpahal/std/errors'
-
 export const zLogger = z.object({
   debug: z.custom<Logger['debug']>((val) => {
     if (typeof val !== 'function') {
@@ -41,7 +39,7 @@ export const zLogger = z.object({
  * const customLogger: Logger = {
  *   debug: (msg) => console.debug(`[DEBUG] ${msg}`),
  *   info: (msg) => console.info(`[INFO] ${msg}`),
- *   error: (msg) => console.error(`[ERROR] ${msg}`)
+ *   error: (msg, error) => console.error(`[ERROR] ${msg}`, error)
  * }
  *
  * const executor = new DurableExecutor(storage, {
@@ -55,7 +53,7 @@ export const zLogger = z.object({
 export type Logger = {
   debug: (message: string) => void
   info: (message: string) => void
-  error: (message: string) => void
+  error: (message: string, error?: unknown) => void
 }
 
 export const zLogLevel = z.enum(['debug', 'info', 'error'])
@@ -102,9 +100,18 @@ const levels: Record<LogLevel, number> = {
  */
 export function createConsoleLogger(name: string): Logger {
   return {
-    debug: (message) => console.debug(`DEBUG [${name}] ${message}`),
-    info: (message) => console.info(`INFO  [${name}] ${message}`),
-    error: (message) => console.error(`ERROR [${name}] ${message}`),
+    debug: (message) => {
+      const datetime = new Date().toISOString()
+      console.debug(`DEBUG [${name}] [${datetime}] ${message}`)
+    },
+    info: (message) => {
+      const datetime = new Date().toISOString()
+      console.info(`INFO  [${name}] [${datetime}] ${message}`)
+    },
+    error: (message, error) => {
+      const datetime = new Date().toISOString()
+      console.error(`ERROR [${name}] [${datetime}] ${message}`, error)
+    },
   }
 }
 
@@ -132,7 +139,7 @@ export class LoggerInternal {
   error(message: string, error?: unknown): void {
     if (this.level <= levels.error) {
       if (error) {
-        this.logger.error(`${message}: ${getErrorMessage(error)}`)
+        this.logger.error(message, error)
       } else {
         this.logger.error(message)
       }
