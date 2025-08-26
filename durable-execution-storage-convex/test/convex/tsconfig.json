@@ -1,0 +1,9 @@
+{
+  "extends": "@gpahal/tsconfig/base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "customConditions": ["@convex-dev/component-source"]
+  },
+  "include": ["./**/*"],
+  "exclude": ["./_generated"]
+}

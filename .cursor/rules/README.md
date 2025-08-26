@@ -12,6 +12,7 @@ This directory contains Cursor Rules that provide context and guidance to AI ass
 
 - **`typescript-standards.mdc`** - TypeScript coding standards and patterns (applies to `*.ts`, `*.tsx` files)
 - **`testing-conventions.mdc`** - Testing frameworks, patterns, and best practices (applies to test files)
+- **`orpc-utils.mdc`** - oRPC utilities package specific conventions (applies to `durable-execution-orpc-utils/**` files)
 
 ### Manual/Description-Based Rules
 

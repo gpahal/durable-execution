@@ -18,7 +18,7 @@ async function waitAndGetFinishedExecution<TInput, TOutput>(
   executionId: string,
 ): Promise<FinishedTaskExecution<TOutput>> {
   const handle = await executor.getTaskExecutionHandle(task, executionId)
-  return await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
+  return await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 25 })
 }
 
 describe('server', () => {
@@ -203,7 +203,7 @@ describe('server', () => {
     )
 
     const handle = await executor.enqueueTask(add1, { n: 0 })
-    const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
+    const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 25 })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -231,7 +231,7 @@ describe('server', () => {
     )
 
     const handle = await executor.enqueueTask(add1, { n: 0 })
-    const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
+    const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 25 })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -262,7 +262,7 @@ describe('server', () => {
     )
 
     const handle = await executor.enqueueTask(add1, { n: 0 })
-    const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
+    const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 25 })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -293,7 +293,7 @@ describe('server', () => {
     )
 
     const handle = await executor.enqueueTask(add1, { n: 0 })
-    const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
+    const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 25 })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -324,7 +324,7 @@ describe('server', () => {
     )
 
     const handle = await executor.enqueueTask(add1, { n: 0 })
-    const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 20 })
+    const finishedExecution = await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 25 })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -534,7 +534,7 @@ describe('convertProcedureClientToTask', () => {
 
       const handle = await executor.enqueueTask(task, { n: 0 })
       const finishedExecution = await handle.waitAndGetFinishedExecution({
-        pollingIntervalMs: 20,
+        pollingIntervalMs: 25,
       })
 
       expect(executionCount).toBe(1)
@@ -570,7 +570,7 @@ describe('convertProcedureClientToTask', () => {
 
       const handle = await executor.enqueueTask(task, { n: 0 })
       const finishedExecution = await handle.waitAndGetFinishedExecution({
-        pollingIntervalMs: 20,
+        pollingIntervalMs: 25,
       })
 
       expect(executionCount).toBe(1)
@@ -604,7 +604,7 @@ describe('convertProcedureClientToTask', () => {
 
     const handle = await executor.enqueueTask(task, { n: 0 })
     const finishedExecution = await handle.waitAndGetFinishedExecution({
-      pollingIntervalMs: 20,
+      pollingIntervalMs: 25,
     })
 
     expect(executionCount).toBe(1)
@@ -642,7 +642,7 @@ describe('convertProcedureClientToTask', () => {
 
     const handle = await executor.enqueueTask(task, { n: 0 })
     const finishedExecution = await handle.waitAndGetFinishedExecution({
-      pollingIntervalMs: 20,
+      pollingIntervalMs: 25,
     })
 
     expect(finishedExecution.status).toBe('completed')
@@ -673,7 +673,7 @@ describe('convertProcedureClientToTask', () => {
 
     const handle = await executor.enqueueTask(task, { n: 0 })
     const finishedExecution = await handle.waitAndGetFinishedExecution({
-      pollingIntervalMs: 20,
+      pollingIntervalMs: 25,
     })
 
     expect(executionCount).toBe(1)
@@ -706,7 +706,7 @@ describe('convertProcedureClientToTask', () => {
 
     const handle = await executor.enqueueTask(task, { n: 0 })
     const finishedExecution = await handle.waitAndGetFinishedExecution({
-      pollingIntervalMs: 20,
+      pollingIntervalMs: 25,
     })
 
     expect(executionCount).toBe(1)

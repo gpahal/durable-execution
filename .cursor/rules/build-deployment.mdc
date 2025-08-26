@@ -51,7 +51,7 @@ pnpm pre-commit                 # Validation pipeline
 - run: pnpm cs-publish  # if main branch
 ```
 
-**Requirements**: Node.js >=20.0.0, pnpm 10.14.0, catalog dependencies
+**Requirements**: Node.js >=20.0.0, pnpm 10.15.0, catalog dependencies
 
 ## Troubleshooting
 

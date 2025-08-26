@@ -1,6 +1,6 @@
 {
   "name": "durable-execution-storage-test-utils",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "description": "Test utilities for validating durable-execution storage implementations",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
@@ -14,10 +14,6 @@
     "url": "https://github.com/gpahal/durable-execution/issues"
   },
   "keywords": [
-    "storage",
-    "test",
-    "testing",
-    "test-utils",
     "durable-execution",
     "durable-tasks",
     "durable-functions",
@@ -25,7 +21,11 @@
     "workflow-engine",
     "workflow-execution",
     "durable",
-    "resilient"
+    "resilient",
+    "storage",
+    "test",
+    "testing",
+    "test-utils"
   ],
   "sideEffects": false,
   "type": "module",
@@ -45,7 +45,7 @@
   ],
   "scripts": {
     "build": "premove build && tsup",
-    "clean": "premove build",
+    "clean": "premove build coverage",
     "test": "vitest run",
     "test-coverage": "vitest run --coverage",
     "bench": "tsx scripts/bench.ts",
@@ -61,6 +61,7 @@
     "nanoid": "catalog:prod"
   },
   "devDependencies": {
+    "@gpahal/std-node": "catalog:dev",
     "durable-execution": "workspace:*"
   }
 }

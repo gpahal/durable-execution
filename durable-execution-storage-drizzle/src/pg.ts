@@ -7,7 +7,6 @@ import {
   json,
   pgTable,
   text,
-  timestamp,
   uniqueIndex,
   type PgDatabase,
   type PgQueryResultHKT,
@@ -65,13 +64,15 @@ export function createPgTaskExecutionsTable(tableName = 'task_executions') {
       rootExecutionId: text('root_execution_id'),
       parentTaskId: text('parent_task_id'),
       parentExecutionId: text('parent_execution_id'),
-      indexInParentChildTaskExecutions: integer('index_in_parent_child_task_executions'),
-      isFinalizeTaskOfParentTask: boolean('is_finalize_task_of_parent_task'),
+      indexInParentChildren: integer('index_in_parent_children'),
+      isOnlyChildOfParent: boolean('is_only_child_of_parent'),
+      isFinalizeOfParent: boolean('is_finalize_of_parent'),
       taskId: text('task_id').notNull(),
       executionId: text('execution_id').notNull(),
       retryOptions: json('retry_options').$type<TaskRetryOptions>().notNull(),
       sleepMsBeforeRun: bigint('sleep_ms_before_run', { mode: 'number' }).notNull(),
       timeoutMs: bigint('timeout_ms', { mode: 'number' }).notNull(),
+      areChildrenSequential: boolean('are_children_sequential').notNull(),
       input: text('input').notNull(),
       executorId: text('executor_id'),
       isSleepingTask: boolean('is_sleeping_task').notNull(),
@@ -82,30 +83,29 @@ export function createPgTaskExecutionsTable(tableName = 'task_executions') {
       output: text('output'),
       error: json('error').$type<DurableExecutionErrorStorageValue>(),
       retryAttempts: integer('retry_attempts').notNull(),
-      startAt: timestamp('start_at', { withTimezone: true }).notNull(),
-      startedAt: timestamp('started_at', { withTimezone: true }),
-      expiresAt: timestamp('expires_at', { withTimezone: true }),
-      finishedAt: timestamp('finished_at', { withTimezone: true }),
+      startAt: bigint('start_at', { mode: 'number' }).notNull(),
+      startedAt: bigint('started_at', { mode: 'number' }),
+      expiresAt: bigint('expires_at', { mode: 'number' }),
+      finishedAt: bigint('finished_at', { mode: 'number' }),
       children: json('children').$type<Array<TaskExecutionSummary>>(),
       activeChildrenCount: integer('active_children_count').notNull(),
       onChildrenFinishedProcessingStatus: text('on_children_finished_processing_status')
         .$type<TaskExecutionOnChildrenFinishedProcessingStatus>()
         .notNull(),
-      onChildrenFinishedProcessingExpiresAt: timestamp(
-        'on_children_finished_processing_expires_at',
-        { withTimezone: true },
-      ),
-      onChildrenFinishedProcessingFinishedAt: timestamp(
+      onChildrenFinishedProcessingExpiresAt: bigint('on_children_finished_processing_expires_at', {
+        mode: 'number',
+      }),
+      onChildrenFinishedProcessingFinishedAt: bigint(
         'on_children_finished_processing_finished_at',
-        { withTimezone: true },
+        { mode: 'number' },
       ),
       finalize: json('finalize').$type<TaskExecutionSummary>(),
       closeStatus: text('close_status').$type<TaskExecutionCloseStatus>().notNull(),
-      closeExpiresAt: timestamp('close_expires_at', { withTimezone: true }),
-      closedAt: timestamp('closed_at', { withTimezone: true }),
+      closeExpiresAt: bigint('close_expires_at', { mode: 'number' }),
+      closedAt: bigint('closed_at', { mode: 'number' }),
       needsPromiseCancellation: boolean('needs_promise_cancellation').notNull(),
-      createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
-      updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
+      createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+      updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
     },
     (table) => [
       uniqueIndex(`ix_${tableName}_execution_id`).on(table.executionId),
@@ -266,19 +266,19 @@ class PgTaskExecutionsStorage<
       .where(getByIdWhereCondition(this.taskExecutionsTable, executionId, filters))
   }
 
-  async updateByIdAndInsertManyIfUpdated(
+  async updateByIdAndInsertChildrenIfUpdated(
     executionId: string,
     filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
-    executionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
+    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
   ): Promise<void> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    if (executionsToInsertIfAnyUpdated.length === 0) {
+    if (childrenTaskExecutionsToInsertIfAnyUpdated.length === 0) {
       return await this.updateById(executionId, filters, update)
     }
 
-    const rowsToInsert = executionsToInsertIfAnyUpdated.map((execution) =>
+    const rowsToInsert = childrenTaskExecutionsToInsertIfAnyUpdated.map((execution) =>
       taskExecutionStorageValueToDBValue(execution),
     )
     await this.db.transaction(async (tx) => {
@@ -296,9 +296,9 @@ class PgTaskExecutionsStorage<
 
   async updateByStatusAndStartAtLessThanAndReturn(
     status: TaskExecutionStatus,
-    startAtLessThan: Date,
+    startAtLessThan: number,
     update: TaskExecutionStorageUpdate,
-    updateExpiresAtWithStartedAt: Date,
+    updateExpiresAtWithStartedAt: number,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
@@ -322,7 +322,7 @@ class PgTaskExecutionsStorage<
           .update(this.taskExecutionsTable)
           .set({
             ...dbUpdate,
-            expiresAt: sql`to_timestamp((${updateExpiresAtWithStartedAt.getTime()} + timeout_ms) / 1000.0)`,
+            expiresAt: sql`(${updateExpiresAtWithStartedAt} + timeout_ms)`,
           })
           .where(
             inArray(
@@ -338,10 +338,9 @@ class PgTaskExecutionsStorage<
     )
   }
 
-  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
+  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
     status: TaskExecutionStatus,
     onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
-    activeChildrenCountLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
@@ -358,7 +357,7 @@ class PgTaskExecutionsStorage<
               this.taskExecutionsTable.onChildrenFinishedProcessingStatus,
               onChildrenFinishedProcessingStatus,
             ),
-            lt(this.taskExecutionsTable.activeChildrenCount, activeChildrenCountLessThan),
+            eq(this.taskExecutionsTable.activeChildrenCount, 0),
           ),
         )
         .orderBy(asc(this.taskExecutionsTable.updatedAt))
@@ -413,17 +412,17 @@ class PgTaskExecutionsStorage<
     return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+  async updateByIsSleepingTaskAndExpiresAtLessThan(
     isSleepingTask: boolean,
-    expiresAtLessThan: Date,
+    expiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    const updatedRows = await this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const rows = await tx
-        .select()
+        .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
         .where(
           and(
@@ -446,21 +445,20 @@ class PgTaskExecutionsStorage<
             ),
           )
       }
-      return rows
+      return rows.length
     })
-    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
-    onChildrenFinishedProcessingExpiresAtLessThan: Date,
+  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
+    onChildrenFinishedProcessingExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    const updatedRows = await this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const rows = await tx
-        .select()
+        .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
         .where(
           lt(
@@ -483,21 +481,20 @@ class PgTaskExecutionsStorage<
             ),
           )
       }
-      return rows
+      return rows.length
     })
-    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByCloseExpiresAtLessThanAndReturn(
-    closeExpiresAtLessThan: Date,
+  async updateByCloseExpiresAtLessThan(
+    closeExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    const updatedRows = await this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const rows = await tx
-        .select()
+        .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
         .where(lt(this.taskExecutionsTable.closeExpiresAt, closeExpiresAtLessThan))
         .orderBy(asc(this.taskExecutionsTable.closeExpiresAt))
@@ -515,9 +512,8 @@ class PgTaskExecutionsStorage<
             ),
           )
       }
-      return rows
+      return rows.length
     })
-    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
   async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(

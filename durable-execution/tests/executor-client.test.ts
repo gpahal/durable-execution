@@ -43,7 +43,9 @@ describe('executorClient', () => {
     })
     const handle = await executorClient.enqueueTask('test')
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -75,7 +77,9 @@ describe('executorClient', () => {
     })
     const handle = await executorClient.enqueueTask('test')
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -182,7 +186,7 @@ describe('executorClient', () => {
     }).rejects.toThrow(DurableExecutionNotFoundError)
   })
 
-  it('should handle shutdown idempotently', () => {
+  it('should handle shutdown idempotently', async () => {
     const testTask = executor.task({
       id: 'test',
       timeoutMs: 10_000,
@@ -194,13 +198,9 @@ describe('executorClient', () => {
       logLevel: 'error',
     })
 
-    expect(() => {
-      executorClient.shutdown()
-    }).not.toThrow()
+    await expect(executorClient.shutdown()).resolves.not.toThrow()
 
-    expect(() => {
-      executorClient.shutdown()
-    }).not.toThrow()
+    await expect(executorClient.shutdown()).resolves.not.toThrow()
   })
 
   it('should throw after shutdown', async () => {
@@ -215,7 +215,7 @@ describe('executorClient', () => {
       logLevel: 'error',
     })
 
-    executorClient.shutdown()
+    await executorClient.shutdown()
 
     await expect(async () => {
       await executorClient.enqueueTask('test')

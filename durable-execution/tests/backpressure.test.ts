@@ -72,8 +72,15 @@ describe('backpressure', () => {
         completedPromises.shift()!()
       }
 
-      await Promise.all(handles.map((handle) => handle.waitAndGetFinishedExecution()))
+      await Promise.all(
+        handles.map((handle) =>
+          handle.waitAndGetFinishedExecution({
+            pollingIntervalMs: 100,
+          }),
+        ),
+      )
 
+      await sleep(100)
       expect(maxObservedRunning).toBe(3)
       expect(executor.getRunningTaskExecutionIds().size).toBe(0)
     })
@@ -98,7 +105,13 @@ describe('backpressure', () => {
       expect(stats.currConcurrentTaskExecutions).toBeLessThanOrEqual(3)
       expect(stats.maxTaskExecutionsPerBatch).toBe(2)
 
-      await Promise.all(handles.map((handle) => handle.waitAndGetFinishedExecution()))
+      await Promise.all(
+        handles.map((handle) =>
+          handle.waitAndGetFinishedExecution({
+            pollingIntervalMs: 100,
+          }),
+        ),
+      )
       expect(executor.getRunningTaskExecutionIds().size).toBe(0)
     })
   })
@@ -162,7 +175,13 @@ describe('backpressure', () => {
         await sleep(100)
       }
 
-      await Promise.all(handles.map((handle) => handle.waitAndGetFinishedExecution()))
+      await Promise.all(
+        handles.map((handle) =>
+          handle.waitAndGetFinishedExecution({
+            pollingIntervalMs: 100,
+          }),
+        ),
+      )
 
       expect(taskStartTimes.length).toBe(4)
       expect(executor.getRunningTaskExecutionIds().size).toBe(0)
@@ -269,7 +288,6 @@ describe('backpressure', () => {
 
       expect(stats).toEqual({
         expireLeewayMs: 60_000,
-        backgroundProcessIntraBatchSleepMs: 50,
         currConcurrentTaskExecutions: 0,
         maxConcurrentTaskExecutions: 4,
         maxTaskExecutionsPerBatch: 2,

@@ -2,7 +2,7 @@ import z from 'zod'
 
 import { getErrorMessage } from '@gpahal/std/errors'
 import { omitUndefinedValues } from '@gpahal/std/objects'
-import { createMutex, type Mutex } from '@gpahal/std/promises'
+import { createMutex, sleepWithJitter, type Mutex } from '@gpahal/std/promises'
 
 import { DurableExecutionError, type DurableExecutionErrorStorageValue } from './errors'
 import type { LoggerInternal } from './logger'
@@ -16,7 +16,6 @@ import {
   type TaskExecutionSummary,
   type TaskRetryOptions,
 } from './task'
-import { sleepWithJitter } from './utils'
 
 /**
  * The storage interface for persisting task execution state. Implementations must ensure
@@ -117,19 +116,19 @@ export type TaskExecutionsStorage = {
   ) => void | Promise<void>
 
   /**
-   * Update task execution by id and insert many task executions if updated.
+   * Update task execution by id and insert children task executions if updated.
    *
    * @param executionId - The id of the task execution to update.
    * @param filters - The filters to filter the task execution.
    * @param update - The update object.
-   * @param executionsToInsertIfAnyUpdated - The executions to insert if the task execution was
-   *   updated.
+   * @param childrenTaskExecutionsToInsertIfAnyUpdated - The children task executions to insert if
+   *   the task execution was updated.
    */
-  updateByIdAndInsertManyIfUpdated: (
+  updateByIdAndInsertChildrenIfUpdated: (
     executionId: string,
     filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
-    executionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
+    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
   ) => void | Promise<void>
 
   /**
@@ -147,30 +146,27 @@ export type TaskExecutionsStorage = {
    */
   updateByStatusAndStartAtLessThanAndReturn: (
     status: TaskExecutionStatus,
-    startAtLessThan: Date,
+    startAtLessThan: number,
     update: TaskExecutionStorageUpdate,
-    updateExpiresAtWithStartedAt: Date,
+    updateExpiresAtWithStartedAt: number,
     limit: number,
   ) => Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>>
 
   /**
    * Update task executions by status and on children finished processing status and active
-   * children task executions count less than and return the task executions that were updated. The
-   * task executions are ordered by `updatedAt` ascending.
+   * children task executions count zero and return the task executions that were updated. The task
+   * executions are ordered by `updatedAt` ascending.
    *
    * @param status - The status of the task executions to update.
    * @param onChildrenFinishedProcessingStatus - The on children finished processing status of the
-   *   task executions to update.
-   * @param activeChildrenCountLessThan - The active children task executions count less than of the
    *   task executions to update.
    * @param update - The update object.
    * @param limit - The maximum number of task executions to update.
    * @returns The task executions that were updated.
    */
-  updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn: (
+  updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn: (
     status: TaskExecutionStatus,
     onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
-    activeChildrenCountLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
   ) => Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>>
@@ -191,42 +187,42 @@ export type TaskExecutionsStorage = {
   ) => Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>>
 
   /**
-   * Update task executions by is sleeping task and expires at less than and return the task
-   * executions that were updated. The task executions are ordered by `expiresAt` ascending.
+   * Update task executions by is sleeping task and expires at less than and return the number of
+   * task executions that were updated. The task executions are ordered by `expiresAt` ascending.
    *
    * @param isSleepingTask - The is sleeping task of the task executions to update.
    * @param expiresAtLessThan - The expires at less than of the task executions to update.
    * @param update - The update object.
    * @param limit - The maximum number of task executions to update.
-   * @returns The task executions that were updated.
+   * @returns The number of task executions that were updated.
    */
-  updateByIsSleepingTaskAndExpiresAtLessThanAndReturn: (
+  updateByIsSleepingTaskAndExpiresAtLessThan: (
     isSleepingTask: boolean,
-    expiresAtLessThan: Date,
+    expiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ) => Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>>
+  ) => number | Promise<number>
 
   /**
    * Update task executions by on children finished processing expires at less than and return the
-   * task executions that were updated. The task executions are ordered by
+   * number of task executions that were updated. The task executions are ordered by
    * `onChildrenFinishedProcessingExpiresAt` ascending.
    *
    * @param onChildrenFinishedProcessingExpiresAtLessThan - The on children finished processing
    *   expires at less than of the task executions to update.
    * @param update - The update object.
    * @param limit - The maximum number of task executions to update.
-   * @returns The task executions that were updated.
+   * @returns The number of task executions that were updated.
    */
-  updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn: (
-    onChildrenFinishedProcessingExpiresAtLessThan: Date,
+  updateByOnChildrenFinishedProcessingExpiresAtLessThan: (
+    onChildrenFinishedProcessingExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ) => Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>>
+  ) => number | Promise<number>
 
   /**
-   * Update task executions by close expires at less than and return the task executions that were
-   * updated. The task executions are ordered by `closeExpiresAt` ascending.
+   * Update task executions by close expires at less than and return the number of task executions
+   * that were updated. The task executions are ordered by `closeExpiresAt` ascending.
    *
    * @param closeExpiresAtLessThan - The close expires at less than of the task executions to
    *   update.
@@ -234,11 +230,11 @@ export type TaskExecutionsStorage = {
    * @param limit - The maximum number of task executions to update.
    * @returns The task executions that were updated.
    */
-  updateByCloseExpiresAtLessThanAndReturn: (
-    closeExpiresAtLessThan: Date,
+  updateByCloseExpiresAtLessThan: (
+    closeExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ) => Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>>
+  ) => number | Promise<number>
 
   /**
    * Update task executions by executor id and needs promise cancellation. The task executions are
@@ -329,6 +325,15 @@ export function validateStorageMaxRetryAttempts(maxRetryAttempts?: number | null
   return parsedMaxRetryAttempts.data
 }
 
+/**
+ * Internal class that can be used to interact with the storage implementation.
+ *
+ * This class is used to interact with the storage implementation. It is used by the executor to
+ * interact with the storage implementation.
+ *
+ * @category Storage
+ * @internal
+ */
 export class TaskExecutionsStorageInternal {
   private readonly logger: LoggerInternal
   private readonly storage: TaskExecutionsStorage
@@ -418,12 +423,21 @@ export class TaskExecutionsStorageInternal {
   }
 
   async updateById(
-    now: Date,
+    now: number,
     executionId: string,
     filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdateInternal,
+    execution?: TaskExecutionStorageValue,
     maxRetryAttempts?: number,
   ): Promise<void> {
+    if (
+      update.status &&
+      FINISHED_TASK_EXECUTION_STATUSES.includes(update.status) &&
+      execution?.parent?.isFinalizeOfParent
+    ) {
+      update.closeStatus = 'ready'
+    }
+
     return await this.retry(
       'updateById',
       () =>
@@ -432,37 +446,46 @@ export class TaskExecutionsStorageInternal {
     )
   }
 
-  async updateByIdAndInsertManyIfUpdated(
-    now: Date,
+  async updateByIdAndInsertChildrenIfUpdated(
+    now: number,
     executionId: string,
     filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdateInternal,
-    executionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
+    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
+    execution?: TaskExecutionStorageValue,
     maxRetryAttempts?: number,
   ): Promise<void> {
-    if (executionsToInsertIfAnyUpdated.length === 0) {
-      return await this.updateById(now, executionId, filters, update, maxRetryAttempts)
+    if (childrenTaskExecutionsToInsertIfAnyUpdated.length === 0) {
+      return await this.updateById(now, executionId, filters, update, execution, maxRetryAttempts)
+    }
+
+    if (
+      update.status &&
+      FINISHED_TASK_EXECUTION_STATUSES.includes(update.status) &&
+      execution?.parent?.isFinalizeOfParent
+    ) {
+      update.closeStatus = 'ready'
     }
 
     return await this.retry(
       'updateByIdAndInsertManyIfUpdated',
       () =>
-        this.storage.updateByIdAndInsertManyIfUpdated(
+        this.storage.updateByIdAndInsertChildrenIfUpdated(
           executionId,
           filters,
           getTaskExecutionStorageUpdate(now, update),
-          executionsToInsertIfAnyUpdated,
+          childrenTaskExecutionsToInsertIfAnyUpdated,
         ),
       maxRetryAttempts,
     )
   }
 
   async updateByStatusAndStartAtLessThanAndReturn(
-    now: Date,
+    now: number,
     status: TaskExecutionStatus,
-    startAtLessThan: Date,
+    startAtLessThan: number,
     update: TaskExecutionStorageUpdateInternal,
-    updateExpiresAtWithStartedAt: Date,
+    updateExpiresAtWithStartedAt: number,
     limit: number,
     maxRetryAttempts?: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
@@ -480,22 +503,20 @@ export class TaskExecutionsStorageInternal {
     )
   }
 
-  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
-    now: Date,
+  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
+    now: number,
     status: TaskExecutionStatus,
     onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
-    activeChildrenCountLessThan: number,
     update: TaskExecutionStorageUpdateInternal,
     limit: number,
     maxRetryAttempts?: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     return await this.retry(
-      'updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn',
+      'updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn',
       () =>
-        this.storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
+        this.storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
           status,
           onChildrenFinishedProcessingStatus,
-          activeChildrenCountLessThan,
           getTaskExecutionStorageUpdate(now, update),
           limit,
         ),
@@ -504,7 +525,7 @@ export class TaskExecutionsStorageInternal {
   }
 
   async updateByCloseStatusAndReturn(
-    now: Date,
+    now: number,
     closeStatus: TaskExecutionCloseStatus,
     update: TaskExecutionStorageUpdateInternal,
     limit: number,
@@ -522,18 +543,18 @@ export class TaskExecutionsStorageInternal {
     )
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
-    now: Date,
+  async updateByIsSleepingTaskAndExpiresAtLessThan(
+    now: number,
     isSleepingTask: boolean,
-    expiresAtLessThan: Date,
+    expiresAtLessThan: number,
     update: TaskExecutionStorageUpdateInternal,
     limit: number,
     maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     return await this.retry(
-      'updateByIsSleepingTaskAndExpiresAtLessThanAndReturn',
+      'updateByIsSleepingTaskAndExpiresAtLessThan',
       () =>
-        this.storage.updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+        this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(
           isSleepingTask,
           expiresAtLessThan,
           getTaskExecutionStorageUpdate(now, update),
@@ -543,17 +564,17 @@ export class TaskExecutionsStorageInternal {
     )
   }
 
-  async updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
-    now: Date,
-    onChildrenFinishedProcessingExpiresAtLessThan: Date,
+  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
+    now: number,
+    onChildrenFinishedProcessingExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdateInternal,
     limit: number,
     maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     return await this.retry(
-      'updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn',
+      'updateByOnChildrenFinishedProcessingExpiresAtLessThan',
       () =>
-        this.storage.updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
+        this.storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
           onChildrenFinishedProcessingExpiresAtLessThan,
           getTaskExecutionStorageUpdate(now, update),
           limit,
@@ -562,17 +583,17 @@ export class TaskExecutionsStorageInternal {
     )
   }
 
-  async updateByCloseExpiresAtLessThanAndReturn(
-    now: Date,
-    closeExpiresAtLessThan: Date,
+  async updateByCloseExpiresAtLessThan(
+    now: number,
+    closeExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdateInternal,
     limit: number,
     maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     return await this.retry(
-      'updateByCloseExpiresAtLessThanAndReturn',
+      'updateByCloseExpiresAtLessThan',
       () =>
-        this.storage.updateByCloseExpiresAtLessThanAndReturn(
+        this.storage.updateByCloseExpiresAtLessThan(
           closeExpiresAtLessThan,
           getTaskExecutionStorageUpdate(now, update),
           limit,
@@ -582,7 +603,7 @@ export class TaskExecutionsStorageInternal {
   }
 
   async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
-    now: Date,
+    now: number,
     executorId: string,
     needsPromiseCancellation: boolean,
     update: TaskExecutionStorageUpdateInternal,
@@ -614,7 +635,7 @@ export class TaskExecutionsStorageInternal {
   }
 
   async updateByParentExecutionIdAndIsFinished(
-    now: Date,
+    now: number,
     parentExecutionId: string,
     isFinished: boolean,
     update: TaskExecutionStorageUpdateInternal,
@@ -633,7 +654,7 @@ export class TaskExecutionsStorageInternal {
   }
 
   async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-    now: Date,
+    now: number,
     isFinished: boolean,
     closeStatus: TaskExecutionCloseStatus,
     update: TaskExecutionStorageUpdateInternal,
@@ -712,6 +733,11 @@ export type TaskExecutionStorageValue = {
    */
   timeoutMs: number
   /**
+   * Whether the children task executions are sequential. It is only present for
+   * `waiting_for_children` status.
+   */
+  areChildrenSequential: boolean
+  /**
    * The input of the task execution.
    */
   input: string
@@ -747,20 +773,20 @@ export type TaskExecutionStorageValue = {
   /**
    * The start time of the task execution. Used for delaying the execution. Set on enqueue.
    */
-  startAt: Date
+  startAt: number
   /**
    * The time the task execution started. Set on start.
    */
-  startedAt?: Date
+  startedAt?: number
   /**
    * The time the task execution expires. It is used to recover from process failures. Set on
    * start.
    */
-  expiresAt?: Date
+  expiresAt?: number
   /**
    * The time the task execution finished. Set on finish.
    */
-  finishedAt?: Date
+  finishedAt?: number
 
   /**
    * The children task executions of the execution. It is only present for `waiting_for_children`
@@ -780,12 +806,12 @@ export type TaskExecutionStorageValue = {
    * The time the on children finished processing expires. It is used to recover from process
    * failures. Set on on children finished processing start.
    */
-  onChildrenFinishedProcessingExpiresAt?: Date
+  onChildrenFinishedProcessingExpiresAt?: number
   /**
    * The time the on children task executions finished processing finished. Set after on children
    * finished processing finishes.
    */
-  onChildrenFinishedProcessingFinishedAt?: Date
+  onChildrenFinishedProcessingFinishedAt?: number
 
   /**
    * The finalize task execution of the execution.
@@ -801,11 +827,11 @@ export type TaskExecutionStorageValue = {
    * The time the task execution close expires. It is used to recover from process failures. Set on
    * closing process start.
    */
-  closeExpiresAt?: Date
+  closeExpiresAt?: number
   /**
    * The time the task execution was closed. Set on closing process finish.
    */
-  closedAt?: Date
+  closedAt?: number
 
   /**
    * Whether the execution needs a promise cancellation. Set on cancellation.
@@ -815,11 +841,11 @@ export type TaskExecutionStorageValue = {
   /**
    * The time the task execution was created.
    */
-  createdAt: Date
+  createdAt: number
   /**
    * The time the task execution was updated.
    */
-  updatedAt: Date
+  updatedAt: number
 }
 
 /**
@@ -856,9 +882,10 @@ export function createTaskExecutionStorageValue({
   retryOptions,
   sleepMsBeforeRun,
   timeoutMs,
+  areChildrenSequential,
   input,
 }: {
-  now: Date
+  now: number
   root?: TaskExecutionSummary
   parent?: ParentTaskExecutionSummary
   taskId: string
@@ -868,6 +895,7 @@ export function createTaskExecutionStorageValue({
   retryOptions: TaskRetryOptions
   sleepMsBeforeRun: number
   timeoutMs: number
+  areChildrenSequential?: boolean
   input: string
 }): TaskExecutionStorageValue {
   const value: TaskExecutionStorageValue = {
@@ -880,11 +908,12 @@ export function createTaskExecutionStorageValue({
     retryOptions,
     sleepMsBeforeRun,
     timeoutMs,
+    areChildrenSequential: areChildrenSequential ?? false,
     input,
     status: isSleepingTask ? 'running' : 'ready',
     isFinished: false,
     retryAttempts: 0,
-    startAt: new Date(now.getTime() + sleepMsBeforeRun),
+    startAt: now + sleepMsBeforeRun,
     activeChildrenCount: 0,
     onChildrenFinishedProcessingStatus: 'idle',
     closeStatus: 'idle',
@@ -893,7 +922,7 @@ export function createTaskExecutionStorageValue({
     updatedAt: now,
   }
   if (isSleepingTask) {
-    value.expiresAt = new Date(now.getTime() + sleepMsBeforeRun + timeoutMs)
+    value.expiresAt = now + sleepMsBeforeRun + timeoutMs
   }
   return value
 }
@@ -923,21 +952,21 @@ export type TaskExecutionStorageUpdate = {
   output?: string
   error?: DurableExecutionErrorStorageValue
   retryAttempts?: number
-  startAt?: Date
-  startedAt?: Date
-  expiresAt?: Date
+  startAt?: number
+  startedAt?: number
+  expiresAt?: number
 
   children?: Array<TaskExecutionSummary>
   activeChildrenCount?: number
   onChildrenFinishedProcessingStatus?: TaskExecutionOnChildrenFinishedProcessingStatus
-  onChildrenFinishedProcessingExpiresAt?: Date
-  onChildrenFinishedProcessingFinishedAt?: Date
+  onChildrenFinishedProcessingExpiresAt?: number
+  onChildrenFinishedProcessingFinishedAt?: number
 
   finalize?: TaskExecutionSummary
 
   closeStatus?: TaskExecutionCloseStatus
-  closeExpiresAt?: Date
-  closedAt?: Date
+  closeExpiresAt?: number
+  closedAt?: number
 
   needsPromiseCancellation?: boolean
 
@@ -946,10 +975,10 @@ export type TaskExecutionStorageUpdate = {
   unsetRunOutput?: boolean
   unsetError?: boolean
   unsetExpiresAt?: boolean
-  finishedAt?: Date
+  finishedAt?: number
   unsetOnChildrenFinishedProcessingExpiresAt?: boolean
   unsetCloseExpiresAt?: boolean
-  updatedAt: Date
+  updatedAt: number
 }
 
 export type TaskExecutionStorageUpdateInternal = Omit<
@@ -976,7 +1005,7 @@ export type TaskExecutionStorageUpdateInternal = Omit<
 }
 
 export function getTaskExecutionStorageUpdate(
-  now: Date,
+  now: number,
   internalUpdate: TaskExecutionStorageUpdateInternal,
 ): TaskExecutionStorageUpdate {
   const update: TaskExecutionStorageUpdate = {
@@ -1119,8 +1148,8 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         status: 'ready',
         error: execution.error,
         retryAttempts: execution.retryAttempts,
-        createdAt: execution.createdAt,
-        updatedAt: execution.updatedAt,
+        createdAt: new Date(execution.createdAt),
+        updatedAt: new Date(execution.updatedAt),
       }
     }
     case 'running': {
@@ -1136,10 +1165,10 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         status: 'running',
         error: execution.error,
         retryAttempts: execution.retryAttempts,
-        startedAt: execution.startedAt!,
-        expiresAt: execution.expiresAt!,
-        createdAt: execution.createdAt,
-        updatedAt: execution.updatedAt,
+        startedAt: new Date(execution.startedAt!),
+        expiresAt: new Date(execution.expiresAt!),
+        createdAt: new Date(execution.createdAt),
+        updatedAt: new Date(execution.updatedAt),
       }
     }
     case 'failed': {
@@ -1155,11 +1184,11 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         status: 'failed',
         error: execution.error!,
         retryAttempts: execution.retryAttempts,
-        startedAt: execution.startedAt!,
-        expiresAt: execution.expiresAt!,
-        finishedAt: execution.finishedAt!,
-        createdAt: execution.createdAt,
-        updatedAt: execution.updatedAt,
+        startedAt: new Date(execution.startedAt!),
+        expiresAt: new Date(execution.expiresAt!),
+        finishedAt: new Date(execution.finishedAt!),
+        createdAt: new Date(execution.createdAt),
+        updatedAt: new Date(execution.updatedAt),
       }
     }
     case 'timed_out': {
@@ -1175,11 +1204,11 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         status: 'timed_out',
         error: execution.error!,
         retryAttempts: execution.retryAttempts,
-        startedAt: execution.startedAt!,
-        expiresAt: execution.expiresAt!,
-        finishedAt: execution.finishedAt!,
-        createdAt: execution.createdAt,
-        updatedAt: execution.updatedAt,
+        startedAt: new Date(execution.startedAt!),
+        expiresAt: new Date(execution.expiresAt!),
+        finishedAt: new Date(execution.finishedAt!),
+        createdAt: new Date(execution.createdAt),
+        updatedAt: new Date(execution.updatedAt),
       }
     }
     case 'waiting_for_children': {
@@ -1194,12 +1223,12 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         input,
         status: 'waiting_for_children',
         retryAttempts: execution.retryAttempts,
-        startedAt: execution.startedAt!,
-        expiresAt: execution.expiresAt!,
+        startedAt: new Date(execution.startedAt!),
+        expiresAt: new Date(execution.expiresAt!),
         children: execution.children ?? [],
         activeChildrenCount: execution.activeChildrenCount,
-        createdAt: execution.createdAt,
-        updatedAt: execution.updatedAt,
+        createdAt: new Date(execution.createdAt),
+        updatedAt: new Date(execution.updatedAt),
       }
     }
     case 'waiting_for_finalize': {
@@ -1214,13 +1243,13 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         input,
         status: 'waiting_for_finalize',
         retryAttempts: execution.retryAttempts,
-        startedAt: execution.startedAt!,
-        expiresAt: execution.expiresAt!,
+        startedAt: new Date(execution.startedAt!),
+        expiresAt: new Date(execution.expiresAt!),
         children: execution.children ?? [],
         activeChildrenCount: execution.activeChildrenCount,
         finalize: execution.finalize!,
-        createdAt: execution.createdAt,
-        updatedAt: execution.updatedAt,
+        createdAt: new Date(execution.createdAt),
+        updatedAt: new Date(execution.updatedAt),
       }
     }
     case 'finalize_failed': {
@@ -1236,14 +1265,14 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         status: 'finalize_failed',
         error: execution.error!,
         retryAttempts: execution.retryAttempts,
-        startedAt: execution.startedAt!,
-        expiresAt: execution.expiresAt!,
-        finishedAt: execution.finishedAt!,
+        startedAt: new Date(execution.startedAt!),
+        expiresAt: new Date(execution.expiresAt!),
+        finishedAt: new Date(execution.finishedAt!),
         children: execution.children ?? [],
         activeChildrenCount: execution.activeChildrenCount,
         finalize: execution.finalize!,
-        createdAt: execution.createdAt,
-        updatedAt: execution.updatedAt,
+        createdAt: new Date(execution.createdAt),
+        updatedAt: new Date(execution.updatedAt),
       }
     }
     case 'completed': {
@@ -1259,14 +1288,14 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         status: 'completed',
         output: output!,
         retryAttempts: execution.retryAttempts,
-        startedAt: execution.startedAt!,
-        expiresAt: execution.expiresAt!,
-        finishedAt: execution.finishedAt!,
+        startedAt: new Date(execution.startedAt!),
+        expiresAt: new Date(execution.expiresAt!),
+        finishedAt: new Date(execution.finishedAt!),
         children: execution.children ?? [],
         activeChildrenCount: execution.activeChildrenCount,
         finalize: execution.finalize,
-        createdAt: execution.createdAt,
-        updatedAt: execution.updatedAt,
+        createdAt: new Date(execution.createdAt),
+        updatedAt: new Date(execution.updatedAt),
       }
     }
     case 'cancelled': {
@@ -1282,14 +1311,14 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         status: 'cancelled',
         error: execution.error!,
         retryAttempts: execution.retryAttempts,
-        startedAt: execution.startedAt!,
-        expiresAt: execution.expiresAt!,
-        finishedAt: execution.finishedAt!,
+        startedAt: execution.startedAt ? new Date(execution.startedAt) : undefined,
+        expiresAt: execution.expiresAt ? new Date(execution.expiresAt) : undefined,
+        finishedAt: new Date(execution.finishedAt!),
         children: execution.children ?? [],
         activeChildrenCount: execution.activeChildrenCount,
         finalize: execution.finalize,
-        createdAt: execution.createdAt,
-        updatedAt: execution.updatedAt,
+        createdAt: new Date(execution.createdAt),
+        updatedAt: new Date(execution.updatedAt),
       }
     }
     default: {
@@ -1348,27 +1377,27 @@ export class TaskExecutionsStorageWithMutex implements TaskExecutionsStorage {
     await this.withMutex(() => this.storage.updateById(executionId, filters, update))
   }
 
-  async updateByIdAndInsertManyIfUpdated(
+  async updateByIdAndInsertChildrenIfUpdated(
     executionId: string,
     filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
-    executionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
+    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
   ): Promise<void> {
     return await this.withMutex(() =>
-      this.storage.updateByIdAndInsertManyIfUpdated(
+      this.storage.updateByIdAndInsertChildrenIfUpdated(
         executionId,
         filters,
         update,
-        executionsToInsertIfAnyUpdated,
+        childrenTaskExecutionsToInsertIfAnyUpdated,
       ),
     )
   }
 
   async updateByStatusAndStartAtLessThanAndReturn(
     status: TaskExecutionStatus,
-    startAtLessThan: Date,
+    startAtLessThan: number,
     update: TaskExecutionStorageUpdate,
-    updateExpiresAtWithStartedAt: Date,
+    updateExpiresAtWithStartedAt: number,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     return await this.withMutex(() =>
@@ -1382,18 +1411,16 @@ export class TaskExecutionsStorageWithMutex implements TaskExecutionsStorage {
     )
   }
 
-  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
+  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
     status: TaskExecutionStatus,
     onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
-    activeChildrenCountLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     return await this.withMutex(() =>
-      this.storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
+      this.storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
         status,
         onChildrenFinishedProcessingStatus,
-        activeChildrenCountLessThan,
         update,
         limit,
       ),
@@ -1410,14 +1437,14 @@ export class TaskExecutionsStorageWithMutex implements TaskExecutionsStorage {
     )
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+  async updateByIsSleepingTaskAndExpiresAtLessThan(
     isSleepingTask: boolean,
-    expiresAtLessThan: Date,
+    expiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     return await this.withMutex(() =>
-      this.storage.updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+      this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(
         isSleepingTask,
         expiresAtLessThan,
         update,
@@ -1426,13 +1453,13 @@ export class TaskExecutionsStorageWithMutex implements TaskExecutionsStorage {
     )
   }
 
-  async updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
-    onChildrenFinishedProcessingExpiresAtLessThan: Date,
+  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
+    onChildrenFinishedProcessingExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     return await this.withMutex(() =>
-      this.storage.updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
+      this.storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
         onChildrenFinishedProcessingExpiresAtLessThan,
         update,
         limit,
@@ -1440,13 +1467,13 @@ export class TaskExecutionsStorageWithMutex implements TaskExecutionsStorage {
     )
   }
 
-  async updateByCloseExpiresAtLessThanAndReturn(
-    closeExpiresAtLessThan: Date,
+  async updateByCloseExpiresAtLessThan(
+    closeExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     return await this.withMutex(() =>
-      this.storage.updateByCloseExpiresAtLessThanAndReturn(closeExpiresAtLessThan, update, limit),
+      this.storage.updateByCloseExpiresAtLessThan(closeExpiresAtLessThan, update, limit),
     )
   }
 

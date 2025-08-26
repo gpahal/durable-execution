@@ -151,7 +151,7 @@ const uploadFile = executor
   .parentTask({
     id: 'uploadFile',
     timeoutMs: 60_000, // 1 minute
-     runParent: async (ctx, input) => {
+    runParent: async (ctx, input) => {
       // ... upload file to the given uploadUrl
       // Extract the file title and summarize the file in parallel
       return {
@@ -644,7 +644,7 @@ const taskC = executor.task({
   },
 })
 
-const task = executor.sequentialTasks('seq', taskA, taskB, taskC)
+const task = executor.sequentialTasks('seq', [taskA, taskB, taskC])
 
 // Input: { name: 'world' }
 // Output: {
@@ -885,7 +885,7 @@ const taskB = executor.parentTask({
   },
 })
 
-const task = executor.sequentialTasks('seq', taskA, taskB)
+const task = executor.sequentialTasks('seq', [taskA, taskB])
 
 // Input: { name: 'world' }
 // Output: {
@@ -946,7 +946,7 @@ const taskB3 = executor.task({
     }
   },
 })
-const taskB = executor.sequentialTasks('b', taskB1, taskB2, taskB3)
+const taskB = executor.sequentialTasks('b', [taskB1, taskB2, taskB3])
 
 const taskA1 = executor.task({
   id: 'a1',
@@ -1305,6 +1305,19 @@ const executor = new DurableExecutor(storage, {
 const executor = new DurableExecutor(storage, {
   maxConcurrentTaskExecutions: 1000,
 })
+```
+
+### Monitoring and observability
+
+Lightweight stats are exposed by the executor. Track these periodically to watch throughput and
+latency of background processes.
+
+```ts
+const stats = executor.getExecutorStats()
+// { expireLeewayMs, currConcurrentTaskExecutions, maxConcurrentTaskExecutions, ... }
+
+const timings = executor.getTimingStats()
+// { bgProcess_processing_ready_task_executions: { count, meanMs }, ... }
 ```
 
 ## Design

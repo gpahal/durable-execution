@@ -1,16 +1,8 @@
-import z from 'zod'
-
-import { createCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
-
-import { DurableExecutionError, DurableExecutionNotFoundError } from './errors'
-import { zDurableExecutorOptions } from './executor'
-import { LoggerInternal, type Logger, type LogLevel } from './logger'
-import { SerializerInternal, type Serializer } from './serializer'
-import {
-  createTaskExecutionStorageValue,
-  TaskExecutionsStorageInternal,
-  type TaskExecutionsStorage,
-} from './storage'
+import { DurableExecutionNotFoundError } from './errors'
+import { DurableExecutorCore } from './executor-core'
+import { type Logger, type LogLevel } from './logger'
+import { type Serializer } from './serializer'
+import { type TaskExecutionsStorage } from './storage'
 import {
   type AnyTasks,
   type FinishedTaskExecution,
@@ -21,21 +13,6 @@ import {
   type TaskExecutionHandle,
   type WakeupSleepingTaskExecutionOptions,
 } from './task'
-import {
-  generateTaskExecutionId,
-  getTaskExecutionHandleInternal,
-  overrideTaskEnqueueOptions,
-  validateEnqueueOptions,
-  wakeupSleepingTaskExecutionInternal,
-} from './task-internal'
-
-const zDurableExecutorClientOptions = zDurableExecutorOptions.pick({
-  serializer: true,
-  logger: true,
-  logLevel: true,
-  maxSerializedInputDataSize: true,
-  storageMaxRetryAttempts: true,
-})
 
 /**
  * A lightweight client for enqueuing tasks to a durable execution system without running background
@@ -77,12 +54,7 @@ const zDurableExecutorClientOptions = zDurableExecutorOptions.pick({
  * @category ExecutorClient
  */
 export class DurableExecutorClient<TTasks extends AnyTasks> {
-  private readonly logger: LoggerInternal
-  private readonly storage: TaskExecutionsStorageInternal
-  private readonly serializer: SerializerInternal
-  private readonly maxSerializedInputDataSize: number
-  private readonly shutdownSignal: CancelSignal
-  private readonly cancelShutdownSignal: () => void
+  private readonly core: DurableExecutorCore<undefined>
   private readonly tasks: TTasks
 
   /**
@@ -113,32 +85,8 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
       storageMaxRetryAttempts?: number
     } = {},
   ) {
-    const parsedOptions = zDurableExecutorClientOptions.safeParse(options)
-    if (!parsedOptions.success) {
-      throw DurableExecutionError.nonRetryable(
-        `Invalid options: ${z.prettifyError(parsedOptions.error)}`,
-      )
-    }
-
-    const { serializer, logger, logLevel, maxSerializedInputDataSize, storageMaxRetryAttempts } =
-      parsedOptions.data
-
-    this.serializer = new SerializerInternal(serializer)
-    this.logger = new LoggerInternal(logger, logLevel)
-    this.maxSerializedInputDataSize = maxSerializedInputDataSize
-    this.storage = new TaskExecutionsStorageInternal(this.logger, storage, storageMaxRetryAttempts)
-
-    const [cancelSignal, cancel] = createCancelSignal()
-    this.shutdownSignal = cancelSignal
-    this.cancelShutdownSignal = cancel
-
+    this.core = new DurableExecutorCore(() => storage, options)
     this.tasks = tasks
-  }
-
-  private throwIfShutdown(): void {
-    if (this.shutdownSignal.isCancelled()) {
-      throw DurableExecutionError.nonRetryable('Durable executor client shutdown')
-    }
   }
 
   /**
@@ -164,50 +112,28 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
           },
         ]
   ): Promise<TaskExecutionHandle<InferTaskOutput<TTasks[TTaskId]>>> {
-    this.throwIfShutdown()
+    this.core.throwIfShutdown()
 
     const taskId = rest[0]
-    const input = rest.length > 1 ? rest[1]! : undefined
-    const options = rest.length > 2 ? rest[2]! : undefined
     const task = this.tasks[taskId]
     if (!task) {
       throw new DurableExecutionNotFoundError(`Task ${taskId} not found`)
     }
 
-    const executionId = generateTaskExecutionId()
-    const now = new Date()
-    const validatedEnqueueOptions = validateEnqueueOptions(
-      taskId,
-      options
-        ? {
-            retryOptions: options.retryOptions,
-            sleepMsBeforeRun: options.sleepMsBeforeRun,
-            timeoutMs: options.timeoutMs,
-          }
-        : undefined,
-    )
-    const finalEnqueueOptions = overrideTaskEnqueueOptions(task, validatedEnqueueOptions)
-    await (options?.taskExecutionsStorageTransaction ?? this.storage).insertMany([
-      createTaskExecutionStorageValue({
-        now,
-        taskId: task.id,
-        executionId,
-        isSleepingTask: task.isSleepingTask,
-        retryOptions: finalEnqueueOptions.retryOptions,
-        sleepMsBeforeRun: finalEnqueueOptions.sleepMsBeforeRun,
-        timeoutMs: finalEnqueueOptions.timeoutMs,
-        input: this.serializer.serialize(input, this.maxSerializedInputDataSize),
-      }),
-    ])
+    const input = rest.length > 1 ? rest[1]! : undefined
+    let options:
+      | (TaskEnqueueOptions<TTasks[TTaskId]> & {
+          skipTaskPresenceCheck?: boolean
+          taskExecutionsStorageTransaction?: Pick<TaskExecutionsStorage, 'insertMany'>
+        })
+      | undefined = rest.length > 2 ? rest[2]! : undefined
+    if (!options) {
+      options = {}
+    }
+    options.skipTaskPresenceCheck = true
 
-    this.logger.debug(`Enqueued task ${task.id} with execution id ${executionId}`)
-    return getTaskExecutionHandleInternal(
-      this.storage,
-      this.serializer,
-      this.logger,
-      task.id,
-      executionId,
-    )
+    // @ts-expect-error - This is safe
+    return await this.core.enqueueTask(undefined, task, input, options)
   }
 
   /**
@@ -221,27 +147,12 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
     taskId: TTaskId,
     executionId: string,
   ): Promise<TaskExecutionHandle<InferTaskOutput<TTasks[TTaskId]>>> {
-    if (!this.tasks[taskId]) {
+    const task = this.tasks[taskId]
+    if (!task) {
       throw new DurableExecutionNotFoundError(`Task ${taskId} not found`)
     }
 
-    const execution = await this.storage.getById(executionId, {})
-    if (!execution) {
-      throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
-    }
-    if (execution.taskId !== taskId) {
-      throw new DurableExecutionNotFoundError(
-        `Task execution ${executionId} belongs to task ${execution.taskId}`,
-      )
-    }
-
-    return getTaskExecutionHandleInternal(
-      this.storage,
-      this.serializer,
-      this.logger,
-      taskId,
-      executionId,
-    )
+    return await this.core.getTaskExecutionHandle(undefined, task, executionId)
   }
 
   /**
@@ -258,12 +169,8 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
     sleepingTaskUniqueId: string,
     options: WakeupSleepingTaskExecutionOptions<InferTaskOutput<TTask>>,
   ): Promise<FinishedTaskExecution<InferTaskOutput<TTask>>> {
-    this.throwIfShutdown()
-
-    return await wakeupSleepingTaskExecutionInternal(
-      this.storage,
-      this.serializer,
-      this.logger,
+    return await this.core.wakeupSleepingTaskExecution(
+      undefined,
       task,
       sleepingTaskUniqueId,
       options,
@@ -274,11 +181,7 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
    * Shutdown the durable executor client. Cancels all active executions and stop executing new
    * tasks.
    */
-  shutdown(): void {
-    this.logger.info('Shutting down durable executor')
-    if (!this.shutdownSignal.isCancelled()) {
-      this.cancelShutdownSignal()
-    }
-    this.logger.info('Durable executor cancelled. Durable executor client shut down')
+  async shutdown(): Promise<void> {
+    await this.core.shutdown()
   }
 }

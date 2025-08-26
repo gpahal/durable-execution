@@ -15,12 +15,15 @@ pnpm test              # Run all tests
 pnpm test-coverage     # Run tests with coverage report
 
 # Type checking and linting
-pnpm type-check        # TypeScript type checking
+pnpm type-check        # TypeScript type checking + typedoc validation
 pnpm lint              # Run ESLint
 pnpm lint-fix          # Auto-fix linting issues
 
 # Clean build artifacts
 pnpm clean
+
+# Run benchmarks
+pnpm bench              # Performance benchmarks for storage implementations
 ```
 
 ### Testing Specific Files

@@ -31,7 +31,9 @@ describe('InMemoryTaskExecutionsStorage', () => {
     })
 
     const handle = await executor.enqueueTask(testTask)
-    await handle.waitAndGetFinishedExecution()
+    await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
 
     let savedData = ''
     await storage.save((s) => {
@@ -63,7 +65,9 @@ describe('InMemoryTaskExecutionsStorage', () => {
     })
 
     const handle = await executor.enqueueTask(testTask)
-    await handle.waitAndGetFinishedExecution()
+    await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(storage.getById(handle.getExecutionId(), {})).toBeDefined()
 
     const tempFile = '/tmp/test-storage.json'
@@ -86,7 +90,9 @@ describe('InMemoryTaskExecutionsStorage', () => {
     let execution = await handle.getExecution()
     expect(execution.status).toBe('ready')
 
-    await handle.waitAndGetFinishedExecution()
+    await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
 
     execution = await handle.getExecution()
     expect(execution.status).toBe('completed')
@@ -104,7 +110,13 @@ describe('InMemoryTaskExecutionsStorage', () => {
       handles.push(await executor.enqueueTask(testTask))
     }
 
-    const results = await Promise.all(handles.map((handle) => handle.waitAndGetFinishedExecution()))
+    const results = await Promise.all(
+      handles.map((handle) =>
+        handle.waitAndGetFinishedExecution({
+          pollingIntervalMs: 100,
+        }),
+      ),
+    )
 
     expect(results).toHaveLength(3)
     for (const result of results) {
@@ -144,7 +156,9 @@ describe('InMemoryTaskExecutionsStorage', () => {
     })
 
     const handle = await executor.enqueueTask(testTask)
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
 
     await newStorage.logAllTaskExecutions()
     expect(infoStr).toContain(finishedExecution.taskId)

@@ -182,7 +182,7 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
       if (sortFn != null) {
         filteredTaskExecutions.sort(sortFn)
       } else {
-        filteredTaskExecutions.sort((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime())
+        filteredTaskExecutions.sort((a, b) => a.updatedAt - b.updatedAt)
       }
       return filteredTaskExecutions.slice(0, limit)
     }
@@ -231,46 +231,45 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateByIdAndInsertManyIfUpdated(
+  async updateByIdAndInsertChildrenIfUpdated(
     executionId: string,
     filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
-    executionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
+    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
   ): Promise<void> {
     return await this.withMutex(() => {
       const taskExecutions = this.getByIdsWithFiltersAndLimitInternal([executionId], filters)
       this.updateTaskExecutionsInternal(taskExecutions, update)
-      if (taskExecutions.length > 0 && executionsToInsertIfAnyUpdated.length > 0) {
-        this.insertTaskExecutionsInternal(executionsToInsertIfAnyUpdated)
+      if (taskExecutions.length > 0 && childrenTaskExecutionsToInsertIfAnyUpdated.length > 0) {
+        this.insertTaskExecutionsInternal(childrenTaskExecutionsToInsertIfAnyUpdated)
       }
     })
   }
 
   async updateByStatusAndStartAtLessThanAndReturn(
     status: TaskExecutionStatus,
-    startAtLessThan: Date,
+    startAtLessThan: number,
     update: TaskExecutionStorageUpdate,
-    updateExpiresAtWithStartedAt: Date,
+    updateExpiresAtWithStartedAt: number,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     return await this.withMutex(() => {
       const taskExecutions = this.getByFilterFnAndLimitInternal(
         (execution) => execution.status === status && execution.startAt < startAtLessThan,
         limit,
-        (a, b) => a.startAt.getTime() - b.startAt.getTime(),
+        (a, b) => a.startAt - b.startAt,
       )
       this.updateTaskExecutionsInternal(taskExecutions, update)
       for (const execution of taskExecutions) {
-        execution.expiresAt = new Date(updateExpiresAtWithStartedAt.getTime() + execution.timeoutMs)
+        execution.expiresAt = updateExpiresAtWithStartedAt + execution.timeoutMs
       }
       return taskExecutions
     })
   }
 
-  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
+  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
     status: TaskExecutionStatus,
     onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
-    activeChildrenCountLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
@@ -279,7 +278,7 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
         (execution) =>
           execution.status === status &&
           execution.onChildrenFinishedProcessingStatus === onChildrenFinishedProcessingStatus &&
-          execution.activeChildrenCount < activeChildrenCountLessThan,
+          execution.activeChildrenCount === 0,
         limit,
       )
       this.updateTaskExecutionsInternal(taskExecutions, update)
@@ -302,12 +301,12 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+  async updateByIsSleepingTaskAndExpiresAtLessThan(
     isSleepingTask: boolean,
-    expiresAtLessThan: Date,
+    expiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     return await this.withMutex(() => {
       const taskExecutions = this.getByFilterFnAndLimitInternal(
         (execution) =>
@@ -315,18 +314,18 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
           execution.expiresAt != null &&
           execution.expiresAt < expiresAtLessThan,
         limit,
-        (a, b) => a.expiresAt!.getTime() - b.expiresAt!.getTime(),
+        (a, b) => a.expiresAt! - b.expiresAt!,
       )
       this.updateTaskExecutionsInternal(taskExecutions, update)
-      return taskExecutions
+      return taskExecutions.length
     })
   }
 
-  async updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
-    onChildrenFinishedProcessingExpiresAtLessThan: Date,
+  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
+    onChildrenFinishedProcessingExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     return await this.withMutex(() => {
       const taskExecutions = this.getByFilterFnAndLimitInternal(
         (execution) =>
@@ -335,28 +334,27 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
             onChildrenFinishedProcessingExpiresAtLessThan,
         limit,
         (a, b) =>
-          a.onChildrenFinishedProcessingExpiresAt!.getTime() -
-          b.onChildrenFinishedProcessingExpiresAt!.getTime(),
+          a.onChildrenFinishedProcessingExpiresAt! - b.onChildrenFinishedProcessingExpiresAt!,
       )
       this.updateTaskExecutionsInternal(taskExecutions, update)
-      return taskExecutions
+      return taskExecutions.length
     })
   }
 
-  async updateByCloseExpiresAtLessThanAndReturn(
-    closeExpiresAtLessThan: Date,
+  async updateByCloseExpiresAtLessThan(
+    closeExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     return await this.withMutex(() => {
       const taskExecutions = this.getByFilterFnAndLimitInternal(
         (execution) =>
           execution.closeExpiresAt != null && execution.closeExpiresAt < closeExpiresAtLessThan,
         limit,
-        (a, b) => a.closeExpiresAt!.getTime() - b.closeExpiresAt!.getTime(),
+        (a, b) => a.closeExpiresAt! - b.closeExpiresAt!,
       )
       this.updateTaskExecutionsInternal(taskExecutions, update)
-      return taskExecutions
+      return taskExecutions.length
     })
   }
 

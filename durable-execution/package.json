@@ -1,6 +1,6 @@
 {
   "name": "durable-execution",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "description": "A durable execution engine for running tasks durably and resiliently",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
@@ -42,7 +42,7 @@
   "scripts": {
     "build": "premove build && tsup",
     "build-docs": "tsx scripts/build-docs.ts",
-    "clean": "premove build",
+    "clean": "premove build coverage",
     "test": "vitest run",
     "test-coverage": "vitest run --coverage",
     "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/index.ts",

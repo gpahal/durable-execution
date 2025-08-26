@@ -15,8 +15,9 @@ export type TaskExecutionDBValue = {
   rootExecutionId?: string | null
   parentTaskId?: string | null
   parentExecutionId?: string | null
-  indexInParentChildTaskExecutions?: number | null
-  isFinalizeTaskOfParentTask?: boolean | null
+  indexInParentChildren?: number | null
+  isOnlyChildOfParent?: boolean | null
+  isFinalizeOfParent?: boolean | null
 
   taskId: string
   executionId: string
@@ -25,6 +26,7 @@ export type TaskExecutionDBValue = {
   retryOptions: TaskRetryOptions
   sleepMsBeforeRun: number
   timeoutMs: number
+  areChildrenSequential: boolean
   input: string
 
   executorId?: string | null
@@ -34,27 +36,27 @@ export type TaskExecutionDBValue = {
   output?: string | null
   error?: DurableExecutionErrorStorageValue | null
   retryAttempts: number
-  startAt: Date
-  startedAt?: Date | null
-  expiresAt?: Date | null
-  finishedAt?: Date | null
+  startAt: number
+  startedAt?: number | null
+  expiresAt?: number | null
+  finishedAt?: number | null
 
   children?: Array<TaskExecutionSummary> | null
   activeChildrenCount: number
   onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus
-  onChildrenFinishedProcessingExpiresAt?: Date | null
-  onChildrenFinishedProcessingFinishedAt?: Date | null
+  onChildrenFinishedProcessingExpiresAt?: number | null
+  onChildrenFinishedProcessingFinishedAt?: number | null
 
   finalize?: TaskExecutionSummary | null
 
   closeStatus: TaskExecutionCloseStatus
-  closeExpiresAt?: Date | null
-  closedAt?: Date | null
+  closeExpiresAt?: number | null
+  closedAt?: number | null
 
   needsPromiseCancellation: boolean
 
-  createdAt: Date
-  updatedAt: Date
+  createdAt: number
+  updatedAt: number
 }
 
 export type TaskExecutionDBUpdate = {
@@ -65,27 +67,27 @@ export type TaskExecutionDBUpdate = {
   output?: string
   error?: DurableExecutionErrorStorageValue | null
   retryAttempts?: number
-  startAt?: Date
-  startedAt?: Date
-  expiresAt?: Date | null
-  finishedAt?: Date
+  startAt?: number
+  startedAt?: number
+  expiresAt?: number | null
+  finishedAt?: number | null
 
   children?: Array<TaskExecutionSummary>
   activeChildrenCount?: number
   shouldDecrementParentActiveChildrenCount?: boolean
   onChildrenFinishedProcessingStatus?: TaskExecutionOnChildrenFinishedProcessingStatus
-  onChildrenFinishedProcessingExpiresAt?: Date | null
-  onChildrenFinishedProcessingFinishedAt?: Date
+  onChildrenFinishedProcessingExpiresAt?: number | null
+  onChildrenFinishedProcessingFinishedAt?: number | null
 
   finalize?: TaskExecutionSummary
 
   closeStatus?: TaskExecutionCloseStatus
-  closeExpiresAt?: Date | null
-  closedAt?: Date
+  closeExpiresAt?: number | null
+  closedAt?: number | null
 
   needsPromiseCancellation?: boolean
 
-  updatedAt: Date
+  updatedAt: number
 }
 
 export function taskExecutionStorageValueToDBValue(
@@ -96,8 +98,9 @@ export function taskExecutionStorageValueToDBValue(
     rootExecutionId: value.root?.executionId,
     parentTaskId: value.parent?.taskId,
     parentExecutionId: value.parent?.executionId,
-    indexInParentChildTaskExecutions: value.parent?.indexInParentChildTaskExecutions,
-    isFinalizeTaskOfParentTask: value.parent?.isFinalizeTaskOfParentTask,
+    indexInParentChildren: value.parent?.indexInParentChildren,
+    isOnlyChildOfParent: value.parent?.isOnlyChildOfParent,
+    isFinalizeOfParent: value.parent?.isFinalizeOfParent,
     taskId: value.taskId,
     executionId: value.executionId,
     isSleepingTask: value.isSleepingTask,
@@ -105,6 +108,7 @@ export function taskExecutionStorageValueToDBValue(
     retryOptions: value.retryOptions,
     sleepMsBeforeRun: value.sleepMsBeforeRun,
     timeoutMs: value.timeoutMs,
+    areChildrenSequential: value.areChildrenSequential,
     input: value.input,
     executorId: value.executorId,
     status: value.status,
@@ -135,7 +139,7 @@ export function taskExecutionStorageValueToDBValue(
 export function taskExecutionDBValueToStorageValue(
   dbValue: TaskExecutionDBValue,
   update?: TaskExecutionStorageUpdate,
-  updateExpiresAtWithStartedAt?: Date,
+  updateExpiresAtWithStartedAt?: number,
 ): TaskExecutionStorageValue {
   const value: TaskExecutionStorageValue = {
     taskId: dbValue.taskId,
@@ -144,6 +148,7 @@ export function taskExecutionDBValueToStorageValue(
     retryOptions: dbValue.retryOptions,
     sleepMsBeforeRun: dbValue.sleepMsBeforeRun,
     timeoutMs: dbValue.timeoutMs,
+    areChildrenSequential: dbValue.areChildrenSequential,
     input: dbValue.input,
     status: dbValue.status,
     isFinished: dbValue.isFinished,
@@ -168,8 +173,9 @@ export function taskExecutionDBValueToStorageValue(
     value.parent = {
       taskId: dbValue.parentTaskId,
       executionId: dbValue.parentExecutionId,
-      indexInParentChildTaskExecutions: dbValue.indexInParentChildTaskExecutions ?? 0,
-      isFinalizeTaskOfParentTask: dbValue.isFinalizeTaskOfParentTask ?? false,
+      indexInParentChildren: dbValue.indexInParentChildren ?? 0,
+      isOnlyChildOfParent: dbValue.isOnlyChildOfParent ?? false,
+      isFinalizeOfParent: dbValue.isFinalizeOfParent ?? false,
     }
   }
 
@@ -202,7 +208,7 @@ export function taskExecutionDBValueToStorageValue(
   }
 
   if (updateExpiresAtWithStartedAt) {
-    value.expiresAt = new Date(updateExpiresAtWithStartedAt.getTime() + dbValue.timeoutMs)
+    value.expiresAt = updateExpiresAtWithStartedAt + dbValue.timeoutMs
   }
 
   if (dbValue.finishedAt) {

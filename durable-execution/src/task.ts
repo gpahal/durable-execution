@@ -38,6 +38,7 @@ export type Task<TInput, TOutput, TIsSleepingTask extends boolean = boolean> = {
   retryOptions: TaskRetryOptions
   sleepMsBeforeRun: number
   timeoutMs: number
+  areChildrenSequential: boolean
 }
 
 /**
@@ -307,19 +308,21 @@ export type SleepingTaskOptions<TOutput = unknown> = Pick<CommonTaskOptions, 'id
  * output is of the form `{ output: TRunOutput, children: Array<ChildTask> }` where the children
  * are the tasks to be run in parallel after the run function completes.
  *
- * The `finalize` task is run after the runParent function and all the children tasks finish. It is
- * useful for combining the output of the runParent function and children tasks. It is called even
- * if the children tasks fail. Its input has the following properties:
+ * The `finalize` function or task is run after the runParent function and all the children tasks
+ * finish. It is useful for combining the output of the runParent function and children tasks. It
+ * is called even if the children tasks fail. Its input has the following properties:
  *
  * - `output`: The output of the runParent function
- * - `children`: The finished children task executions (includes both successful and failed children)
+ * - `children`: The finished children task executions (includes both successful and failed
+ *   children)
  *
- * **Important**: The `finalize` function receives outputs from ALL children, including those that
- * have failed. This behaves similar to `Promise.allSettled()` - you get the results regardless of
- * individual child success or failure. This allows you to implement custom error handling logic.
+ * **Important**: The `finalize` function or task receives outputs from ALL children, including
+ * those that have failed. This behaves similar to `Promise.allSettled()` - you get the results
+ * regardless of individual child success or failure. This allows you to implement custom error
+ * handling logic.
  *
- * If `finalize` is provided, the output of the whole task is the output of the `finalize` task. If
- * it is not provided, the output of the whole task is the output of the form
+ * If `finalize` is provided, the output of the whole task is the output of the `finalize` function
+ * or task. If it is not provided, the output of the whole task is of the form
  * `{ output: TRunOutput, children: Array<FinishedChildTaskExecution> }`.
  *
  * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
@@ -427,10 +430,16 @@ export type ParentTaskOptions<
         children?: Array<ChildTask>
       }>
   /**
-   * Task to run after the runParent function and children tasks finish. This is useful for
-   * combining the output of the run function and children tasks.
+   * Function or task to run after the runParent function and children tasks finish. This is useful
+   * for combining the output of the run function and children tasks. It is called even if the
+   * children tasks fail.
+   *
+   * If it is a function, it is called without any durability guarantees and retries. It should
+   * not be a long running function.
    */
-  finalize?: FinalizeTaskOptions<TRunOutput, TOutput, TFinalizeTaskRunOutput>
+  finalize?:
+    | ((input: DefaultParentTaskOutput<TRunOutput>) => TOutput | Promise<TOutput>)
+    | FinalizeTaskOptions<TRunOutput, TOutput, TFinalizeTaskRunOutput>
 }
 
 /**
@@ -849,8 +858,9 @@ export type TaskExecutionSummary = {
  * @category Task
  */
 export type ParentTaskExecutionSummary = TaskExecutionSummary & {
-  indexInParentChildTaskExecutions: number
-  isFinalizeTaskOfParentTask: boolean
+  indexInParentChildren: number
+  isOnlyChildOfParent: boolean
+  isFinalizeOfParent: boolean
 }
 
 /**

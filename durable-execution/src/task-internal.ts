@@ -6,6 +6,7 @@ import {
   type CancelSignal,
 } from '@gpahal/std/cancel'
 import { getErrorMessage } from '@gpahal/std/errors'
+import { isFunction } from '@gpahal/std/functions'
 import { sleep } from '@gpahal/std/promises'
 
 import {
@@ -28,6 +29,8 @@ import {
   isFinalizeTaskOptionsTaskOptions,
   type ChildTask,
   type CommonTaskOptions,
+  type DefaultParentTaskOutput,
+  type FinalizeTaskOptions,
   type FinishedTaskExecution,
   type InferTaskOutput,
   type ParentTaskOptions,
@@ -48,6 +51,7 @@ export type TaskOptionsInternal = {
   retryOptions: TaskRetryOptions | undefined
   sleepMsBeforeRun: number | undefined
   timeoutMs: number
+  areChildrenSequential: boolean
   validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
   runParent: (
     ctx: TaskRunContext,
@@ -56,7 +60,7 @@ export type TaskOptionsInternal = {
     output: unknown
     children: Array<ChildTask>
   }>
-  finalize: TaskOptionsInternal | undefined
+  finalize: ((input: DefaultParentTaskOutput) => Promise<unknown>) | TaskOptionsInternal | undefined
 }
 
 function convertTaskOptionsOptionsInternal(
@@ -70,6 +74,7 @@ function convertTaskOptionsOptionsInternal(
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
     timeoutMs: taskOptions.timeoutMs,
     validateInputFn,
+    areChildrenSequential: false,
     runParent: async (ctx, input) => {
       const output = await taskOptions.run(ctx, input)
       return {
@@ -91,6 +96,7 @@ function convertSleepingTaskOptionsOptionsInternal(
     sleepMsBeforeRun: undefined,
     timeoutMs: taskOptions.timeoutMs,
     validateInputFn: undefined,
+    areChildrenSequential: false,
     runParent: () => {
       throw DurableExecutionError.any('Sleeping tasks cannot be run', false, true)
     },
@@ -100,6 +106,7 @@ function convertSleepingTaskOptionsOptionsInternal(
 
 function convertParentTaskOptionsOptionsInternal(
   taskOptions: ParentTaskOptions<unknown, unknown, unknown, unknown>,
+  areChildrenSequential: boolean,
   validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
 ): TaskOptionsInternal {
   return {
@@ -109,6 +116,7 @@ function convertParentTaskOptionsOptionsInternal(
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
     timeoutMs: taskOptions.timeoutMs,
     validateInputFn,
+    areChildrenSequential,
     runParent: async (ctx, input) => {
       const runParentOutput = await taskOptions.runParent(ctx, input)
       return {
@@ -117,17 +125,20 @@ function convertParentTaskOptionsOptionsInternal(
       }
     },
     finalize: taskOptions.finalize
-      ? isFinalizeTaskOptionsParentTaskOptions(taskOptions.finalize)
-        ? convertParentTaskOptionsOptionsInternal(
-            taskOptions.finalize as ParentTaskOptions<unknown, unknown, unknown, unknown>,
-            undefined,
-          )
-        : isFinalizeTaskOptionsTaskOptions(taskOptions.finalize)
-          ? convertTaskOptionsOptionsInternal(
-              taskOptions.finalize as TaskOptions<unknown, unknown>,
+      ? isFunction(taskOptions.finalize)
+        ? (taskOptions.finalize as (input: DefaultParentTaskOutput) => Promise<unknown>)
+        : isFinalizeTaskOptionsParentTaskOptions(taskOptions.finalize as FinalizeTaskOptions)
+          ? convertParentTaskOptionsOptionsInternal(
+              taskOptions.finalize as ParentTaskOptions<unknown, unknown, unknown, unknown>,
+              false,
               undefined,
             )
-          : undefined
+          : isFinalizeTaskOptionsTaskOptions(taskOptions.finalize as FinalizeTaskOptions)
+            ? convertTaskOptionsOptionsInternal(
+                taskOptions.finalize as TaskOptions<unknown, unknown>,
+                undefined,
+              )
+            : undefined
       : undefined,
   }
 }
@@ -209,12 +220,19 @@ const zSleepMsBeforeRun = z
 
 const zTimeoutMs = z.number().int().min(1)
 
+/**
+ * An internal representation of a task.
+ *
+ * @category Task
+ * @internal
+ */
 export class TaskInternal {
   readonly taskType: 'task' | 'sleepingTask' | 'parentTask'
   readonly id: string
   readonly retryOptions: TaskRetryOptions
   readonly sleepMsBeforeRun: number
   readonly timeoutMs: number
+  readonly areChildrenSequential: boolean
   private readonly validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
   private readonly runParent: (
     ctx: TaskRunContext,
@@ -223,7 +241,10 @@ export class TaskInternal {
     output: unknown
     children: Array<ChildTask>
   }>
-  readonly finalize: TaskInternal | undefined
+  readonly finalize:
+    | ((input: DefaultParentTaskOutput) => Promise<unknown>)
+    | TaskInternal
+    | undefined
 
   constructor(
     taskType: 'task' | 'sleepingTask' | 'parentTask',
@@ -231,6 +252,7 @@ export class TaskInternal {
     retryOptions: TaskRetryOptions,
     sleepMsBeforeRun: number,
     timeoutMs: number,
+    areChildrenSequential: boolean,
     validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
     runParent: (
       ctx: TaskRunContext,
@@ -239,13 +261,14 @@ export class TaskInternal {
       output: unknown
       children: Array<ChildTask>
     }>,
-    finalize: TaskInternal | undefined,
+    finalize: ((input: DefaultParentTaskOutput) => Promise<unknown>) | TaskInternal | undefined,
   ) {
     this.taskType = taskType
     this.id = id
     this.retryOptions = retryOptions
     this.sleepMsBeforeRun = sleepMsBeforeRun
     this.timeoutMs = timeoutMs
+    this.areChildrenSequential = areChildrenSequential
     this.validateInputFn = validateInputFn
     this.runParent = runParent
     this.finalize = finalize
@@ -263,7 +286,12 @@ export class TaskInternal {
     }
 
     const finalize = taskOptions.finalize
-      ? TaskInternal.fromTaskOptionsInternal(taskInternalsMap, taskOptions.finalize)
+      ? isFunction(taskOptions.finalize)
+        ? (taskOptions.finalize as (input: DefaultParentTaskOutput) => Promise<unknown>)
+        : TaskInternal.fromTaskOptionsInternal(
+            taskInternalsMap,
+            taskOptions.finalize as TaskOptionsInternal,
+          )
       : undefined
 
     const taskInternal = new TaskInternal(
@@ -272,6 +300,7 @@ export class TaskInternal {
       validatedCommonTaskOptions.retryOptions,
       validatedCommonTaskOptions.sleepMsBeforeRun,
       validatedCommonTaskOptions.timeoutMs,
+      taskOptions.areChildrenSequential,
       taskOptions.validateInputFn,
       taskOptions.runParent,
       finalize,
@@ -313,12 +342,14 @@ export class TaskInternal {
   >(
     taskInternalsMap: Map<string, TaskInternal>,
     taskOptions: ParentTaskOptions<TRunInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
+    areChildrenSequential: boolean,
     validateInputFn?: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
   ): TaskInternal {
     return TaskInternal.fromTaskOptionsInternal(
       taskInternalsMap,
       convertParentTaskOptionsOptionsInternal(
         taskOptions as ParentTaskOptions<unknown, unknown, unknown, unknown>,
+        areChildrenSequential,
         validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
       ),
     )
@@ -337,15 +368,19 @@ export class TaskInternal {
       input = await this.validateInputFn(this.id, input)
     }
 
-    const timeoutCancelSignal = createTimeoutCancelSignal(timeoutMs)
-    return await createCancellablePromiseCustom(
+    const [timeoutCancelSignal, clearTimeout] = createTimeoutCancelSignal(timeoutMs)
+    const result = await createCancellablePromiseCustom(
       createCancellablePromiseCustom(
-        this.runParent(ctx, input),
-        timeoutCancelSignal,
-        new DurableExecutionTimedOutError(),
+        createCancellablePromiseCustom(
+          this.runParent(ctx, input),
+          timeoutCancelSignal,
+          new DurableExecutionTimedOutError(),
+        ),
+        cancelSignal,
       ),
-      cancelSignal,
     )
+    clearTimeout()
+    return result
   }
 }
 
@@ -355,12 +390,17 @@ export function getTaskExecutionHandleInternal<TOutput>(
   logger: Logger,
   taskId: string,
   executionId: string,
+  withTimingStats?: <T>(name: string, fn: () => T | Promise<T>) => Promise<T>,
 ): TaskExecutionHandle<TOutput> {
   return {
     getTaskId: () => taskId,
     getExecutionId: () => executionId,
     getExecution: async () => {
-      const execution = await storage.getById(executionId, {})
+      const execution = withTimingStats
+        ? await withTimingStats('taskExecutionHandle_getExecution_getById', () =>
+            storage.getById(executionId, {}),
+          )
+        : await storage.getById(executionId, {})
       if (!execution) {
         throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
       }
@@ -377,7 +417,7 @@ export function getTaskExecutionHandleInternal<TOutput>(
         signal instanceof AbortSignal ? createCancelSignal({ abortSignal: signal })[0] : signal
 
       const resolvedPollingIntervalMs =
-        pollingIntervalMs && pollingIntervalMs > 0 ? pollingIntervalMs : 2000
+        pollingIntervalMs && pollingIntervalMs > 0 ? pollingIntervalMs : 2500
       let isFirstIteration = true
       while (true) {
         if (cancelSignal?.isCancelled()) {
@@ -394,7 +434,11 @@ export function getTaskExecutionHandleInternal<TOutput>(
           }
         }
 
-        const execution = await storage.getById(executionId, {})
+        const execution = withTimingStats
+          ? await withTimingStats('taskExecutionHandle_waitAndGetFinishedExecution_getById', () =>
+              storage.getById(executionId, {}),
+            )
+          : await storage.getById(executionId, {})
         if (!execution) {
           throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
         }
@@ -412,7 +456,7 @@ export function getTaskExecutionHandleInternal<TOutput>(
       }
     },
     cancel: async () => {
-      const now = new Date()
+      const now = Date.now()
       await storage.updateById(
         now,
         executionId,
@@ -462,7 +506,6 @@ export async function wakeupSleepingTaskExecutionInternal<
     ) as FinishedTaskExecution<InferTaskOutput<TTask>>
   }
 
-  const now = new Date()
   const update: TaskExecutionStorageUpdateInternal = {
     status: options.status,
   }
@@ -479,6 +522,7 @@ export async function wakeupSleepingTaskExecutionInternal<
     )
   }
 
+  const now = Date.now()
   await storage.updateById(
     now,
     execution.executionId,

@@ -1,5 +1,10 @@
 import z from 'zod'
 
+/**
+ * A schema for a logger.
+ *
+ * @category Logger
+ */
 export const zLogger = z.object({
   debug: z.custom<Logger['debug']>((val) => {
     if (typeof val !== 'function') {
@@ -56,6 +61,11 @@ export type Logger = {
   error: (message: string, error?: unknown) => void
 }
 
+/**
+ * A schema for a log level.
+ *
+ * @category Logger
+ */
 export const zLogLevel = z.enum(['debug', 'info', 'error'])
 
 /**
@@ -115,12 +125,21 @@ export function createConsoleLogger(name: string): Logger {
   }
 }
 
+/**
+ * Internal logger class that can be used to log messages.
+ *
+ * This class is used to log messages in the executor. It is used by the executor to log messages
+ * to the console.
+ *
+ * @category Logger
+ * @internal
+ */
 export class LoggerInternal {
   private readonly logger: Logger
   private readonly level: number
 
-  constructor(logger?: Logger | null, level?: LogLevel | null) {
-    this.logger = logger ?? createConsoleLogger('DurableExecutor')
+  constructor(logger?: Logger | null, level?: LogLevel | null, name?: string | null) {
+    this.logger = logger ?? createConsoleLogger(name ?? 'DurableExecutor')
     this.level = levels[level ?? 'info'] || levels.info
   }
 

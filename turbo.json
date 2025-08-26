@@ -21,16 +21,19 @@
     },
     "bench": {
       "dependsOn": ["^build", "^bench"],
-      "inputs": ["$TURBO_DEFAULT$", "vitest.config.ts", "!**/.tmp_*", "!**/.tmp_*/**"]
+      "inputs": ["$TURBO_DEFAULT$", "!**/.tmp_*", "!**/.tmp_*/**"]
     },
     "type-check": {
-      "dependsOn": ["^type-check"]
+      "dependsOn": ["^type-check"],
+      "inputs": ["$TURBO_DEFAULT$", "typedoc.json"]
     },
     "lint": {
-      "dependsOn": ["^lint"]
+      "dependsOn": ["^lint"],
+      "inputs": ["$TURBO_DEFAULT$", "eslint.config.*"]
     },
     "lint-fix": {
       "dependsOn": ["^lint-fix"],
+      "inputs": ["$TURBO_DEFAULT$", "eslint.config.*"],
       "cache": false
     }
   }

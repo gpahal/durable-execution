@@ -35,6 +35,7 @@ describe('taskHandle', () => {
           sleepMsBeforeRun: 0,
           timeoutMs: 10_000,
           isSleepingTask: false,
+          areChildrenSequential: false,
         },
         'invalid',
       ),
@@ -99,9 +100,9 @@ describe('taskHandle', () => {
 
     const [cancelSignal, cancel] = createCancelSignal()
     cancel()
-    await expect(handle.waitAndGetFinishedExecution({ signal: cancelSignal })).rejects.toThrow(
-      'Task execution cancelled',
-    )
+    await expect(
+      handle.waitAndGetFinishedExecution({ signal: cancelSignal, pollingIntervalMs: 100 }),
+    ).rejects.toThrow('Task execution cancelled')
   })
 
   it('should handle wait and get finished task execution with cancelled abort signal', async () => {
@@ -123,7 +124,10 @@ describe('taskHandle', () => {
     const abortController = new AbortController()
     abortController.abort()
     await expect(
-      handle.waitAndGetFinishedExecution({ signal: abortController.signal }),
+      handle.waitAndGetFinishedExecution({
+        signal: abortController.signal,
+        pollingIntervalMs: 100,
+      }),
     ).rejects.toThrow('Task execution cancelled')
   })
 
@@ -143,11 +147,12 @@ describe('taskHandle', () => {
     expect(handle.getTaskId()).toBe('test')
     expect(handle.getExecutionId()).toBeDefined()
 
-    const cancelSignal = createTimeoutCancelSignal(10_000)
+    const [cancelSignal, clearTimeout] = createTimeoutCancelSignal(10_000)
     await sleep(1000)
     await expect(
-      handle.waitAndGetFinishedExecution({ signal: cancelSignal }),
+      handle.waitAndGetFinishedExecution({ signal: cancelSignal, pollingIntervalMs: 100 }),
     ).resolves.toBeDefined()
+    clearTimeout()
   })
 
   it('should handle wait and get finished task execution with cancel signal before finishing', async () => {
@@ -166,9 +171,10 @@ describe('taskHandle', () => {
     expect(handle.getTaskId()).toBe('test')
     expect(handle.getExecutionId()).toBeDefined()
 
-    const cancelSignal = createTimeoutCancelSignal(1000)
-    await expect(handle.waitAndGetFinishedExecution({ signal: cancelSignal })).rejects.toThrow(
-      'Task execution cancelled',
-    )
+    const [cancelSignal, clearTimeout] = createTimeoutCancelSignal(1000)
+    await expect(
+      handle.waitAndGetFinishedExecution({ signal: cancelSignal, pollingIntervalMs: 100 }),
+    ).rejects.toThrow('Task execution cancelled')
+    clearTimeout()
   })
 })

@@ -3,7 +3,6 @@ import { getDotPath } from '@standard-schema/utils'
 import { customAlphabet } from 'nanoid'
 
 import { createCancellablePromise, type CancelSignal } from '@gpahal/std/cancel'
-import { sleep } from '@gpahal/std/promises'
 
 import { DurableExecutionCancelledError } from './errors'
 
@@ -17,16 +16,6 @@ export async function createCancellablePromiseCustom<T>(
     signal,
     error ?? new DurableExecutionCancelledError(),
   )
-}
-
-/**
- * Sleep with jitter.
- *
- * @param ms - The time to sleep.
- * @returns A promise that resolves after the time has passed.
- */
-export function sleepWithJitter(ms: number): Promise<void> {
-  return sleep(ms * (0.5 + Math.random()))
 }
 
 const _ALPHABET = '0123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz'

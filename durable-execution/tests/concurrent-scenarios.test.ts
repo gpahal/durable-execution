@@ -104,7 +104,9 @@ describe('concurrentScenarios', () => {
 
       const handle = await executor1.enqueueTask(parentTask)
 
-      const result = await handle.waitAndGetFinishedExecution()
+      const result = await handle.waitAndGetFinishedExecution({
+        pollingIntervalMs: 100,
+      })
       expect(result.status).toBe('completed')
       assert(result.status === 'completed')
       expect(result.output.children).toHaveLength(3)
@@ -163,7 +165,11 @@ describe('concurrentScenarios', () => {
       ])
 
       const results = await Promise.all(
-        handles.map((handle) => handle.waitAndGetFinishedExecution()),
+        handles.map((handle) =>
+          handle.waitAndGetFinishedExecution({
+            pollingIntervalMs: 100,
+          }),
+        ),
       )
 
       const outputs: Array<string> = []
@@ -233,7 +239,9 @@ describe('concurrentScenarios', () => {
 
       const handle = await executor1.enqueueTask(parentTask)
 
-      const result = await handle.waitAndGetFinishedExecution()
+      const result = await handle.waitAndGetFinishedExecution({
+        pollingIntervalMs: 100,
+      })
       expect(result.status).toBe('completed')
       assert(result.status === 'completed')
       expect(result.output.children).toHaveLength(1000)

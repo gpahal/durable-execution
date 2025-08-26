@@ -1,5 +1,6 @@
 export { DurableExecutor } from './executor'
 export { DurableExecutorClient } from './executor-client'
+export { DurableExecutorCore } from './executor-core'
 export {
   type Task,
   type AnyTask,
@@ -47,6 +48,7 @@ export {
 } from './task'
 export {
   type TaskExecutionsStorage,
+  TaskExecutionsStorageInternal,
   type TaskExecutionStorageValue,
   type TaskExecutionOnChildrenFinishedProcessingStatus,
   type TaskExecutionCloseStatus,
@@ -64,8 +66,20 @@ export {
   DurableExecutionCancelledError,
   type DurableExecutionErrorStorageValue,
 } from './errors'
-export { type Serializer, createSuperjsonSerializer } from './serializer'
-export { type Logger, type LogLevel, createConsoleLogger } from './logger'
+export {
+  type Serializer,
+  createSuperjsonSerializer,
+  SerializerInternal,
+  zSerializer,
+} from './serializer'
+export {
+  type Logger,
+  type LogLevel,
+  createConsoleLogger,
+  LoggerInternal,
+  zLogger,
+  zLogLevel,
+} from './logger'
 export {
   type CancelSignal,
   createCancelSignal,

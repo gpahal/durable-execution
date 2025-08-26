@@ -1,0 +1,10 @@
+{
+  "extends": "@gpahal/tsconfig/base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "customConditions": ["@convex-dev/component-source"],
+    "types": ["vitest/globals"]
+  },
+  "include": ["src", "tests", "scripts", "vitest.config.ts", "tsup.config.ts"],
+  "exclude": ["node_modules", "build"]
+}

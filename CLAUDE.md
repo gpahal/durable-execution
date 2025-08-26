@@ -27,12 +27,17 @@ pnpm -F durable-execution build
 pnpm -F durable-execution test
 pnpm -F durable-execution-storage-drizzle test
 
+# Convex storage (tests run from parent package)
+pnpm -F durable-execution-storage-convex test
+pnpm -F durable-execution-storage-convex bench
+pnpm -F durable-execution-storage-convex type-check
+
 # Pre-commit validation
 pnpm pre-commit       # Full validation pipeline
 
 # Documentation and releases
 pnpm build-docs       # Generate docs for main package
-pnpm cs               # Create changeset
+pnpm cs               # Create changeset and version
 pnpm cs-publish       # Publish packages
 
 # Benchmarking
@@ -78,7 +83,12 @@ This is a TypeScript monorepo for a **durable execution engine** - a system that
 - `durable-execution/`: Main execution engine with comprehensive TypeScript API
 - `durable-execution-orpc-utils/`: oRPC integration for remote execution servers
 - `durable-execution-storage-drizzle/`: Production-ready database storage (PostgreSQL, MySQL, SQLite)
+- `durable-execution-storage-convex/`: Convex database storage implementation
 - `durable-execution-storage-test-utils/`: Test utilities for validating storage implementations
+
+**Package-Specific Architecture Notes**:
+
+- `durable-execution-storage-convex/`: Uses Convex components with a test subdirectory as a separate workspace (`durable-execution-storage-convex/test`) for Convex component setup. Tests and benchmarks are run from the parent package.
 
 **Monorepo Technology**:
 
@@ -123,7 +133,7 @@ const workflowTask = executor.parentTask({
 })
 
 // Sequential task chain
-const pipeline = executor.sequentialTasks('seq', taskA, taskB, taskC)
+const pipeline = executor.sequentialTasks('seq', [taskA, taskB, taskC])
 
 // Sleeping task for webhooks/events
 const waitTask = executor.sleepingTask<WebhookData>({
@@ -133,7 +143,7 @@ const waitTask = executor.sleepingTask<WebhookData>({
 // Wake up with: executor.wakeupSleepingTaskExecution(waitTask, entityId, { status: 'completed', output: data })
 
 // Polling task for condition checking
-const pollTask = executor.pollingTask('poll', checkConditionTask, maxAttempts, delayMs)
+const pollTask = executor.pollingTask('poll', checkConditionTask, maxAttempts, sleepMsBeforeRun)
 ```
 
 ### Error Handling Patterns
@@ -202,17 +212,20 @@ try {
 
 **durable-execution-storage-drizzle**: Requires peer dependencies `drizzle-orm` and `durable-execution`. Database implementations in separate files (`pg.ts`, `mysql.ts`, `sqlite.ts`) with shared logic in `common.ts`.
 
+**durable-execution-storage-convex**: Requires peer dependencies `convex` and `durable-execution`. Uses Convex components with auth-protected public API. Includes background process batching for efficient API calls.
+
 **durable-execution-storage-test-utils**: Provides `runStorageTest()` function for comprehensive storage validation. Includes utilities for temporary files and directories with automatic cleanup.
 
 ### Benchmarking
 
 Each storage package includes benchmark scripts to measure performance:
 
-**Benchmark Scenario**: Creates 100 parent tasks (each with 100 child tasks) across 3 concurrent executors, measuring execution time for approximately 10,000 total task executions.
+**Benchmark Scenario**: By default, creates 100 parent tasks (each with 50 child tasks), 100 sequential tasks, and 100 polling tasks with 1 executor, measuring execution time for approximately 5,300 total task executions.
 
 **Storage Benchmarks**:
 
 - **durable-execution-storage-drizzle**: Tests PostgreSQL, MySQL, and SQLite using Testcontainers
+- **durable-execution-storage-convex**: Tests Convex storage with performance metrics
 - **durable-execution-storage-test-utils**: Tests InMemoryStorage baseline performance
 
 **Running Benchmarks**:
@@ -223,7 +236,8 @@ pnpm bench
 
 # Specific package benchmarks
 pnpm -F durable-execution-storage-drizzle bench
+pnpm -F durable-execution-storage-convex bench
 pnpm -F durable-execution-storage-test-utils bench
 ```
 
-**Benchmark Output**: Reports average execution time across 3 iterations (excluding warmup) with graceful shutdown handling.
+**Benchmark Output**: Reports execution time for 3 iterations (including 1 warmup) with graceful shutdown handling.

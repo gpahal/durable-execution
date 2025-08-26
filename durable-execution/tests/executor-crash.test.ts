@@ -56,7 +56,9 @@ describe('executorCrash', () => {
 
         for (const executionId of runningTaskExecutionIds) {
           const handle = await executor.getTaskExecutionHandle(task, executionId)
-          const finishedExecution = await handle.waitAndGetFinishedExecution()
+          const finishedExecution = await handle.waitAndGetFinishedExecution({
+            pollingIntervalMs: 100,
+          })
           console.log('Task finished', finishedExecution)
 
           expect(executionCount).toBe(1)

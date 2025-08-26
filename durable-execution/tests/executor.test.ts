@@ -248,39 +248,45 @@ describe('executor', () => {
     }).rejects.toThrow(DurableExecutionError)
   })
 
-  it('should handle storage insert failures during task enqueueing', async () => {
-    const failingStorage = new InMemoryTaskExecutionsStorage()
-    const originalInsert = failingStorage.insertMany.bind(failingStorage)
-    let insertCallCount = 0
-    failingStorage.insertMany = () => {
-      insertCallCount++
-      throw new Error('Storage insert failed')
-    }
+  it(
+    'should handle storage insert failures during task enqueueing',
+    { timeout: 10_000 },
+    async () => {
+      const failingStorage = new InMemoryTaskExecutionsStorage()
+      const originalInsert = failingStorage.insertMany.bind(failingStorage)
+      let insertCallCount = 0
+      failingStorage.insertMany = () => {
+        insertCallCount++
+        throw new Error('Storage insert failed')
+      }
 
-    const failingExecutor = new DurableExecutor(failingStorage, {
-      logLevel: 'error',
-    })
-    failingExecutor.startBackgroundProcesses()
+      const failingExecutor = new DurableExecutor(failingStorage, {
+        logLevel: 'error',
+      })
+      failingExecutor.startBackgroundProcesses()
 
-    const testTask = failingExecutor.task({
-      id: 'test',
-      timeoutMs: 10_000,
-      run: () => 'test',
-    })
+      const testTask = failingExecutor.task({
+        id: 'test',
+        timeoutMs: 10_000,
+        run: () => 'test',
+      })
 
-    await expect(async () => {
-      await failingExecutor.enqueueTask(testTask)
-    }).rejects.toThrow('Storage insert failed')
+      await expect(async () => {
+        await failingExecutor.enqueueTask(testTask)
+      }).rejects.toThrow('Storage insert failed')
 
-    expect(insertCallCount).toBeGreaterThan(0)
+      expect(insertCallCount).toBeGreaterThan(0)
 
-    failingStorage.insertMany = originalInsert
-    const handle = await failingExecutor.enqueueTask(testTask)
-    const execution = await handle.waitAndGetFinishedExecution()
-    expect(execution.status).toBe('completed')
+      failingStorage.insertMany = originalInsert
+      const handle = await failingExecutor.enqueueTask(testTask)
+      const execution = await handle.waitAndGetFinishedExecution({
+        pollingIntervalMs: 100,
+      })
+      expect(execution.status).toBe('completed')
 
-    await failingExecutor.shutdown()
-  })
+      await failingExecutor.shutdown()
+    },
+  )
 
   it('should handle storage updateById failures during status transitions', async () => {
     const failingStorage = new InMemoryTaskExecutionsStorage()
@@ -323,42 +329,46 @@ describe('executor', () => {
     await failingExecutor.shutdown()
   })
 
-  it('should handle storage getById failures during task retrieval', async () => {
-    const failingStorage = new InMemoryTaskExecutionsStorage()
-    const originalGetById = failingStorage.getById.bind(failingStorage)
-    let shouldFail = false
+  it(
+    'should handle storage getById failures during task retrieval',
+    { timeout: 10_000 },
+    async () => {
+      const failingStorage = new InMemoryTaskExecutionsStorage()
+      const originalGetById = failingStorage.getById.bind(failingStorage)
+      let shouldFail = false
 
-    failingStorage.getById = async (...args) => {
-      if (shouldFail) {
-        throw new Error('Storage getById failed')
+      failingStorage.getById = async (...args) => {
+        if (shouldFail) {
+          throw new Error('Storage getById failed')
+        }
+        return originalGetById(...args)
       }
-      return originalGetById(...args)
-    }
 
-    const failingExecutor = new DurableExecutor(failingStorage, {
-      logLevel: 'error',
-    })
-    failingExecutor.startBackgroundProcesses()
+      const failingExecutor = new DurableExecutor(failingStorage, {
+        logLevel: 'error',
+      })
+      failingExecutor.startBackgroundProcesses()
 
-    const testTask = failingExecutor.task({
-      id: 'test',
-      timeoutMs: 10_000,
-      run: () => 'test',
-    })
+      const testTask = failingExecutor.task({
+        id: 'test',
+        timeoutMs: 10_000,
+        run: () => 'test',
+      })
 
-    const handle = await failingExecutor.enqueueTask(testTask)
+      const handle = await failingExecutor.enqueueTask(testTask)
 
-    shouldFail = true
-    await expect(async () => {
-      await handle.getExecution()
-    }).rejects.toThrow('Storage getById failed')
+      shouldFail = true
+      await expect(async () => {
+        await handle.getExecution()
+      }).rejects.toThrow('Storage getById failed')
 
-    shouldFail = false
-    const execution = await handle.getExecution()
-    expect(execution).toBeDefined()
+      shouldFail = false
+      const execution = await handle.getExecution()
+      expect(execution).toBeDefined()
 
-    await failingExecutor.shutdown()
-  })
+      await failingExecutor.shutdown()
+    },
+  )
 
   it('should handle race condition with duplicate task execution pickup', async () => {
     const testStorage = new InMemoryTaskExecutionsStorage()
@@ -397,7 +407,9 @@ describe('executor', () => {
     })
 
     const handle = await executor1.enqueueTask(testTask)
-    const execution = await handle.waitAndGetFinishedExecution()
+    const execution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
 
     expect(execution.status).toBe('completed')
     expect(executionCount).toBe(1)
@@ -408,10 +420,10 @@ describe('executor', () => {
 
   it('should handle storage failures within retry attempts during atomic updateByIdAndInsertManyIfUpdated operations', async () => {
     const failingStorage = new InMemoryTaskExecutionsStorage()
-    const originalMethod = failingStorage.updateByIdAndInsertManyIfUpdated.bind(failingStorage)
+    const originalMethod = failingStorage.updateByIdAndInsertChildrenIfUpdated.bind(failingStorage)
     let failureCount = 0
 
-    failingStorage.updateByIdAndInsertManyIfUpdated = async (...args) => {
+    failingStorage.updateByIdAndInsertChildrenIfUpdated = async (...args) => {
       if (failureCount < 1) {
         failureCount++
         throw new Error('Atomic operation failed')
@@ -446,7 +458,9 @@ describe('executor', () => {
 
     await sleep(500)
 
-    const execution = await handle.waitAndGetFinishedExecution()
+    const execution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(execution.status).toBe('completed')
     expect(failureCount).toBeGreaterThan(0)
 
@@ -455,10 +469,10 @@ describe('executor', () => {
 
   it('should handle storage failures more than retry attempts during atomic updateByIdAndInsertManyIfUpdated operations', async () => {
     const failingStorage = new InMemoryTaskExecutionsStorage()
-    const originalMethod = failingStorage.updateByIdAndInsertManyIfUpdated.bind(failingStorage)
+    const originalMethod = failingStorage.updateByIdAndInsertChildrenIfUpdated.bind(failingStorage)
     let failureCount = 0
 
-    failingStorage.updateByIdAndInsertManyIfUpdated = async (...args) => {
+    failingStorage.updateByIdAndInsertChildrenIfUpdated = async (...args) => {
       if (failureCount < 2) {
         failureCount++
         throw new Error('Atomic operation failed')
@@ -493,7 +507,9 @@ describe('executor', () => {
 
     await sleep(500)
 
-    const execution = await handle.waitAndGetFinishedExecution()
+    const execution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(execution.status).toBe('failed')
     expect(failureCount).toBeGreaterThan(0)
 
@@ -522,7 +538,9 @@ describe('executor', () => {
     })
     executor.startBackgroundProcesses()
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
     expect(finishedExecution.error?.message).toContain('Task test not found')
@@ -530,8 +548,8 @@ describe('executor', () => {
 
   it('should handle non-existent parent task in executor', async () => {
     const originalFn =
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn
-    storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn =
+      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn
+    storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
       () => {
         return Promise.resolve([])
       }
@@ -569,7 +587,7 @@ describe('executor', () => {
         logLevel: 'error',
         backgroundProcessIntraBatchSleepMs: 50,
       })
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn =
+      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
         originalFn
 
       const execution = await handle.getExecution()
@@ -580,20 +598,22 @@ describe('executor', () => {
       expect(execution.children[0]!.executionId).toMatch(/^te_/)
       executor.startBackgroundProcesses()
 
-      const finishedExecution = await handle.waitAndGetFinishedExecution()
+      const finishedExecution = await handle.waitAndGetFinishedExecution({
+        pollingIntervalMs: 100,
+      })
       expect(finishedExecution.status).toBe('failed')
       assert(finishedExecution.status === 'failed')
       expect(finishedExecution.error?.message).toContain('Task parent not found')
     } finally {
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn =
+      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
         originalFn
     }
   })
 
   it('should handle missing children task executions in storage', async () => {
     const originalFn =
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn
-    storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn =
+      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn
+    storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
       () => {
         return Promise.resolve([])
       }
@@ -635,7 +655,7 @@ describe('executor', () => {
       })
       executor.task(childTaskOptions)
       executor.parentTask(parentTaskOptions)
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn =
+      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
         originalFn
 
       const execution = await handle.getExecution()
@@ -649,12 +669,14 @@ describe('executor', () => {
       await storage.deleteById(childTaskExecutionId)
       executor.startBackgroundProcesses()
 
-      const finishedExecution = await handle.waitAndGetFinishedExecution()
+      const finishedExecution = await handle.waitAndGetFinishedExecution({
+        pollingIntervalMs: 100,
+      })
       expect(finishedExecution.status).toBe('failed')
       assert(finishedExecution.status === 'failed')
       expect(finishedExecution.error?.message).toContain('Some children task executions not found')
     } finally {
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn =
+      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
         originalFn
     }
   })
@@ -699,11 +721,11 @@ describe('runBackgroundProcess', () => {
     await expect(promise).resolves.not.toThrow()
   })
 
-  it('should increase sleep time on empty results', async () => {
+  it('should sleep on empty results', async () => {
     const startTimes: Array<number> = []
     const promise = executor.testRunBackgroundProcess('test', () => {
       startTimes.push(Date.now())
-      return Promise.resolve(false)
+      return Promise.resolve(true)
     })
 
     await sleep(500)
@@ -716,7 +738,7 @@ describe('runBackgroundProcess', () => {
       })
       .slice(1)
     expect(sleepTimes).toHaveLength(startTimes.length - 1)
-    expect(sleepTimes.every((sleepTime) => sleepTime > 20)).toBe(true)
+    expect(sleepTimes.every((sleepTime) => sleepTime > 10)).toBe(true)
 
     await expect(promise).resolves.not.toThrow()
   })

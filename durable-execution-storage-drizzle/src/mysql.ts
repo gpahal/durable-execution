@@ -8,7 +8,6 @@ import {
   longtext,
   mysqlTable,
   serial,
-  timestamp,
   uniqueIndex,
   varchar,
   type MySqlDatabase,
@@ -69,8 +68,9 @@ export function createMySqlTaskExecutionsTable(tableName = 'task_executions') {
       rootExecutionId: varchar('root_execution_id', { length: 64 }),
       parentTaskId: varchar('parent_task_id', { length: 64 }),
       parentExecutionId: varchar('parent_execution_id', { length: 64 }),
-      indexInParentChildTaskExecutions: int('index_in_parent_child_task_executions'),
-      isFinalizeTaskOfParentTask: boolean('is_finalize_task_of_parent_task'),
+      indexInParentChildren: int('index_in_parent_children'),
+      isOnlyChildOfParent: boolean('is_only_child_of_parent'),
+      isFinalizeOfParent: boolean('is_finalize_of_parent'),
       taskId: varchar('task_id', { length: 64 }).notNull(),
       executionId: varchar('execution_id', { length: 64 }).notNull(),
       isSleepingTask: boolean('is_sleeping_task').notNull(),
@@ -78,6 +78,7 @@ export function createMySqlTaskExecutionsTable(tableName = 'task_executions') {
       retryOptions: json('retry_options').$type<TaskRetryOptions>().notNull(),
       sleepMsBeforeRun: bigint('sleep_ms_before_run', { mode: 'number' }).notNull(),
       timeoutMs: bigint('timeout_ms', { mode: 'number' }).notNull(),
+      areChildrenSequential: boolean('are_children_sequential').notNull(),
       input: longtext('input').notNull(),
       executorId: varchar('executor_id', { length: 64 }),
       status: varchar('status', { length: 64 }).$type<TaskExecutionStatus>().notNull(),
@@ -86,10 +87,10 @@ export function createMySqlTaskExecutionsTable(tableName = 'task_executions') {
       output: longtext('output'),
       error: json('error').$type<DurableExecutionErrorStorageValue>(),
       retryAttempts: int('retry_attempts').notNull(),
-      startAt: timestamp('start_at').notNull(),
-      startedAt: timestamp('started_at'),
-      expiresAt: timestamp('expires_at'),
-      finishedAt: timestamp('finished_at'),
+      startAt: bigint('start_at', { mode: 'number' }).notNull(),
+      startedAt: bigint('started_at', { mode: 'number' }),
+      expiresAt: bigint('expires_at', { mode: 'number' }),
+      finishedAt: bigint('finished_at', { mode: 'number' }),
       children: json('children').$type<Array<TaskExecutionSummary>>(),
       activeChildrenCount: int('active_children_count').notNull(),
       onChildrenFinishedProcessingStatus: varchar('on_children_finished_processing_status', {
@@ -97,21 +98,22 @@ export function createMySqlTaskExecutionsTable(tableName = 'task_executions') {
       })
         .$type<TaskExecutionOnChildrenFinishedProcessingStatus>()
         .notNull(),
-      onChildrenFinishedProcessingExpiresAt: timestamp(
-        'on_children_finished_processing_expires_at',
-      ),
-      onChildrenFinishedProcessingFinishedAt: timestamp(
+      onChildrenFinishedProcessingExpiresAt: bigint('on_children_finished_processing_expires_at', {
+        mode: 'number',
+      }),
+      onChildrenFinishedProcessingFinishedAt: bigint(
         'on_children_finished_processing_finished_at',
+        { mode: 'number' },
       ),
       finalize: json('finalize').$type<TaskExecutionSummary>(),
       closeStatus: varchar('close_status', { length: 64 })
         .$type<TaskExecutionCloseStatus>()
         .notNull(),
-      closeExpiresAt: timestamp('close_expires_at'),
-      closedAt: timestamp('closed_at'),
+      closeExpiresAt: bigint('close_expires_at', { mode: 'number' }),
+      closedAt: bigint('closed_at', { mode: 'number' }),
       needsPromiseCancellation: boolean('needs_promise_cancellation').notNull(),
-      createdAt: timestamp('created_at').notNull(),
-      updatedAt: timestamp('updated_at').notNull(),
+      createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+      updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
     },
     (table) => [
       uniqueIndex(`ix_${tableName}_execution_id`).on(table.executionId),
@@ -306,19 +308,19 @@ class MySqlTaskExecutionsStorage<
       .where(getByIdWhereCondition(this.taskExecutionsTable, executionId, filters))
   }
 
-  async updateByIdAndInsertManyIfUpdated(
+  async updateByIdAndInsertChildrenIfUpdated(
     executionId: string,
     filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
-    executionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
+    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
   ): Promise<void> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    if (executionsToInsertIfAnyUpdated.length === 0) {
+    if (childrenTaskExecutionsToInsertIfAnyUpdated.length === 0) {
       return await this.updateById(executionId, filters, update)
     }
 
-    const rowsToInsert = executionsToInsertIfAnyUpdated.map((execution) =>
+    const rowsToInsert = childrenTaskExecutionsToInsertIfAnyUpdated.map((execution) =>
       taskExecutionStorageValueToDBValue(execution),
     )
     await this.db.transaction(async (tx) => {
@@ -336,9 +338,9 @@ class MySqlTaskExecutionsStorage<
 
   async updateByStatusAndStartAtLessThanAndReturn(
     status: TaskExecutionStatus,
-    startAtLessThan: Date,
+    startAtLessThan: number,
     update: TaskExecutionStorageUpdate,
-    updateExpiresAtWithStartedAt: Date,
+    updateExpiresAtWithStartedAt: number,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
@@ -363,7 +365,7 @@ class MySqlTaskExecutionsStorage<
             .update(this.taskExecutionsTable)
             .set({
               ...dbUpdate,
-              expiresAt: sql`FROM_UNIXTIME((${updateExpiresAtWithStartedAt.getTime()} + timeout_ms) / 1000.0)`,
+              expiresAt: sql`(${updateExpiresAtWithStartedAt} + timeout_ms)`,
             })
             .where(
               inArray(
@@ -383,10 +385,9 @@ class MySqlTaskExecutionsStorage<
     )
   }
 
-  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
+  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
     status: TaskExecutionStatus,
     onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
-    activeChildrenCountLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
@@ -404,7 +405,7 @@ class MySqlTaskExecutionsStorage<
                 this.taskExecutionsTable.onChildrenFinishedProcessingStatus,
                 onChildrenFinishedProcessingStatus,
               ),
-              lt(this.taskExecutionsTable.activeChildrenCount, activeChildrenCountLessThan),
+              eq(this.taskExecutionsTable.activeChildrenCount, 0),
             ),
           )
           .orderBy(asc(this.taskExecutionsTable.updatedAt))
@@ -468,18 +469,18 @@ class MySqlTaskExecutionsStorage<
     return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+  async updateByIsSleepingTaskAndExpiresAtLessThan(
     isSleepingTask: boolean,
-    expiresAtLessThan: Date,
+    expiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    const updatedRows = await this.db.transaction(
+    return await this.db.transaction(
       async (tx) => {
         const rows = await tx
-          .select()
+          .select({ executionId: this.taskExecutionsTable.executionId })
           .from(this.taskExecutionsTable)
           .where(
             and(
@@ -492,7 +493,7 @@ class MySqlTaskExecutionsStorage<
           .for('update', { skipLocked: true })
 
         if (rows.length > 0) {
-          await tx
+          const updateResult = await tx
             .update(this.taskExecutionsTable)
             .set(dbUpdate)
             .where(
@@ -501,27 +502,27 @@ class MySqlTaskExecutionsStorage<
                 rows.map((row) => row.executionId),
               ),
             )
+          return this.getAffectedRowsCount(updateResult)
         }
-        return rows
+        return 0
       },
       {
         isolationLevel: 'read committed',
       },
     )
-    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
-    onChildrenFinishedProcessingExpiresAtLessThan: Date,
+  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
+    onChildrenFinishedProcessingExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    const updatedRows = await this.db.transaction(
+    return await this.db.transaction(
       async (tx) => {
         const rows = await tx
-          .select()
+          .select({ executionId: this.taskExecutionsTable.executionId })
           .from(this.taskExecutionsTable)
           .where(
             lt(
@@ -534,7 +535,7 @@ class MySqlTaskExecutionsStorage<
           .for('update', { skipLocked: true })
 
         if (rows.length > 0) {
-          await tx
+          const updateResult = await tx
             .update(this.taskExecutionsTable)
             .set(dbUpdate)
             .where(
@@ -543,27 +544,27 @@ class MySqlTaskExecutionsStorage<
                 rows.map((row) => row.executionId),
               ),
             )
+          return this.getAffectedRowsCount(updateResult)
         }
-        return rows
+        return 0
       },
       {
         isolationLevel: 'read committed',
       },
     )
-    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByCloseExpiresAtLessThanAndReturn(
-    closeExpiresAtLessThan: Date,
+  async updateByCloseExpiresAtLessThan(
+    closeExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    const updatedRows = await this.db.transaction(
+    return await this.db.transaction(
       async (tx) => {
         const rows = await tx
-          .select()
+          .select({ executionId: this.taskExecutionsTable.executionId })
           .from(this.taskExecutionsTable)
           .where(lt(this.taskExecutionsTable.closeExpiresAt, closeExpiresAtLessThan))
           .orderBy(asc(this.taskExecutionsTable.closeExpiresAt))
@@ -571,7 +572,7 @@ class MySqlTaskExecutionsStorage<
           .for('update', { skipLocked: true })
 
         if (rows.length > 0) {
-          await tx
+          const updateResult = await tx
             .update(this.taskExecutionsTable)
             .set(dbUpdate)
             .where(
@@ -580,14 +581,14 @@ class MySqlTaskExecutionsStorage<
                 rows.map((row) => row.executionId),
               ),
             )
+          return this.getAffectedRowsCount(updateResult)
         }
-        return rows
+        return 0
       },
       {
         isolationLevel: 'read committed',
       },
     )
-    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
   async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(

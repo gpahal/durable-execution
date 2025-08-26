@@ -15,7 +15,7 @@ pnpm test              # Run all tests
 pnpm test-coverage     # Run tests with coverage report
 
 # Type checking and linting
-pnpm type-check        # TypeScript type checking
+pnpm type-check        # TypeScript type checking + typedoc validation
 pnpm lint              # Run ESLint
 pnpm lint-fix          # Auto-fix linting issues
 
@@ -48,6 +48,7 @@ This package provides **comprehensive test utilities** for validating durable-ex
 **Storage Test Suite** (`src/index.ts`):
 
 - `runStorageTest()`: Main test function that validates complete storage behavior
+- `runStorageBench()`: Benchmark function that measures storage performance
 - Tests complex task hierarchies, concurrency, and error scenarios
 - Validates 250+ concurrent tasks with proper coordination
 - Ensures ACID properties and transaction isolation
@@ -141,6 +142,7 @@ await runStorageTest(storage, async () => {
 
 ```ts
 import { runStorageTest } from 'durable-execution-storage-test-utils'
+import type { TaskExecutionsStorage } from 'durable-execution'
 
 // Add custom validations
 const customTest = async (storage: TaskExecutionsStorage) => {
@@ -153,10 +155,25 @@ const customTest = async (storage: TaskExecutionsStorage) => {
 
 **Performance Benchmarking**:
 
-- Measure operation latencies
+- Use `runStorageBench()` to measure storage performance
+- Configurable workload parameters (executors, tasks, processes)
+- Measure operation latencies across different task types
 - Track memory usage patterns
 - Monitor connection pool behavior
 - Analyze query execution plans
+
+```ts
+import { runStorageBench } from 'durable-execution-storage-test-utils'
+
+await runStorageBench("my-storage", () => new MyStorage(), {
+  executorsCount: 3,
+  parentTasksCount: 100,
+  childTasksCount: 50,
+  storageCleanup: async (storage) => {
+    await storage.close()
+  },
+})
+```
 
 ### Important Conventions
 

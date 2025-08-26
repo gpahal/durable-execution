@@ -19,6 +19,8 @@ import {
 import mysql from 'mysql2/promise'
 import { Pool } from 'pg'
 
+import { waitForExitOrLogActiveHandles } from '@gpahal/std-node/process'
+
 import {
   createMySqlTaskExecutionsStorage,
   createMySqlTaskExecutionsTable,
@@ -49,8 +51,9 @@ async function benchPg() {
     const { apply } = await pushSchema({ taskExecutionsTable }, db)
     await apply()
 
-    const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable, { enableTestMode: true })
-    await runStorageBench('pg', storage)
+    await runStorageBench('pg', () =>
+      createPgTaskExecutionsStorage(db, taskExecutionsTable, { enableTestMode: true }),
+    )
   } finally {
     if (pool) {
       await pool.end()
@@ -78,15 +81,16 @@ async function benchMySql() {
       await db.execute(statement)
     }
 
-    const storage = createMySqlTaskExecutionsStorage(
-      db,
-      taskExecutionsTable,
-      (result) => result[0].affectedRows,
-      {
-        enableTestMode: true,
-      },
+    await runStorageBench('mysql', () =>
+      createMySqlTaskExecutionsStorage(
+        db,
+        taskExecutionsTable,
+        (result) => result[0].affectedRows,
+        {
+          enableTestMode: true,
+        },
+      ),
     )
-    await runStorageBench('mysql', storage)
   } finally {
     if (pool) {
       await pool.end()
@@ -102,10 +106,11 @@ async function benchSQLite() {
     const { apply } = await pushSQLiteSchema({ taskExecutionsTable }, db)
     await apply()
 
-    const storage = createSQLiteTaskExecutionsStorage(db, taskExecutionsTable, {
-      enableTestMode: true,
-    })
-    await runStorageBench('sqlite', storage)
+    await runStorageBench('sqlite', () =>
+      createSQLiteTaskExecutionsStorage(db, taskExecutionsTable, {
+        enableTestMode: true,
+      }),
+    )
   })
 }
 
@@ -120,3 +125,5 @@ async function main() {
 }
 
 await main()
+
+waitForExitOrLogActiveHandles(10_000)

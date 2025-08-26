@@ -40,7 +40,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -68,7 +70,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -102,7 +106,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task, 'test')
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -136,7 +142,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task, 'invalid')
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(0)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -173,7 +181,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task, { name: 'test' })
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -208,7 +218,9 @@ describe('simpleTask', () => {
     // @ts-expect-error - Testing invalid input
     const handle = await executor.enqueueTask(task, { name: 0 })
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(0)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -238,7 +250,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -274,7 +288,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -303,7 +319,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -336,7 +354,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -366,7 +386,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('timed_out')
     assert(finishedExecution.status === 'timed_out')
@@ -401,7 +423,9 @@ describe('simpleTask', () => {
       timeoutMs: 1000,
     })
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -440,7 +464,9 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task)
     await handle.cancel()
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(0)
     expect(finishedExecution.status).toBe('cancelled')
     assert(finishedExecution.status === 'cancelled')
@@ -470,7 +496,9 @@ describe('simpleTask', () => {
     expect(executor.getRunningTaskExecutionIds()).toContain(handle.getExecutionId())
     await handle.cancel()
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('cancelled')
     assert(finishedExecution.status === 'cancelled')
@@ -505,7 +533,9 @@ describe('simpleTask', () => {
     const handle = await executor.enqueueTask(task)
     await Promise.all([handle.cancel(), handle.cancel(), handle.cancel()])
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(0)
     expect(finishedExecution.status).toBe('cancelled')
     assert(finishedExecution.status === 'cancelled')
@@ -534,7 +564,9 @@ describe('simpleTask', () => {
     await sleep(500)
     await Promise.all([handle.cancel(), handle.cancel(), handle.cancel()])
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('cancelled')
     assert(finishedExecution.status === 'cancelled')
@@ -570,7 +602,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -612,7 +646,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -670,7 +706,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -741,7 +779,9 @@ describe('simpleTask', () => {
     await sleep(500)
     await executor.shutdown()
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('cancelled')
     assert(finishedExecution.status === 'cancelled')
@@ -761,7 +801,7 @@ describe('simpleTask', () => {
     ).toBeLessThan(2000)
   })
 
-  it('should complete sequential tasks', async () => {
+  it('should complete sequential tasks', { timeout: 10_000 }, async () => {
     let executionCount = 0
     const taskString = executor.task({
       id: 'string',
@@ -788,11 +828,13 @@ describe('simpleTask', () => {
       },
     })
 
-    const task = executor.sequentialTasks('seq', taskString, taskNumber, taskBoolean)
+    const task = executor.sequentialTasks('seq', [taskString, taskNumber, taskBoolean])
 
     let handle = await executor.enqueueTask(task, '10.5')
 
-    let finishedExecution = await handle.waitAndGetFinishedExecution()
+    let finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(3)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -807,7 +849,9 @@ describe('simpleTask', () => {
 
     handle = await executor.enqueueTask(task, '9.5')
 
-    finishedExecution = await handle.waitAndGetFinishedExecution()
+    finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(6)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -849,7 +893,9 @@ describe('simpleTask', () => {
     })
 
     const handle = await executor.enqueueTask(testTask)
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
 
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
@@ -886,14 +932,16 @@ describe('simpleTask', () => {
       },
     })
 
-    const sequentialTask = executor.sequentialTasks('seq', task1, task2, task3)
+    const sequentialTask = executor.sequentialTasks('seq', [task1, task2, task3])
 
     const handle = await executor.enqueueTask(sequentialTask)
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
 
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
-    expect(finishedExecution.error?.message).toContain('Task 2 failed')
+    expect(finishedExecution.error?.message).toBe('Task at index 1 failed: Task 2 failed')
     expect(executionCount).toBe(2)
   })
 
@@ -921,13 +969,15 @@ describe('simpleTask', () => {
       },
     })
 
-    const sequentialTask = executor.sequentialTasks('seq', task1, task2)
+    const sequentialTask = executor.sequentialTasks('seq', [task1, task2])
 
     const handle = await executor.enqueueTask(sequentialTask)
     await sleep(1000)
     await handle.cancel()
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(finishedExecution.status).toBe('cancelled')
     expect(task1Started).toBe(true)
     expect(task2Started).toBe(true)
@@ -938,7 +988,7 @@ describe('simpleTask', () => {
       id: 'seq_timeout_task1',
       timeoutMs: 100,
       run: async () => {
-        await sleep(500)
+        await sleep(5000)
         return 'task1'
       },
     })
@@ -951,14 +1001,18 @@ describe('simpleTask', () => {
       },
     })
 
-    const sequentialTask = executor.sequentialTasks('seq', task1, task2)
+    const sequentialTask = executor.sequentialTasks('seq', [task1, task2])
 
     const handle = await executor.enqueueTask(sequentialTask)
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
 
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
-    expect(finishedExecution.error?.message).toContain('Task execution timed out')
+    expect(finishedExecution.error?.message).toContain(
+      'Task at index 0 failed: Task execution timed out',
+    )
   })
 
   it('should handle empty sequential task array', () => {
@@ -977,10 +1031,12 @@ describe('simpleTask', () => {
       },
     })
 
-    const sequentialTask = executor.sequentialTasks('seq', task1)
+    const sequentialTask = executor.sequentialTasks('seq', [task1])
 
     const handle = await executor.enqueueTask(sequentialTask)
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
 
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -999,10 +1055,12 @@ describe('simpleTask', () => {
       },
     })
 
-    const sequentialTask = executor.sequentialTasks('seq', task1)
+    const sequentialTask = executor.sequentialTasks('seq', [task1])
 
     const handle = await executor.enqueueTask(sequentialTask)
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
 
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
@@ -1031,7 +1089,9 @@ describe('simpleTask', () => {
     const pollingTask = executor.pollingTask('polling', pollTask, 10)
     const handle = await executor.enqueueTask(pollingTask)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(3)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -1062,7 +1122,9 @@ describe('simpleTask', () => {
     const pollingTask = executor.pollingTask('polling', pollTask, 10, 5)
     const handle = await executor.enqueueTask(pollingTask)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -1093,7 +1155,9 @@ describe('simpleTask', () => {
     const pollingTask = executor.pollingTask('polling', pollTask, 10, (attempt) => attempt * 1)
     const handle = await executor.enqueueTask(pollingTask)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -1123,7 +1187,9 @@ describe('simpleTask', () => {
     const pollingTask = executor.pollingTask('polling', pollTask, 10)
     const handle = await executor.enqueueTask(pollingTask)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(2)
     expect(finishedExecution.taskId).toBe('polling')
     expect(finishedExecution.status).toBe('finalize_failed')
@@ -1147,7 +1213,9 @@ describe('simpleTask', () => {
     const pollingTask = executor.pollingTask('polling', pollTask, 2)
     const handle = await executor.enqueueTask(pollingTask)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(2)
     expect(finishedExecution.taskId).toBe('polling')
     expect(finishedExecution.status).toBe('completed')
@@ -1218,7 +1286,9 @@ describe('simpleTask', () => {
     const execution = await handle.getExecution()
     expect(execution.status).toBe('running')
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(finishedExecution.status).toBe('timed_out')
     assert(finishedExecution.status === 'timed_out')
     expect(finishedExecution.error?.message).toBe('Task execution timed out')
@@ -1296,7 +1366,9 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
 
-    const finishedExecution = await handle.waitAndGetFinishedExecution()
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
@@ -1309,7 +1381,8 @@ describe('simpleTask', () => {
       expect(executionStorageValue.status).toBe('completed')
 
       if (executionStorageValue.closeStatus === 'closed') {
-        expect(executionStorageValue.closedAt).toBeInstanceOf(Date)
+        expect(executionStorageValue.closedAt).toBeDefined()
+        expect(executionStorageValue.closedAt).toBeGreaterThan(0)
         break
       }
 

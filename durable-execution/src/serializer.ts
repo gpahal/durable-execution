@@ -5,6 +5,11 @@ import { getErrorMessage } from '@gpahal/std/errors'
 
 import { DurableExecutionError } from './errors'
 
+/**
+ * A schema for a serializer.
+ *
+ * @category Serializer
+ */
 export const zSerializer = z.object({
   serialize: z.custom<Serializer['serialize']>((val) => {
     if (typeof val !== 'function') {
@@ -94,6 +99,15 @@ export function createSuperjsonSerializer(): Serializer {
   }
 }
 
+/**
+ * Internal serializer class that can be used to serialize and deserialize values.
+ *
+ * This class is used to serialize and deserialize values in the database. It is used by the
+ * executor to store task inputs and outputs in the database.
+ *
+ * @category Serializer
+ * @internal
+ */
 export class SerializerInternal {
   private readonly serializer: Serializer
 

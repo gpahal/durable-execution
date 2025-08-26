@@ -1,10 +1,11 @@
 import { InMemoryTaskExecutionsStorage } from 'durable-execution'
 
+import { waitForExitOrLogActiveHandles } from '@gpahal/std-node/process'
+
 import { runStorageBench } from '../src'
 
 async function benchInMemory() {
-  const storage = new InMemoryTaskExecutionsStorage()
-  await runStorageBench('in memory', storage)
+  await runStorageBench('in memory', () => new InMemoryTaskExecutionsStorage())
 }
 
 async function main() {
@@ -12,3 +13,5 @@ async function main() {
 }
 
 await main()
+
+waitForExitOrLogActiveHandles(5000)

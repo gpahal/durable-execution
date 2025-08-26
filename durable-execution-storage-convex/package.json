@@ -1,0 +1,77 @@
+{
+  "name": "durable-execution-storage-convex",
+  "version": "0.25.0",
+  "description": "Convex storage implementation for durable-execution",
+  "author": "Garvit Pahal <g10pahal@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpahal/durable-execution.git",
+    "directory": "durable-execution-storage-convex"
+  },
+  "homepage": "https://gpahal.github.io/durable-execution",
+  "bugs": {
+    "url": "https://github.com/gpahal/durable-execution/issues"
+  },
+  "keywords": [
+    "durable-execution",
+    "durable-tasks",
+    "durable-functions",
+    "durable-workflows",
+    "workflow-engine",
+    "workflow-execution",
+    "durable",
+    "resilient",
+    "convex",
+    "storage"
+  ],
+  "sideEffects": false,
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "@convex-dev/component-source": "./src/client/index.ts",
+      "types": "./build/client/index.d.ts",
+      "default": "./build/client/index.js"
+    },
+    "./convex.config": {
+      "@convex-dev/component-source": "./src/component/convex.config.ts",
+      "types": "./build/component/convex.config.d.ts",
+      "default": "./build/component/convex.config.js"
+    }
+  },
+  "module": "./build/client/index.js",
+  "types": "./build/client/index.d.ts",
+  "files": [
+    "package.json",
+    "src",
+    "build"
+  ],
+  "scripts": {
+    "convex": "pnpm -C ./test convex",
+    "convex-dev": "pnpm -C ./test convex dev --live-component-sources --typecheck-components",
+    "build": "premove build && tsup",
+    "clean": "premove build coverage",
+    "test": "vitest run",
+    "bench": "tsx --env-file=test/.env.local scripts/bench.ts",
+    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/client/index.ts --entryPoints src/component/convex.config.ts",
+    "lint": "eslint .",
+    "lint-fix": "eslint . --fix"
+  },
+  "peerDependencies": {
+    "convex": "catalog:dev",
+    "durable-execution": "workspace:*"
+  },
+  "dependencies": {
+    "@gpahal/std": "catalog:prod",
+    "zod": "catalog:prod"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "catalog:dev",
+    "@gpahal/std-node": "catalog:dev",
+    "convex": "catalog:dev",
+    "durable-execution": "workspace:*",
+    "durable-execution-storage-test-utils": "workspace:*",
+    "testcontainers": "catalog:dev"
+  }
+}

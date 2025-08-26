@@ -104,7 +104,7 @@ const taskB = executor.task({
   }),
 })
 
-const sequentialTask = executor.sequentialTasks('seq', taskA, taskB)
+const sequentialTask = executor.sequentialTasks('seq', [taskA, taskB])
 ```
 
 ### Parent Task Pattern

@@ -64,8 +64,11 @@ export function createSQLiteTaskExecutionsTable(tableName = 'task_executions') {
       rootExecutionId: text('root_execution_id'),
       parentTaskId: text('parent_task_id'),
       parentExecutionId: text('parent_execution_id'),
-      indexInParentChildTaskExecutions: integer('index_in_parent_child_task_executions'),
-      isFinalizeTaskOfParentTask: integer('is_finalize_task_of_parent_task', {
+      indexInParentChildren: integer('index_in_parent_children'),
+      isOnlyChildOfParent: integer('is_only_child_of_parent', {
+        mode: 'boolean',
+      }),
+      isFinalizeOfParent: integer('is_finalize_of_parent', {
         mode: 'boolean',
       }),
       taskId: text('task_id').notNull(),
@@ -73,6 +76,9 @@ export function createSQLiteTaskExecutionsTable(tableName = 'task_executions') {
       retryOptions: text('retry_options', { mode: 'json' }).$type<TaskRetryOptions>().notNull(),
       sleepMsBeforeRun: integer('sleep_ms_before_run').notNull(),
       timeoutMs: integer('timeout_ms').notNull(),
+      areChildrenSequential: integer('are_children_sequential', {
+        mode: 'boolean',
+      }).notNull(),
       input: text('input').notNull(),
       executorId: text('executor_id'),
       isSleepingTask: integer('is_sleeping_task', { mode: 'boolean' }).notNull(),
@@ -83,33 +89,28 @@ export function createSQLiteTaskExecutionsTable(tableName = 'task_executions') {
       output: text('output'),
       error: text('error', { mode: 'json' }).$type<DurableExecutionErrorStorageValue>(),
       retryAttempts: integer('retry_attempts').notNull(),
-      startAt: integer('start_at', { mode: 'timestamp' }).notNull(),
-      startedAt: integer('started_at', { mode: 'timestamp' }),
-      expiresAt: integer('expires_at', { mode: 'timestamp' }),
-      finishedAt: integer('finished_at', { mode: 'timestamp' }),
+      startAt: integer('start_at').notNull(),
+      startedAt: integer('started_at'),
+      expiresAt: integer('expires_at'),
+      finishedAt: integer('finished_at'),
       children: text('children', { mode: 'json' }).$type<Array<TaskExecutionSummary>>(),
       activeChildrenCount: integer('active_children_count').notNull(),
       onChildrenFinishedProcessingStatus: text('on_children_finished_processing_status')
         .$type<TaskExecutionOnChildrenFinishedProcessingStatus>()
         .notNull(),
-      onChildrenFinishedProcessingExpiresAt: integer('on_children_finished_processing_expires_at', {
-        mode: 'timestamp',
-      }),
+      onChildrenFinishedProcessingExpiresAt: integer('on_children_finished_processing_expires_at'),
       onChildrenFinishedProcessingFinishedAt: integer(
         'on_children_finished_processing_finished_at',
-        {
-          mode: 'timestamp',
-        },
       ),
       finalize: text('finalize', { mode: 'json' }).$type<TaskExecutionSummary>(),
       closeStatus: text('close_status').$type<TaskExecutionCloseStatus>().notNull(),
-      closeExpiresAt: integer('close_expires_at', { mode: 'timestamp' }),
-      closedAt: integer('closed_at', { mode: 'timestamp' }),
+      closeExpiresAt: integer('close_expires_at'),
+      closedAt: integer('closed_at'),
       needsPromiseCancellation: integer('needs_promise_cancellation', {
         mode: 'boolean',
       }).notNull(),
-      createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
-      updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull(),
+      createdAt: integer('created_at').notNull(),
+      updatedAt: integer('updated_at').notNull(),
     },
     (table) => [
       uniqueIndex(`ix_${tableName}_execution_id`).on(table.executionId),
@@ -296,19 +297,19 @@ class SQLiteTaskExecutionsStorageNonAtomic<
       .where(getByIdWhereCondition(this.taskExecutionsTable, executionId, filters))
   }
 
-  async updateByIdAndInsertManyIfUpdated(
+  async updateByIdAndInsertChildrenIfUpdated(
     executionId: string,
     filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
-    executionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
+    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
   ): Promise<void> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    if (executionsToInsertIfAnyUpdated.length === 0) {
+    if (childrenTaskExecutionsToInsertIfAnyUpdated.length === 0) {
       return await this.updateById(executionId, filters, update)
     }
 
-    const rowsToInsert = executionsToInsertIfAnyUpdated.map((execution) =>
+    const rowsToInsert = childrenTaskExecutionsToInsertIfAnyUpdated.map((execution) =>
       taskExecutionStorageValueToDBValue(execution),
     )
     await this.db.transaction(async (tx) => {
@@ -326,9 +327,9 @@ class SQLiteTaskExecutionsStorageNonAtomic<
 
   async updateByStatusAndStartAtLessThanAndReturn(
     status: TaskExecutionStatus,
-    startAtLessThan: Date,
+    startAtLessThan: number,
     update: TaskExecutionStorageUpdate,
-    updateExpiresAtWithStartedAt: Date,
+    updateExpiresAtWithStartedAt: number,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
@@ -351,7 +352,7 @@ class SQLiteTaskExecutionsStorageNonAtomic<
           .update(this.taskExecutionsTable)
           .set({
             ...dbUpdate,
-            expiresAt: sql`${updateExpiresAtWithStartedAt.getTime()} + timeout_ms`,
+            expiresAt: sql`(${updateExpiresAtWithStartedAt} + timeout_ms)`,
           })
           .where(
             inArray(
@@ -367,10 +368,9 @@ class SQLiteTaskExecutionsStorageNonAtomic<
     )
   }
 
-  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
+  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
     status: TaskExecutionStatus,
     onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
-    activeChildrenCountLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
   ): Promise<Array<TaskExecutionStorageValue>> {
@@ -387,7 +387,7 @@ class SQLiteTaskExecutionsStorageNonAtomic<
               this.taskExecutionsTable.onChildrenFinishedProcessingStatus,
               onChildrenFinishedProcessingStatus,
             ),
-            lt(this.taskExecutionsTable.activeChildrenCount, activeChildrenCountLessThan),
+            eq(this.taskExecutionsTable.activeChildrenCount, 0),
           ),
         )
         .orderBy(asc(this.taskExecutionsTable.updatedAt))
@@ -440,17 +440,17 @@ class SQLiteTaskExecutionsStorageNonAtomic<
     return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+  async updateByIsSleepingTaskAndExpiresAtLessThan(
     isSleepingTask: boolean,
-    expiresAtLessThan: Date,
+    expiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    const updatedRows = await this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const rows = await tx
-        .select()
+        .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
         .where(
           and(
@@ -472,21 +472,20 @@ class SQLiteTaskExecutionsStorageNonAtomic<
             ),
           )
       }
-      return rows
+      return rows.length
     })
-    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
-    onChildrenFinishedProcessingExpiresAtLessThan: Date,
+  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
+    onChildrenFinishedProcessingExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    const updatedRows = await this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const rows = await tx
-        .select()
+        .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
         .where(
           lt(
@@ -508,21 +507,20 @@ class SQLiteTaskExecutionsStorageNonAtomic<
             ),
           )
       }
-      return rows
+      return rows.length
     })
-    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByCloseExpiresAtLessThanAndReturn(
-    closeExpiresAtLessThan: Date,
+  async updateByCloseExpiresAtLessThan(
+    closeExpiresAtLessThan: number,
     update: TaskExecutionStorageUpdate,
     limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  ): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    const updatedRows = await this.db.transaction(async (tx) => {
+    return await this.db.transaction(async (tx) => {
       const rows = await tx
-        .select()
+        .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
         .where(lt(this.taskExecutionsTable.closeExpiresAt, closeExpiresAtLessThan))
         .orderBy(asc(this.taskExecutionsTable.closeExpiresAt))
@@ -539,9 +537,8 @@ class SQLiteTaskExecutionsStorageNonAtomic<
             ),
           )
       }
-      return rows
+      return rows.length
     })
-    return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
   async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(

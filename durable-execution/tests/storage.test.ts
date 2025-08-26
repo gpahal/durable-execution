@@ -27,7 +27,7 @@ describe('validateStorageMaxRetryAttempts', () => {
 
 describe('getTaskExecutionStorageUpdate', () => {
   it('should handle empty update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {})
     expect(update.unsetExecutorId).toBeUndefined()
     expect(update.isFinished).toBeUndefined()
@@ -41,7 +41,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle ready update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'ready',
     })
@@ -57,7 +57,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle running update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'running',
     })
@@ -73,7 +73,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle failed update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'failed',
     })
@@ -89,7 +89,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle timed_out update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'timed_out',
     })
@@ -105,7 +105,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle waiting_for_children update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'waiting_for_children',
     })
@@ -121,7 +121,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle waiting_for_finalize update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'waiting_for_finalize',
     })
@@ -137,7 +137,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle finalize_failed update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'finalize_failed',
     })
@@ -153,7 +153,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle completed update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'completed',
     })
@@ -169,7 +169,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle cancelled update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'cancelled',
     })
@@ -185,7 +185,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle on_children_finished_processing_status idle update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       onChildrenFinishedProcessingStatus: 'idle',
     })
@@ -201,7 +201,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle on_children_finished_processing_status processing update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       onChildrenFinishedProcessingStatus: 'processing',
     })
@@ -217,7 +217,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle on_children_finished_processing_status processed update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       onChildrenFinishedProcessingStatus: 'processed',
     })
@@ -233,7 +233,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle close_status idle update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       closeStatus: 'idle',
     })
@@ -249,7 +249,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle close_status ready update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       closeStatus: 'ready',
     })
@@ -265,7 +265,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle close_status closing update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       closeStatus: 'closing',
     })
@@ -281,7 +281,7 @@ describe('getTaskExecutionStorageUpdate', () => {
   })
 
   it('should handle close_status closed update', () => {
-    const now = new Date()
+    const now = Date.now()
     const update = getTaskExecutionStorageUpdate(now, {
       closeStatus: 'closed',
     })
@@ -298,11 +298,13 @@ describe('getTaskExecutionStorageUpdate', () => {
 })
 
 describe('convertTaskExecutionStorageValueToTaskExecution', () => {
-  let now: Date
+  let now: number
+  let nowDate: Date
   let serializer: SerializerInternal
 
   beforeEach(() => {
-    now = new Date()
+    now = Date.now()
+    nowDate = new Date(now)
     serializer = new SerializerInternal(createSuperjsonSerializer())
   })
 
@@ -315,8 +317,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       parent: {
         taskId: 'parentTaskId',
         executionId: 'parentExecutionId',
-        indexInParentChildTaskExecutions: 0,
-        isFinalizeTaskOfParentTask: false,
+        indexInParentChildren: 0,
+        isOnlyChildOfParent: false,
+        isFinalizeOfParent: false,
       },
       taskId: 'taskId',
       executionId: 'executionId',
@@ -326,6 +329,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
+      areChildrenSequential: false,
       input: serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'ready',
@@ -351,8 +355,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.parent).toEqual({
       taskId: 'parentTaskId',
       executionId: 'parentExecutionId',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
+      indexInParentChildren: 0,
+      isOnlyChildOfParent: false,
+      isFinalizeOfParent: false,
     })
     expect(taskExecution.taskId).toBe('taskId')
     expect(taskExecution.executionId).toBe('executionId')
@@ -366,8 +371,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     assert(taskExecution.status === 'ready')
     expect(taskExecution.error).toBeUndefined()
     expect(taskExecution.retryAttempts).toBe(0)
-    expect(taskExecution.createdAt).toBe(now)
-    expect(taskExecution.updatedAt).toBe(now)
+    expect(taskExecution.createdAt).toStrictEqual(nowDate)
+    expect(taskExecution.updatedAt).toStrictEqual(nowDate)
   })
 
   it('should handle running execution', () => {
@@ -379,8 +384,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       parent: {
         taskId: 'parentTaskId',
         executionId: 'parentExecutionId',
-        indexInParentChildTaskExecutions: 0,
-        isFinalizeTaskOfParentTask: false,
+        indexInParentChildren: 0,
+        isOnlyChildOfParent: false,
+        isFinalizeOfParent: false,
       },
       taskId: 'taskId',
       executionId: 'executionId',
@@ -390,6 +396,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
+      areChildrenSequential: false,
       input: serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'running',
@@ -418,8 +425,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.parent).toEqual({
       taskId: 'parentTaskId',
       executionId: 'parentExecutionId',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
+      indexInParentChildren: 0,
+      isOnlyChildOfParent: false,
+      isFinalizeOfParent: false,
     })
     expect(taskExecution.taskId).toBe('taskId')
     expect(taskExecution.executionId).toBe('executionId')
@@ -433,10 +441,10 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     assert(taskExecution.status === 'running')
     expect(taskExecution.error).toBeUndefined()
     expect(taskExecution.retryAttempts).toBe(0)
-    expect(taskExecution.createdAt).toBe(now)
-    expect(taskExecution.updatedAt).toBe(now)
-    expect(taskExecution.startedAt).toBe(now)
-    expect(taskExecution.expiresAt).toBe(now)
+    expect(taskExecution.createdAt).toStrictEqual(nowDate)
+    expect(taskExecution.updatedAt).toStrictEqual(nowDate)
+    expect(taskExecution.startedAt).toStrictEqual(nowDate)
+    expect(taskExecution.expiresAt).toStrictEqual(nowDate)
   })
 
   it('should handle failed execution', () => {
@@ -448,8 +456,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       parent: {
         taskId: 'parentTaskId',
         executionId: 'parentExecutionId',
-        indexInParentChildTaskExecutions: 0,
-        isFinalizeTaskOfParentTask: false,
+        indexInParentChildren: 0,
+        isOnlyChildOfParent: false,
+        isFinalizeOfParent: false,
       },
       taskId: 'taskId',
       executionId: 'executionId',
@@ -459,6 +468,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
+      areChildrenSequential: false,
       input: serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'failed',
@@ -494,8 +504,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.parent).toEqual({
       taskId: 'parentTaskId',
       executionId: 'parentExecutionId',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
+      indexInParentChildren: 0,
+      isOnlyChildOfParent: false,
+      isFinalizeOfParent: false,
     })
     expect(taskExecution.taskId).toBe('taskId')
     expect(taskExecution.executionId).toBe('executionId')
@@ -514,11 +525,11 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       isInternal: false,
     })
     expect(taskExecution.retryAttempts).toBe(0)
-    expect(taskExecution.createdAt).toBe(now)
-    expect(taskExecution.updatedAt).toBe(now)
-    expect(taskExecution.startedAt).toBe(now)
-    expect(taskExecution.expiresAt).toBe(now)
-    expect(taskExecution.finishedAt).toBe(now)
+    expect(taskExecution.createdAt).toStrictEqual(nowDate)
+    expect(taskExecution.updatedAt).toStrictEqual(nowDate)
+    expect(taskExecution.startedAt).toStrictEqual(nowDate)
+    expect(taskExecution.expiresAt).toStrictEqual(nowDate)
+    expect(taskExecution.finishedAt).toStrictEqual(nowDate)
   })
 
   it('should handle failed execution', () => {
@@ -530,8 +541,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       parent: {
         taskId: 'parentTaskId',
         executionId: 'parentExecutionId',
-        indexInParentChildTaskExecutions: 0,
-        isFinalizeTaskOfParentTask: false,
+        indexInParentChildren: 0,
+        isOnlyChildOfParent: false,
+        isFinalizeOfParent: false,
       },
       taskId: 'taskId',
       executionId: 'executionId',
@@ -541,6 +553,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
+      areChildrenSequential: false,
       input: serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'timed_out',
@@ -576,8 +589,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.parent).toEqual({
       taskId: 'parentTaskId',
       executionId: 'parentExecutionId',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
+      indexInParentChildren: 0,
+      isOnlyChildOfParent: false,
+      isFinalizeOfParent: false,
     })
     expect(taskExecution.taskId).toBe('taskId')
     expect(taskExecution.executionId).toBe('executionId')
@@ -596,11 +610,11 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       isInternal: false,
     })
     expect(taskExecution.retryAttempts).toBe(0)
-    expect(taskExecution.createdAt).toBe(now)
-    expect(taskExecution.updatedAt).toBe(now)
-    expect(taskExecution.startedAt).toBe(now)
-    expect(taskExecution.expiresAt).toBe(now)
-    expect(taskExecution.finishedAt).toBe(now)
+    expect(taskExecution.createdAt).toStrictEqual(nowDate)
+    expect(taskExecution.updatedAt).toStrictEqual(nowDate)
+    expect(taskExecution.startedAt).toStrictEqual(nowDate)
+    expect(taskExecution.expiresAt).toStrictEqual(nowDate)
+    expect(taskExecution.finishedAt).toStrictEqual(nowDate)
   })
 
   it('should handle waiting_for_children execution', () => {
@@ -612,8 +626,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       parent: {
         taskId: 'parentTaskId',
         executionId: 'parentExecutionId',
-        indexInParentChildTaskExecutions: 0,
-        isFinalizeTaskOfParentTask: false,
+        indexInParentChildren: 0,
+        isOnlyChildOfParent: false,
+        isFinalizeOfParent: false,
       },
       taskId: 'taskId',
       executionId: 'executionId',
@@ -623,6 +638,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
+      areChildrenSequential: false,
       input: serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'waiting_for_children',
@@ -657,8 +673,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.parent).toEqual({
       taskId: 'parentTaskId',
       executionId: 'parentExecutionId',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
+      indexInParentChildren: 0,
+      isOnlyChildOfParent: false,
+      isFinalizeOfParent: false,
     })
     expect(taskExecution.taskId).toBe('taskId')
     expect(taskExecution.executionId).toBe('executionId')
@@ -671,10 +688,10 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.status).toBe('waiting_for_children')
     assert(taskExecution.status === 'waiting_for_children')
     expect(taskExecution.retryAttempts).toBe(0)
-    expect(taskExecution.createdAt).toBe(now)
-    expect(taskExecution.updatedAt).toBe(now)
-    expect(taskExecution.startedAt).toBe(now)
-    expect(taskExecution.expiresAt).toBe(now)
+    expect(taskExecution.createdAt).toStrictEqual(nowDate)
+    expect(taskExecution.updatedAt).toStrictEqual(nowDate)
+    expect(taskExecution.startedAt).toStrictEqual(nowDate)
+    expect(taskExecution.expiresAt).toStrictEqual(nowDate)
     expect(taskExecution.children).toEqual([
       {
         taskId: 'childTaskId',
@@ -693,8 +710,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       parent: {
         taskId: 'parentTaskId',
         executionId: 'parentExecutionId',
-        indexInParentChildTaskExecutions: 0,
-        isFinalizeTaskOfParentTask: false,
+        indexInParentChildren: 0,
+        isOnlyChildOfParent: false,
+        isFinalizeOfParent: false,
       },
       taskId: 'taskId',
       executionId: 'executionId',
@@ -704,6 +722,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
+      areChildrenSequential: false,
       input: serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'waiting_for_finalize',
@@ -742,8 +761,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.parent).toEqual({
       taskId: 'parentTaskId',
       executionId: 'parentExecutionId',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
+      indexInParentChildren: 0,
+      isOnlyChildOfParent: false,
+      isFinalizeOfParent: false,
     })
     expect(taskExecution.taskId).toBe('taskId')
     expect(taskExecution.executionId).toBe('executionId')
@@ -756,10 +776,10 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.status).toBe('waiting_for_finalize')
     assert(taskExecution.status === 'waiting_for_finalize')
     expect(taskExecution.retryAttempts).toBe(0)
-    expect(taskExecution.createdAt).toBe(now)
-    expect(taskExecution.updatedAt).toBe(now)
-    expect(taskExecution.startedAt).toBe(now)
-    expect(taskExecution.expiresAt).toBe(now)
+    expect(taskExecution.createdAt).toStrictEqual(nowDate)
+    expect(taskExecution.updatedAt).toStrictEqual(nowDate)
+    expect(taskExecution.startedAt).toStrictEqual(nowDate)
+    expect(taskExecution.expiresAt).toStrictEqual(nowDate)
     expect(taskExecution.children).toEqual([
       {
         taskId: 'childTaskId',
@@ -782,8 +802,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       parent: {
         taskId: 'parentTaskId',
         executionId: 'parentExecutionId',
-        indexInParentChildTaskExecutions: 0,
-        isFinalizeTaskOfParentTask: false,
+        indexInParentChildren: 0,
+        isOnlyChildOfParent: false,
+        isFinalizeOfParent: false,
       },
       taskId: 'taskId',
       executionId: 'executionId',
@@ -793,6 +814,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
+      areChildrenSequential: false,
       input: serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'finalize_failed',
@@ -838,8 +860,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.parent).toEqual({
       taskId: 'parentTaskId',
       executionId: 'parentExecutionId',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
+      indexInParentChildren: 0,
+      isOnlyChildOfParent: false,
+      isFinalizeOfParent: false,
     })
     expect(taskExecution.taskId).toBe('taskId')
     expect(taskExecution.executionId).toBe('executionId')
@@ -858,10 +881,10 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       isInternal: false,
     })
     expect(taskExecution.retryAttempts).toBe(0)
-    expect(taskExecution.createdAt).toBe(now)
-    expect(taskExecution.updatedAt).toBe(now)
-    expect(taskExecution.startedAt).toBe(now)
-    expect(taskExecution.expiresAt).toBe(now)
+    expect(taskExecution.createdAt).toStrictEqual(nowDate)
+    expect(taskExecution.updatedAt).toStrictEqual(nowDate)
+    expect(taskExecution.startedAt).toStrictEqual(nowDate)
+    expect(taskExecution.expiresAt).toStrictEqual(nowDate)
     expect(taskExecution.children).toEqual([
       {
         taskId: 'childTaskId',
@@ -873,7 +896,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       taskId: 'finalizeTaskId',
       executionId: 'finalizeExecutionId',
     })
-    expect(taskExecution.finishedAt).toBe(now)
+    expect(taskExecution.finishedAt).toStrictEqual(nowDate)
   })
 
   it('should handle completed execution', () => {
@@ -885,8 +908,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       parent: {
         taskId: 'parentTaskId',
         executionId: 'parentExecutionId',
-        indexInParentChildTaskExecutions: 0,
-        isFinalizeTaskOfParentTask: false,
+        indexInParentChildren: 0,
+        isOnlyChildOfParent: false,
+        isFinalizeOfParent: false,
       },
       taskId: 'taskId',
       executionId: 'executionId',
@@ -896,6 +920,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
+      areChildrenSequential: false,
       input: serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'completed',
@@ -936,8 +961,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.parent).toEqual({
       taskId: 'parentTaskId',
       executionId: 'parentExecutionId',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
+      indexInParentChildren: 0,
+      isOnlyChildOfParent: false,
+      isFinalizeOfParent: false,
     })
     expect(taskExecution.taskId).toBe('taskId')
     expect(taskExecution.executionId).toBe('executionId')
@@ -950,10 +976,10 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.status).toBe('completed')
     assert(taskExecution.status === 'completed')
     expect(taskExecution.retryAttempts).toBe(0)
-    expect(taskExecution.createdAt).toBe(now)
-    expect(taskExecution.updatedAt).toBe(now)
-    expect(taskExecution.startedAt).toBe(now)
-    expect(taskExecution.expiresAt).toBe(now)
+    expect(taskExecution.createdAt).toStrictEqual(nowDate)
+    expect(taskExecution.updatedAt).toStrictEqual(nowDate)
+    expect(taskExecution.startedAt).toStrictEqual(nowDate)
+    expect(taskExecution.expiresAt).toStrictEqual(nowDate)
     expect(taskExecution.children).toEqual([
       {
         taskId: 'childTaskId',
@@ -966,7 +992,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       executionId: 'finalizeExecutionId',
     })
     expect(taskExecution.output).toEqual({ output_name: 'test_output' })
-    expect(taskExecution.finishedAt).toBe(now)
+    expect(taskExecution.finishedAt).toStrictEqual(nowDate)
   })
 
   it('should handle cancelled execution', () => {
@@ -978,8 +1004,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       parent: {
         taskId: 'parentTaskId',
         executionId: 'parentExecutionId',
-        indexInParentChildTaskExecutions: 0,
-        isFinalizeTaskOfParentTask: false,
+        indexInParentChildren: 0,
+        isOnlyChildOfParent: false,
+        isFinalizeOfParent: false,
       },
       taskId: 'taskId',
       executionId: 'executionId',
@@ -989,6 +1016,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
+      areChildrenSequential: false,
       input: serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'cancelled',
@@ -1034,8 +1062,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.parent).toEqual({
       taskId: 'parentTaskId',
       executionId: 'parentExecutionId',
-      indexInParentChildTaskExecutions: 0,
-      isFinalizeTaskOfParentTask: false,
+      indexInParentChildren: 0,
+      isOnlyChildOfParent: false,
+      isFinalizeOfParent: false,
     })
     expect(taskExecution.taskId).toBe('taskId')
     expect(taskExecution.executionId).toBe('executionId')
@@ -1054,10 +1083,10 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       isInternal: false,
     })
     expect(taskExecution.retryAttempts).toBe(0)
-    expect(taskExecution.createdAt).toBe(now)
-    expect(taskExecution.updatedAt).toBe(now)
-    expect(taskExecution.startedAt).toBe(now)
-    expect(taskExecution.expiresAt).toBe(now)
+    expect(taskExecution.createdAt).toStrictEqual(nowDate)
+    expect(taskExecution.updatedAt).toStrictEqual(nowDate)
+    expect(taskExecution.startedAt).toStrictEqual(nowDate)
+    expect(taskExecution.expiresAt).toStrictEqual(nowDate)
     expect(taskExecution.children).toEqual([
       {
         taskId: 'childTaskId',
@@ -1069,7 +1098,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       taskId: 'finalizeTaskId',
       executionId: 'finalizeExecutionId',
     })
-    expect(taskExecution.finishedAt).toBe(now)
+    expect(taskExecution.finishedAt).toStrictEqual(nowDate)
   })
 
   it('should handle invalid execution status', () => {
@@ -1081,8 +1110,9 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       parent: {
         taskId: 'parentTaskId',
         executionId: 'parentExecutionId',
-        indexInParentChildTaskExecutions: 0,
-        isFinalizeTaskOfParentTask: false,
+        indexInParentChildren: 0,
+        isOnlyChildOfParent: false,
+        isFinalizeOfParent: false,
       },
       taskId: 'taskId',
       executionId: 'executionId',
@@ -1092,6 +1122,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
+      areChildrenSequential: false,
       input: serializer.serialize({ name: 'test' }),
       // @ts-expect-error - Testing invalid input
       status: 'invalid_status',
@@ -1129,14 +1160,14 @@ describe('TaskExecutionsStorageWithMutex', () => {
       updateById: () => {
         executionCount++
       },
-      updateByIdAndInsertManyIfUpdated: () => {
+      updateByIdAndInsertChildrenIfUpdated: () => {
         executionCount++
       },
       updateByStatusAndStartAtLessThanAndReturn: () => {
         executionCount++
         return []
       },
-      updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn:
+      updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn:
         () => {
           executionCount++
           return []
@@ -1145,17 +1176,17 @@ describe('TaskExecutionsStorageWithMutex', () => {
         executionCount++
         return []
       },
-      updateByIsSleepingTaskAndExpiresAtLessThanAndReturn: () => {
+      updateByIsSleepingTaskAndExpiresAtLessThan: () => {
         executionCount++
-        return []
+        return 0
       },
-      updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn: () => {
+      updateByOnChildrenFinishedProcessingExpiresAtLessThan: () => {
         executionCount++
-        return []
+        return 0
       },
-      updateByCloseExpiresAtLessThanAndReturn: () => {
+      updateByCloseExpiresAtLessThan: () => {
         executionCount++
-        return []
+        return 0
       },
       updateByExecutorIdAndNeedsPromiseCancellationAndReturn: () => {
         executionCount++
@@ -1180,7 +1211,6 @@ describe('TaskExecutionsStorageWithMutex', () => {
       },
     } satisfies TaskExecutionsStorage
 
-    const now = new Date()
     const storage = new TaskExecutionsStorageWithMutex(testStorage)
 
     await storage.insertMany([])
@@ -1192,16 +1222,17 @@ describe('TaskExecutionsStorageWithMutex', () => {
     await storage.getBySleepingTaskUniqueId('sleepingTaskUniqueId')
     expect(executionCount).toBe(3)
 
+    const now = Date.now()
     await storage.updateById(
       'executionId',
       {},
       {
-        updatedAt: new Date(),
+        updatedAt: now,
       },
     )
     expect(executionCount).toBe(4)
 
-    await storage.updateByIdAndInsertManyIfUpdated(
+    await storage.updateByIdAndInsertChildrenIfUpdated(
       'executionId',
       {},
       {
@@ -1213,19 +1244,18 @@ describe('TaskExecutionsStorageWithMutex', () => {
 
     await storage.updateByStatusAndStartAtLessThanAndReturn(
       'completed',
-      new Date(),
+      now,
       {
         updatedAt: now,
       },
-      new Date(),
+      now,
       0,
     )
     expect(executionCount).toBe(6)
 
-    await storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountLessThanAndReturn(
+    await storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
       'completed',
       'idle',
-      1,
       {
         updatedAt: now,
       },
@@ -1242,9 +1272,9 @@ describe('TaskExecutionsStorageWithMutex', () => {
     )
     expect(executionCount).toBe(8)
 
-    await storage.updateByIsSleepingTaskAndExpiresAtLessThanAndReturn(
+    await storage.updateByIsSleepingTaskAndExpiresAtLessThan(
       false,
-      new Date(),
+      now,
       {
         updatedAt: now,
       },
@@ -1252,8 +1282,8 @@ describe('TaskExecutionsStorageWithMutex', () => {
     )
     expect(executionCount).toBe(9)
 
-    await storage.updateByOnChildrenFinishedProcessingExpiresAtLessThanAndReturn(
-      new Date(),
+    await storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
+      now,
       {
         updatedAt: now,
       },
@@ -1261,8 +1291,8 @@ describe('TaskExecutionsStorageWithMutex', () => {
     )
     expect(executionCount).toBe(10)
 
-    await storage.updateByCloseExpiresAtLessThanAndReturn(
-      new Date(),
+    await storage.updateByCloseExpiresAtLessThan(
+      now,
       {
         updatedAt: now,
       },

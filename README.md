@@ -18,6 +18,8 @@ The main package is [durable-execution](durable-execution). The documentation is
   validating durable-execution storage implementations
 - [durable-execution-storage-drizzle](durable-execution-storage-drizzle): A storage implementation for
   durable-execution using Drizzle ORM
+- [durable-execution-storage-convex](durable-execution-storage-convex): A storage implementation for
+  durable-execution using Convex
 
 ## License
 

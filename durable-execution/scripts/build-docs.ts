@@ -11,7 +11,7 @@ const readmePath = path.join(rootDir, 'README.md')
 const docsDir = path.join(rootDir, 'docs')
 
 async function buildDocs() {
-  console.log('Building docs...')
+  console.log('Building docs')
 
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'durable-execution-docs-'))
   try {
