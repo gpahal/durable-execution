@@ -41,8 +41,6 @@ This package provides a **production-ready Convex database storage implementatio
 
 - `ConvexTaskExecutionsStorage`: Main storage class implementing `TaskExecutionsStorage` interface
 - `convertDurableExecutionStorageComponentToPublicApiImpl()`: Creates auth-protected public API
-- Background process batching for efficient Convex API calls
-- Per-second call statistics tracking for monitoring
 
 **Component Definition** (`src/component/`):
 
@@ -58,13 +56,6 @@ This package provides a **production-ready Convex database storage implementatio
 
 ### Key Features
 
-**Background Process Batching**: Automatically batches multiple operations to reduce Convex API calls:
-
-- `insertMany`: Batches up to 50 executions per call
-- `getById`: Batches up to 100 reads per call
-- `updateById`: Batches up to 50 updates per call
-- Configurable batch sizes and sleep intervals
-
 **Auth Protection**: Public API secured with auth secret:
 
 ```ts
@@ -73,12 +64,6 @@ convertDurableExecutionStorageComponentToPublicApiImpl(
   'YOUR_AUTH_SECRET'
 )
 ```
-
-**Performance Monitoring**:
-
-- Tracks per-second Convex API calls
-- Provides statistics (total, mean, median, min, max)
-- Helps optimize batch sizes and intervals
 
 ### Database Schema
 
@@ -118,7 +103,7 @@ app.use(taskExecutionsStorage)
 ```ts
 export const {
   insertMany,
-  getById,
+  getManyById,
   // ... all the public API methods
 } =
   convertDurableExecutionStorageComponentToPublicApiImpl(
@@ -135,7 +120,6 @@ const storage = new ConvexTaskExecutionsStorage(
   'AUTH_SECRET',
   api.taskExecutionsStorage
 )
-storage.startBackgroundProcesses()
 ```
 
 ### Testing Approach
@@ -143,7 +127,6 @@ storage.startBackgroundProcesses()
 Tests verify:
 
 - Complete storage interface implementation
-- Background process batching efficiency
 - Auth secret protection
 - Concurrent access patterns
 - Performance under load
@@ -155,24 +138,9 @@ Test setup uses:
 - `runStorageTest()` from test-utils for comprehensive validation
 - Enable test mode for `deleteAll()` functionality
 
-### Performance Optimization
-
-**Batching Configuration**:
-
-- Adjust batch sizes based on workload
-- Tune sleep intervals for latency vs API calls trade-off
-- Monitor per-second call statistics
-
-**Background Processes**:
-
-- Run separate processes for different operation types
-- Parallel batch processing for improved throughput
-- Graceful shutdown with request completion
-
 ### Important Conventions
 
 - All public APIs exported through `src/client/index.ts`
 - Component exports through `src/component/convex.config.ts`
 - Use auth secrets for production deployments
 - Enable test mode only in development/testing
-- Monitor Convex API usage for cost optimization

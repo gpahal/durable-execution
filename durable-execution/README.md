@@ -588,7 +588,10 @@ const resilientParentTask = executor.parentTask({
 //   parentOutput: 'Hello from parent task, world!',
 //   successfulCount: 1,
 //   totalCount: 2,
-//   results: [{ index: 0, success: true, result: 'Hello from task A, world!' }, { index: 1, success: false, result: 'Failed' }],
+//   results: [
+//     { index: 0, success: true, result: 'Hello from task A, world!' },
+//     { index: 1, success: false, result: 'Failed' }
+//   ],
 // }
 ```
 
@@ -1282,7 +1285,10 @@ const childExecution = await executor.wakeupSleepingTaskExecution(
 Use persistent storage in production.
 
 ```ts
-import { createPgTaskExecutionsTable, createPgTaskExecutionsStorage } from 'durable-execution-storage-drizzle'
+import {
+  createPgTaskExecutionsTable,
+  createPgTaskExecutionsStorage
+} from 'durable-execution-storage-drizzle'
 import { drizzle } from 'drizzle-orm/node-postgres'
 
 const db = drizzle(process.env.DATABASE_URL!)

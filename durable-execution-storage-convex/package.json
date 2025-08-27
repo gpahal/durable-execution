@@ -1,6 +1,6 @@
 {
   "name": "durable-execution-storage-convex",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "description": "Convex storage implementation for durable-execution",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",

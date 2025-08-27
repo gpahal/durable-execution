@@ -72,7 +72,7 @@ This is a TypeScript monorepo for a **durable execution engine** - a system that
 - **Polling Tasks**: Tasks that repeatedly check for a condition until met or timed out
 - **Client Tasks**: Type-safe remote execution via `DurableExecutorClient`
 
-**Storage Layer**: Abstract `TaskExecutionsStorage` interface requiring ACID transactions. Production uses Drizzle ORM implementations (PostgreSQL/MySQL/SQLite), testing uses `InMemoryTaskExecutionsStorage`.
+**Storage Layer**: Abstract `TaskExecutionsStorage` interface requiring ACID transactions. Production uses Drizzle ORM implementations (PostgreSQL/MySQL/SQLite), testing uses `InMemoryTaskExecutionsStorage`. For storage implementations that don't support batch operations natively, use `TaskExecutionsStorageWithBatching` wrapper to convert individual operations into efficient batch requests (DataLoader pattern). The executor internally uses `TaskExecutionsStorageInternal` with `BatchRequester` to optimize API calls by batching multiple operations when `enableBatching` is enabled.
 
 **Execution Statuses**: Tasks progress through `ready` → `running` → `completed`/`failed`/`timed_out`/`cancelled`. Parent tasks include `waiting_for_children` → `waiting_for_finalize` states. Sleeping tasks are enqueued directly in `running` state and wait until woken up externally.
 
@@ -212,7 +212,7 @@ try {
 
 **durable-execution-storage-drizzle**: Requires peer dependencies `drizzle-orm` and `durable-execution`. Database implementations in separate files (`pg.ts`, `mysql.ts`, `sqlite.ts`) with shared logic in `common.ts`.
 
-**durable-execution-storage-convex**: Requires peer dependencies `convex` and `durable-execution`. Uses Convex components with auth-protected public API. Includes background process batching for efficient API calls.
+**durable-execution-storage-convex**: Requires peer dependencies `convex` and `durable-execution`. Uses Convex components with auth-protected public API.
 
 **durable-execution-storage-test-utils**: Provides `runStorageTest()` function for comprehensive storage validation. Includes utilities for temporary files and directories with automatic cleanup.
 

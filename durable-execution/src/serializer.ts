@@ -118,7 +118,7 @@ export class SerializerInternal {
   serialize<T>(value: T, maxSerializedDataSize?: number): string {
     try {
       const result = this.serializer.serialize(value)
-      if (maxSerializedDataSize == null) {
+      if (maxSerializedDataSize == null || result.length * 4 <= maxSerializedDataSize) {
         return result
       }
 

@@ -1,12 +1,14 @@
 import { createSuperjsonSerializer, SerializerInternal } from '../src/serializer'
 import {
   convertTaskExecutionStorageValueToTaskExecution,
-  getTaskExecutionStorageUpdate,
   TaskExecutionsStorageWithMutex,
-  validateStorageMaxRetryAttempts,
   type TaskExecutionsStorage,
   type TaskExecutionStorageValue,
 } from '../src/storage'
+import {
+  getTaskExecutionStorageUpdate,
+  validateStorageMaxRetryAttempts,
+} from '../src/storage-internal'
 
 describe('validateStorageMaxRetryAttempts', () => {
   it('should handle valid max retry attempts', () => {
@@ -1149,18 +1151,18 @@ describe('TaskExecutionsStorageWithMutex', () => {
       insertMany: () => {
         executionCount++
       },
-      getById: () => {
+      getManyById: () => {
         executionCount++
-        return undefined
+        return []
       },
-      getBySleepingTaskUniqueId: () => {
+      getManyBySleepingTaskUniqueId: () => {
         executionCount++
-        return undefined
+        return []
       },
-      updateById: () => {
+      updateManyById: () => {
         executionCount++
       },
-      updateByIdAndInsertChildrenIfUpdated: () => {
+      updateManyByIdAndInsertChildrenIfUpdated: () => {
         executionCount++
       },
       updateByStatusAndStartAtLessThanAndReturn: () => {
@@ -1192,11 +1194,11 @@ describe('TaskExecutionsStorageWithMutex', () => {
         executionCount++
         return []
       },
-      getByParentExecutionId: () => {
+      getManyByParentExecutionId: () => {
         executionCount++
         return []
       },
-      updateByParentExecutionIdAndIsFinished: () => {
+      updateManyByParentExecutionIdAndIsFinished: () => {
         executionCount++
       },
       updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus: () => {
@@ -1216,30 +1218,34 @@ describe('TaskExecutionsStorageWithMutex', () => {
     await storage.insertMany([])
     expect(executionCount).toBe(1)
 
-    await storage.getById('executionId', {})
+    await storage.getManyById([{ executionId: 'executionId', filters: {} }])
     expect(executionCount).toBe(2)
 
-    await storage.getBySleepingTaskUniqueId('sleepingTaskUniqueId')
+    await storage.getManyBySleepingTaskUniqueId([{ sleepingTaskUniqueId: 'sleepingTaskUniqueId' }])
     expect(executionCount).toBe(3)
 
     const now = Date.now()
-    await storage.updateById(
-      'executionId',
-      {},
+    await storage.updateManyById([
       {
-        updatedAt: now,
+        executionId: 'executionId',
+        filters: {},
+        update: {
+          updatedAt: now,
+        },
       },
-    )
+    ])
     expect(executionCount).toBe(4)
 
-    await storage.updateByIdAndInsertChildrenIfUpdated(
-      'executionId',
-      {},
+    await storage.updateManyByIdAndInsertChildrenIfUpdated([
       {
-        updatedAt: now,
+        executionId: 'executionId',
+        filters: {},
+        update: {
+          updatedAt: now,
+        },
+        childrenTaskExecutionsToInsertIfAnyUpdated: [],
       },
-      [],
-    )
+    ])
     expect(executionCount).toBe(5)
 
     await storage.updateByStatusAndStartAtLessThanAndReturn(
@@ -1310,12 +1316,18 @@ describe('TaskExecutionsStorageWithMutex', () => {
     )
     expect(executionCount).toBe(12)
 
-    await storage.getByParentExecutionId('executionId')
+    await storage.getManyByParentExecutionId([{ parentExecutionId: 'executionId' }])
     expect(executionCount).toBe(13)
 
-    await storage.updateByParentExecutionIdAndIsFinished('executionId', true, {
-      updatedAt: now,
-    })
+    await storage.updateManyByParentExecutionIdAndIsFinished([
+      {
+        parentExecutionId: 'executionId',
+        isFinished: true,
+        update: {
+          updatedAt: now,
+        },
+      },
+    ])
     expect(executionCount).toBe(14)
 
     await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(

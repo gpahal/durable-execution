@@ -4,11 +4,9 @@ import { components } from './_generated/api'
 
 export const {
   insertMany,
-  getById,
   getManyById,
-  getBySleepingTaskUniqueId,
+  getManyBySleepingTaskUniqueId,
   updateManyById,
-  updateByIdAndInsertChildrenIfUpdated,
   updateManyByIdAndInsertChildrenIfUpdated,
   updateByStatusAndStartAtLessThanAndReturn,
   updateByStatusAndOCFPStatusAndACCZeroAndReturn,
@@ -17,8 +15,8 @@ export const {
   updateByOCFPExpiresAt,
   updateByCloseExpiresAt,
   updateByExecutorIdAndNPCAndReturn,
-  getByParentExecutionId,
-  updateByParentExecutionIdAndIsFinished,
+  getManyByParentExecutionId,
+  updateManyByParentExecutionIdAndIsFinished,
   updateAndDecrementParentACCByIsFinishedAndCloseStatus,
   deleteById,
   deleteAll,

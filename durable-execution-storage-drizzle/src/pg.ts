@@ -11,17 +11,19 @@ import {
   type PgDatabase,
   type PgQueryResultHKT,
 } from 'drizzle-orm/pg-core'
-import type {
-  DurableExecutionErrorStorageValue,
-  TaskExecutionCloseStatus,
-  TaskExecutionOnChildrenFinishedProcessingStatus,
-  TaskExecutionsStorage,
-  TaskExecutionStatus,
-  TaskExecutionStorageGetByIdFilters,
-  TaskExecutionStorageUpdate,
-  TaskExecutionStorageValue,
-  TaskExecutionSummary,
-  TaskRetryOptions,
+import {
+  TaskExecutionsStorageWithBatching,
+  type DurableExecutionErrorStorageValue,
+  type TaskExecutionCloseStatus,
+  type TaskExecutionOnChildrenFinishedProcessingStatus,
+  type TaskExecutionsStorage,
+  type TaskExecutionsStorageWithoutBatching,
+  type TaskExecutionStatus,
+  type TaskExecutionStorageGetByIdFilters,
+  type TaskExecutionStorageUpdate,
+  type TaskExecutionStorageValue,
+  type TaskExecutionSummary,
+  type TaskRetryOptions,
 } from 'durable-execution'
 
 import {
@@ -194,14 +196,16 @@ export function createPgTaskExecutionsStorage<
     enableTestMode?: boolean
   } = {},
 ): TaskExecutionsStorage {
-  return new PgTaskExecutionsStorage(db, taskExecutionsTable, options)
+  return new TaskExecutionsStorageWithBatching(
+    new PgTaskExecutionsStorage(db, taskExecutionsTable, options),
+  )
 }
 
 class PgTaskExecutionsStorage<
   TQueryResult extends PgQueryResultHKT,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
-> implements TaskExecutionsStorage
+> implements TaskExecutionsStorageWithoutBatching
 {
   private readonly db: PgDatabase<TQueryResult, TFullSchema, TSchema>
   private readonly taskExecutionsTable: TaskExecutionsPgTable

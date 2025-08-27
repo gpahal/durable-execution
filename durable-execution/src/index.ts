@@ -48,7 +48,6 @@ export {
 } from './task'
 export {
   type TaskExecutionsStorage,
-  TaskExecutionsStorageInternal,
   type TaskExecutionStorageValue,
   type TaskExecutionOnChildrenFinishedProcessingStatus,
   type TaskExecutionCloseStatus,
@@ -56,6 +55,8 @@ export {
   type TaskExecutionStorageUpdate,
   applyTaskExecutionStorageUpdate,
   TaskExecutionsStorageWithMutex,
+  type TaskExecutionsStorageWithoutBatching,
+  TaskExecutionsStorageWithBatching,
 } from './storage'
 export { InMemoryTaskExecutionsStorage } from './in-memory-storage'
 export {

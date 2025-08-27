@@ -54,7 +54,7 @@ import {
  * @category ExecutorClient
  */
 export class DurableExecutorClient<TTasks extends AnyTasks> {
-  private readonly core: DurableExecutorCore<undefined>
+  private readonly core: DurableExecutorCore
   private readonly tasks: TTasks
 
   /**
@@ -71,6 +71,11 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
    *   defaults to `info`.
    * @param options.maxSerializedInputDataSize - The maximum size of serialized input data in
    *   bytes. If not provided, defaults to 1MB.
+   * @param options.enableStorageBatching - Whether to enable storage batching. If not provided,
+   *   defaults to false.
+   * @param options.storageBatchingBackgroundProcessIntraBatchSleepMs - The sleep duration between
+   *   batches of storage operations. Only applicable if storage batching is enabled. If not
+   *   provided, defaults to 10ms.
    * @param options.storageMaxRetryAttempts - The maximum number of times to retry a storage
    *   operation. If not provided, defaults to 1.
    */
@@ -82,10 +87,12 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
       logger?: Logger
       logLevel?: LogLevel
       maxSerializedInputDataSize?: number
+      enableStorageBatching?: boolean
+      storageBatchingBackgroundProcessIntraBatchSleepMs?: number
       storageMaxRetryAttempts?: number
     } = {},
   ) {
-    this.core = new DurableExecutorCore(() => storage, options)
+    this.core = new DurableExecutorCore(storage, options)
     this.tasks = tasks
   }
 
@@ -133,7 +140,7 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
     options.skipTaskPresenceCheck = true
 
     // @ts-expect-error - This is safe
-    return await this.core.enqueueTask(undefined, task, input, options)
+    return await this.core.enqueueTask(task, input, options)
   }
 
   /**
@@ -152,7 +159,7 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
       throw new DurableExecutionNotFoundError(`Task ${taskId} not found`)
     }
 
-    return await this.core.getTaskExecutionHandle(undefined, task, executionId)
+    return await this.core.getTaskExecutionHandle(task, executionId)
   }
 
   /**
@@ -169,12 +176,7 @@ export class DurableExecutorClient<TTasks extends AnyTasks> {
     sleepingTaskUniqueId: string,
     options: WakeupSleepingTaskExecutionOptions<InferTaskOutput<TTask>>,
   ): Promise<FinishedTaskExecution<InferTaskOutput<TTask>>> {
-    return await this.core.wakeupSleepingTaskExecution(
-      undefined,
-      task,
-      sleepingTaskUniqueId,
-      options,
-    )
+    return await this.core.wakeupSleepingTaskExecution(task, sleepingTaskUniqueId, options)
   }
 
   /**

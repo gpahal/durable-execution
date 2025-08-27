@@ -129,12 +129,6 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     }
   }
 
-  async insertMany(executions: Array<TaskExecutionStorageValue>): Promise<void> {
-    await this.withMutex(() => {
-      this.insertTaskExecutionsInternal(executions)
-    })
-  }
-
   private getByIdsWithFiltersAndLimitInternal(
     executionIds: Array<string>,
     filters: TaskExecutionStorageGetByIdFilters,
@@ -198,7 +192,13 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     }
   }
 
-  async getById(
+  async insertMany(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+    await this.withMutex(() => {
+      this.insertTaskExecutionsInternal(executions)
+    })
+  }
+
+  private async getById(
     executionId: string,
     filters: TaskExecutionStorageGetByIdFilters,
   ): Promise<TaskExecutionStorageValue | undefined> {
@@ -208,7 +208,18 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async getBySleepingTaskUniqueId(
+  async getManyById(
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+    }>,
+  ): Promise<Array<TaskExecutionStorageValue | undefined>> {
+    return await Promise.all(
+      requests.map((request) => this.getById(request.executionId, request.filters)),
+    )
+  }
+
+  private async getBySleepingTaskUniqueId(
     sleepingTaskUniqueId: string,
   ): Promise<TaskExecutionStorageValue | undefined> {
     return await this.withMutex(() => {
@@ -220,7 +231,17 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateById(
+  async getManyBySleepingTaskUniqueId(
+    requests: Array<{
+      sleepingTaskUniqueId: string
+    }>,
+  ): Promise<Array<TaskExecutionStorageValue | undefined>> {
+    return await Promise.all(
+      requests.map((request) => this.getBySleepingTaskUniqueId(request.sleepingTaskUniqueId)),
+    )
+  }
+
+  private async updateById(
     executionId: string,
     filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
@@ -231,7 +252,21 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateByIdAndInsertChildrenIfUpdated(
+  async updateManyById(
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+      update: TaskExecutionStorageUpdate
+    }>,
+  ): Promise<void> {
+    await Promise.all(
+      requests.map((request) =>
+        this.updateById(request.executionId, request.filters, request.update),
+      ),
+    )
+  }
+
+  private async updateByIdAndInsertChildrenIfUpdated(
     executionId: string,
     filters: TaskExecutionStorageGetByIdFilters,
     update: TaskExecutionStorageUpdate,
@@ -244,6 +279,26 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
         this.insertTaskExecutionsInternal(childrenTaskExecutionsToInsertIfAnyUpdated)
       }
     })
+  }
+
+  async updateManyByIdAndInsertChildrenIfUpdated(
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+      update: TaskExecutionStorageUpdate
+      childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>
+    }>,
+  ): Promise<void> {
+    await Promise.all(
+      requests.map((request) =>
+        this.updateByIdAndInsertChildrenIfUpdated(
+          request.executionId,
+          request.filters,
+          request.update,
+          request.childrenTaskExecutionsToInsertIfAnyUpdated,
+        ),
+      ),
+    )
   }
 
   async updateByStatusAndStartAtLessThanAndReturn(
@@ -376,7 +431,7 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async getByParentExecutionId(
+  private async getByParentExecutionId(
     parentExecutionId: string,
   ): Promise<Array<TaskExecutionStorageValue>> {
     return await this.withMutex(() => {
@@ -386,7 +441,15 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateByParentExecutionIdAndIsFinished(
+  async getManyByParentExecutionId(
+    requests: Array<{ parentExecutionId: string }>,
+  ): Promise<Array<Array<TaskExecutionStorageValue>>> {
+    return await Promise.all(
+      requests.map((request) => this.getByParentExecutionId(request.parentExecutionId)),
+    )
+  }
+
+  private async updateByParentExecutionIdAndIsFinished(
     parentExecutionId: string,
     isFinished: boolean,
     update: TaskExecutionStorageUpdate,
@@ -399,6 +462,24 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
       )
       this.updateTaskExecutionsInternal(taskExecutions, update)
     })
+  }
+
+  async updateManyByParentExecutionIdAndIsFinished(
+    requests: Array<{
+      parentExecutionId: string
+      isFinished: boolean
+      update: TaskExecutionStorageUpdate
+    }>,
+  ): Promise<void> {
+    await Promise.all(
+      requests.map((request) =>
+        this.updateByParentExecutionIdAndIsFinished(
+          request.parentExecutionId,
+          request.isFinished,
+          request.update,
+        ),
+      ),
+    )
   }
 
   async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(

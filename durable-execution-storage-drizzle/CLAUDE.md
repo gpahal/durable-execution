@@ -94,7 +94,7 @@ This package provides **production-ready database storage implementations** for 
 
 **Transaction Support**: All operations use database transactions to ensure ACID properties, critical for concurrent task execution.
 
-**Batch Operations**: Bulk inserts and updates use configurable batch sizes to optimize performance without overwhelming the database.
+**Batch Operations**: Each database implementation (PostgreSQL, MySQL, SQLite) implements the `TaskExecutionsStorageWithoutBatching` interface and is wrapped with `TaskExecutionsStorageWithBatching` from the core package. This wrapper provides automatic batching of operations using a DataLoader pattern, converting individual operations into efficient batch requests.
 
 **Update Strategies**:
 

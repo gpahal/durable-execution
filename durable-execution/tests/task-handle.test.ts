@@ -158,7 +158,7 @@ describe('taskHandle', () => {
   it('should handle wait and get finished task execution with cancel signal before finishing', async () => {
     const task = executor.task({
       id: 'test',
-      timeoutMs: 10_000,
+      timeoutMs: 5000,
       run: async () => {
         await sleep(1000)
         return 'test'

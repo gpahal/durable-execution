@@ -1,15 +1,8 @@
-import z from 'zod'
-
-import { getErrorMessage } from '@gpahal/std/errors'
-import { omitUndefinedValues } from '@gpahal/std/objects'
-import { createMutex, sleepWithJitter, type Mutex } from '@gpahal/std/promises'
+import { createMutex, type Mutex } from '@gpahal/std/promises'
 
 import { DurableExecutionError, type DurableExecutionErrorStorageValue } from './errors'
-import type { LoggerInternal } from './logger'
 import type { SerializerInternal } from './serializer'
 import {
-  ERRORED_TASK_EXECUTION_STATUSES,
-  FINISHED_TASK_EXECUTION_STATUSES,
   type ParentTaskExecutionSummary,
   type TaskExecution,
   type TaskExecutionStatus,
@@ -19,9 +12,14 @@ import {
 
 /**
  * The storage interface for persisting task execution state. Implementations must ensure
- * all operations are atomic to maintain consistency in distributed environments. If the
- * implementation is not atomic, use {@link TaskExecutionsStorageWithMutex} to wrap the storage
- * implementation and make all operations atomic.
+ * all operations are atomic to maintain consistency in distributed environments.
+ *
+ * If the implementation is not atomic, use {@link TaskExecutionsStorageWithMutex} to wrap the
+ * storage implementation and make all operations atomic.
+ *
+ * If the implementation doesn't support batching methods, use
+ * {@link TaskExecutionsStorageWithBatching} to wrap the storage implementation and implement the
+ * batching methods.
  *
  * ## Implementation Requirements
  *
@@ -81,54 +79,60 @@ export type TaskExecutionsStorage = {
   insertMany: (executions: Array<TaskExecutionStorageValue>) => void | Promise<void>
 
   /**
-   * Get task execution by id.
+   * Get many task executions by id and optionally filter them.
    *
-   * @param executionId - The id of the task execution to get.
-   * @param filters - The filters to filter the task execution.
-   * @returns The task execution.
+   * @param requests - The requests to get the task executions.
+   * @returns The task executions.
    */
-  getById: (
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-  ) => TaskExecutionStorageValue | undefined | Promise<TaskExecutionStorageValue | undefined>
+  getManyById: (
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+    }>,
+  ) =>
+    | Array<TaskExecutionStorageValue | undefined>
+    | Promise<Array<TaskExecutionStorageValue | undefined>>
 
   /**
-   * Get task execution by sleeping task unique id.
+   * Get many task executions by sleeping task unique id.
    *
-   * @param sleepingTaskUniqueId - The unique id of the sleeping task to get.
-   * @returns The task execution.
+   * @param requests - The requests to get the task executions.
+   * @returns The task executions.
    */
-  getBySleepingTaskUniqueId: (
-    sleepingTaskUniqueId: string,
-  ) => TaskExecutionStorageValue | undefined | Promise<TaskExecutionStorageValue | undefined>
+  getManyBySleepingTaskUniqueId: (
+    requests: Array<{
+      sleepingTaskUniqueId: string
+    }>,
+  ) =>
+    | Array<TaskExecutionStorageValue | undefined>
+    | Promise<Array<TaskExecutionStorageValue | undefined>>
 
   /**
-   * Update task execution by id.
+   * Update many task executions by id and optionally filter them. Each request should be atomic.
    *
-   * @param executionId - The id of the task execution to update.
-   * @param filters - The filters to filter the task execution.
-   * @param update - The update object.
+   * @param requests - The requests to update the task executions.
    */
-  updateById: (
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-    update: TaskExecutionStorageUpdate,
+  updateManyById: (
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+      update: TaskExecutionStorageUpdate
+    }>,
   ) => void | Promise<void>
 
   /**
-   * Update task execution by id and insert children task executions if updated.
+   * Update many task executions by id and insert children task executions if updated. Each request
+   * should be atomic.
    *
-   * @param executionId - The id of the task execution to update.
-   * @param filters - The filters to filter the task execution.
-   * @param update - The update object.
-   * @param childrenTaskExecutionsToInsertIfAnyUpdated - The children task executions to insert if
-   *   the task execution was updated.
+   * @param requests - The requests to update the task executions.
    */
-  updateByIdAndInsertChildrenIfUpdated: (
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-    update: TaskExecutionStorageUpdate,
-    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
+  updateManyByIdAndInsertChildrenIfUpdated: (
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+      update: TaskExecutionStorageUpdate
+      childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>
+    }>,
   ) => void | Promise<void>
 
   /**
@@ -255,26 +259,29 @@ export type TaskExecutionsStorage = {
   ) => Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>>
 
   /**
-   * Get task executions by parent execution id.
+   * Get many task executions by parent execution id.
    *
-   * @param parentExecutionId - The id of the parent task execution to get.
+   * @param requests - The requests to get the task executions.
    * @returns The task executions.
    */
-  getByParentExecutionId: (
-    parentExecutionId: string,
-  ) => Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>>
+  getManyByParentExecutionId: (
+    requests: Array<{
+      parentExecutionId: string
+    }>,
+  ) => Array<Array<TaskExecutionStorageValue>> | Promise<Array<Array<TaskExecutionStorageValue>>>
 
   /**
-   * Update task executions by parent execution id and is finished.
+   * Update many task executions by parent execution id and is finished. Each request should be
+   * atomic.
    *
-   * @param parentExecutionId - The id of the parent task execution to update.
-   * @param isFinished - The is finished of the task executions to update.
-   * @param update - The update object.
+   * @param requests - The requests to update the task executions.
    */
-  updateByParentExecutionIdAndIsFinished: (
-    parentExecutionId: string,
-    isFinished: boolean,
-    update: TaskExecutionStorageUpdate,
+  updateManyByParentExecutionIdAndIsFinished: (
+    requests: Array<{
+      parentExecutionId: string
+      isFinished: boolean
+      update: TaskExecutionStorageUpdate
+    }>,
   ) => void | Promise<void>
 
   /**
@@ -306,373 +313,6 @@ export type TaskExecutionsStorage = {
    * have a test and production mode and this method should be a no-op in production.
    */
   deleteAll: () => void | Promise<void>
-}
-
-export const zStorageMaxRetryAttempts = z
-  .number()
-  .min(1)
-  .max(10)
-  .nullish()
-  .transform((val) => val ?? 1)
-
-export function validateStorageMaxRetryAttempts(maxRetryAttempts?: number | null): number {
-  const parsedMaxRetryAttempts = zStorageMaxRetryAttempts.safeParse(maxRetryAttempts)
-  if (!parsedMaxRetryAttempts.success) {
-    throw DurableExecutionError.nonRetryable(
-      `Invalid storage max retry attempts: ${z.prettifyError(parsedMaxRetryAttempts.error)}`,
-    )
-  }
-  return parsedMaxRetryAttempts.data
-}
-
-/**
- * Internal class that can be used to interact with the storage implementation.
- *
- * This class is used to interact with the storage implementation. It is used by the executor to
- * interact with the storage implementation.
- *
- * @category Storage
- * @internal
- */
-export class TaskExecutionsStorageInternal {
-  private readonly logger: LoggerInternal
-  private readonly storage: TaskExecutionsStorage
-  private readonly maxRetryAttempts: number
-
-  constructor(logger: LoggerInternal, storage: TaskExecutionsStorage, maxRetryAttempts?: number) {
-    this.logger = logger
-    this.storage = storage
-    this.maxRetryAttempts = validateStorageMaxRetryAttempts(maxRetryAttempts)
-  }
-
-  private getResolvedMaxRetryAttempts(maxRetryAttempts?: number): number {
-    if (maxRetryAttempts != null) {
-      return validateStorageMaxRetryAttempts(maxRetryAttempts)
-    }
-    return this.maxRetryAttempts
-  }
-
-  private async retry<T>(
-    fnName: string,
-    fn: () => T | Promise<T>,
-    maxRetryAttempts?: number,
-  ): Promise<T> {
-    const resolvedMaxRetryAttempts = this.getResolvedMaxRetryAttempts(maxRetryAttempts)
-    if (resolvedMaxRetryAttempts <= 0) {
-      return await fn()
-    }
-
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await fn()
-      } catch (error) {
-        const durableExecutionError =
-          error instanceof DurableExecutionError
-            ? error
-            : DurableExecutionError.retryable(getErrorMessage(error))
-
-        if (!durableExecutionError.isRetryable) {
-          throw error
-        }
-        if (attempt >= resolvedMaxRetryAttempts) {
-          throw error
-        }
-
-        this.logger.error(`Error while retrying ${fnName}`, error)
-        await sleepWithJitter(Math.min(25 * 2 ** (attempt - 1), 1000))
-      }
-    }
-  }
-
-  async insertMany(
-    executions: Array<TaskExecutionStorageValue>,
-    maxRetryAttempts?: number,
-  ): Promise<void> {
-    if (executions.length === 0) {
-      return
-    }
-
-    return await this.retry(
-      'insertMany',
-      () => this.storage.insertMany(executions),
-      maxRetryAttempts,
-    )
-  }
-
-  async getById(
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-    maxRetryAttempts?: number,
-  ): Promise<TaskExecutionStorageValue | undefined> {
-    return await this.retry(
-      'getById',
-      () => this.storage.getById(executionId, filters),
-      maxRetryAttempts,
-    )
-  }
-
-  async getBySleepingTaskUniqueId(
-    sleepingTaskUniqueId: string,
-    maxRetryAttempts?: number,
-  ): Promise<TaskExecutionStorageValue | undefined> {
-    return await this.retry(
-      'getBySleepingTaskUniqueId',
-      () => this.storage.getBySleepingTaskUniqueId(sleepingTaskUniqueId),
-      maxRetryAttempts,
-    )
-  }
-
-  async updateById(
-    now: number,
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-    update: TaskExecutionStorageUpdateInternal,
-    execution?: TaskExecutionStorageValue,
-    maxRetryAttempts?: number,
-  ): Promise<void> {
-    if (
-      update.status &&
-      FINISHED_TASK_EXECUTION_STATUSES.includes(update.status) &&
-      execution?.parent?.isFinalizeOfParent
-    ) {
-      update.closeStatus = 'ready'
-    }
-
-    return await this.retry(
-      'updateById',
-      () =>
-        this.storage.updateById(executionId, filters, getTaskExecutionStorageUpdate(now, update)),
-      maxRetryAttempts,
-    )
-  }
-
-  async updateByIdAndInsertChildrenIfUpdated(
-    now: number,
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-    update: TaskExecutionStorageUpdateInternal,
-    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
-    execution?: TaskExecutionStorageValue,
-    maxRetryAttempts?: number,
-  ): Promise<void> {
-    if (childrenTaskExecutionsToInsertIfAnyUpdated.length === 0) {
-      return await this.updateById(now, executionId, filters, update, execution, maxRetryAttempts)
-    }
-
-    if (
-      update.status &&
-      FINISHED_TASK_EXECUTION_STATUSES.includes(update.status) &&
-      execution?.parent?.isFinalizeOfParent
-    ) {
-      update.closeStatus = 'ready'
-    }
-
-    return await this.retry(
-      'updateByIdAndInsertManyIfUpdated',
-      () =>
-        this.storage.updateByIdAndInsertChildrenIfUpdated(
-          executionId,
-          filters,
-          getTaskExecutionStorageUpdate(now, update),
-          childrenTaskExecutionsToInsertIfAnyUpdated,
-        ),
-      maxRetryAttempts,
-    )
-  }
-
-  async updateByStatusAndStartAtLessThanAndReturn(
-    now: number,
-    status: TaskExecutionStatus,
-    startAtLessThan: number,
-    update: TaskExecutionStorageUpdateInternal,
-    updateExpiresAtWithStartedAt: number,
-    limit: number,
-    maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.retry(
-      'updateByStatusAndStartAtLessThanAndReturn',
-      () =>
-        this.storage.updateByStatusAndStartAtLessThanAndReturn(
-          status,
-          startAtLessThan,
-          getTaskExecutionStorageUpdate(now, update),
-          updateExpiresAtWithStartedAt,
-          limit,
-        ),
-      maxRetryAttempts,
-    )
-  }
-
-  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
-    now: number,
-    status: TaskExecutionStatus,
-    onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
-    update: TaskExecutionStorageUpdateInternal,
-    limit: number,
-    maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.retry(
-      'updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn',
-      () =>
-        this.storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
-          status,
-          onChildrenFinishedProcessingStatus,
-          getTaskExecutionStorageUpdate(now, update),
-          limit,
-        ),
-      maxRetryAttempts,
-    )
-  }
-
-  async updateByCloseStatusAndReturn(
-    now: number,
-    closeStatus: TaskExecutionCloseStatus,
-    update: TaskExecutionStorageUpdateInternal,
-    limit: number,
-    maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.retry(
-      'updateByCloseStatusAndReturn',
-      () =>
-        this.storage.updateByCloseStatusAndReturn(
-          closeStatus,
-          getTaskExecutionStorageUpdate(now, update),
-          limit,
-        ),
-      maxRetryAttempts,
-    )
-  }
-
-  async updateByIsSleepingTaskAndExpiresAtLessThan(
-    now: number,
-    isSleepingTask: boolean,
-    expiresAtLessThan: number,
-    update: TaskExecutionStorageUpdateInternal,
-    limit: number,
-    maxRetryAttempts?: number,
-  ): Promise<number> {
-    return await this.retry(
-      'updateByIsSleepingTaskAndExpiresAtLessThan',
-      () =>
-        this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(
-          isSleepingTask,
-          expiresAtLessThan,
-          getTaskExecutionStorageUpdate(now, update),
-          limit,
-        ),
-      maxRetryAttempts,
-    )
-  }
-
-  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
-    now: number,
-    onChildrenFinishedProcessingExpiresAtLessThan: number,
-    update: TaskExecutionStorageUpdateInternal,
-    limit: number,
-    maxRetryAttempts?: number,
-  ): Promise<number> {
-    return await this.retry(
-      'updateByOnChildrenFinishedProcessingExpiresAtLessThan',
-      () =>
-        this.storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
-          onChildrenFinishedProcessingExpiresAtLessThan,
-          getTaskExecutionStorageUpdate(now, update),
-          limit,
-        ),
-      maxRetryAttempts,
-    )
-  }
-
-  async updateByCloseExpiresAtLessThan(
-    now: number,
-    closeExpiresAtLessThan: number,
-    update: TaskExecutionStorageUpdateInternal,
-    limit: number,
-    maxRetryAttempts?: number,
-  ): Promise<number> {
-    return await this.retry(
-      'updateByCloseExpiresAtLessThan',
-      () =>
-        this.storage.updateByCloseExpiresAtLessThan(
-          closeExpiresAtLessThan,
-          getTaskExecutionStorageUpdate(now, update),
-          limit,
-        ),
-      maxRetryAttempts,
-    )
-  }
-
-  async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
-    now: number,
-    executorId: string,
-    needsPromiseCancellation: boolean,
-    update: TaskExecutionStorageUpdateInternal,
-    limit: number,
-    maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.retry(
-      'updateByExecutorIdAndNeedsPromiseCancellationAndReturn',
-      () =>
-        this.storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
-          executorId,
-          needsPromiseCancellation,
-          getTaskExecutionStorageUpdate(now, update),
-          limit,
-        ),
-      maxRetryAttempts,
-    )
-  }
-
-  async getByParentExecutionId(
-    parentExecutionId: string,
-    maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.retry(
-      'getByParentExecutionId',
-      () => this.storage.getByParentExecutionId(parentExecutionId),
-      maxRetryAttempts,
-    )
-  }
-
-  async updateByParentExecutionIdAndIsFinished(
-    now: number,
-    parentExecutionId: string,
-    isFinished: boolean,
-    update: TaskExecutionStorageUpdateInternal,
-    maxRetryAttempts?: number,
-  ): Promise<void> {
-    return await this.retry(
-      'updateByParentExecutionIdAndIsFinished',
-      () =>
-        this.storage.updateByParentExecutionIdAndIsFinished(
-          parentExecutionId,
-          isFinished,
-          getTaskExecutionStorageUpdate(now, update),
-        ),
-      maxRetryAttempts,
-    )
-  }
-
-  async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-    now: number,
-    isFinished: boolean,
-    closeStatus: TaskExecutionCloseStatus,
-    update: TaskExecutionStorageUpdateInternal,
-    limit: number,
-    maxRetryAttempts?: number,
-  ): Promise<number> {
-    return await this.retry(
-      'updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus',
-      () =>
-        this.storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-          isFinished,
-          closeStatus,
-          getTaskExecutionStorageUpdate(now, update),
-          limit,
-        ),
-      maxRetryAttempts,
-    )
-  }
 }
 
 /**
@@ -981,78 +621,6 @@ export type TaskExecutionStorageUpdate = {
   updatedAt: number
 }
 
-export type TaskExecutionStorageUpdateInternal = Omit<
-  TaskExecutionStorageUpdate,
-  | 'unsetExecutorId'
-  | 'isFinished'
-  | 'unsetRunOutput'
-  | 'unsetError'
-  | 'unsetExpiresAt'
-  | 'finishedAt'
-  | 'unsetOnChildrenFinishedProcessingExpiresAt'
-  | 'unsetCloseExpiresAt'
-  | 'updatedAt'
-> & {
-  unsetExecutorId?: never
-  isFinished?: never
-  unsetRunOutput?: never
-  unsetError?: never
-  unsetExpiresAt?: never
-  finishedAt?: never
-  unsetOnChildrenFinishedProcessingExpiresAt?: never
-  unsetCloseExpiresAt?: never
-  updatedAt?: never
-}
-
-export function getTaskExecutionStorageUpdate(
-  now: number,
-  internalUpdate: TaskExecutionStorageUpdateInternal,
-): TaskExecutionStorageUpdate {
-  const update: TaskExecutionStorageUpdate = {
-    ...internalUpdate,
-    unsetExecutorId: undefined,
-    isFinished: undefined,
-    unsetRunOutput: undefined,
-    unsetError: undefined,
-    unsetExpiresAt: undefined,
-    finishedAt: undefined,
-    unsetOnChildrenFinishedProcessingExpiresAt: undefined,
-    unsetCloseExpiresAt: undefined,
-    updatedAt: now,
-  }
-  if (internalUpdate.status) {
-    if (FINISHED_TASK_EXECUTION_STATUSES.includes(internalUpdate.status)) {
-      update.isFinished = true
-      update.unsetRunOutput = true
-      update.finishedAt = now
-    }
-    if (internalUpdate.status === 'ready') {
-      update.unsetRunOutput = true
-    }
-    if (
-      !ERRORED_TASK_EXECUTION_STATUSES.includes(internalUpdate.status) &&
-      internalUpdate.status !== 'ready' &&
-      internalUpdate.status !== 'running'
-    ) {
-      update.unsetError = true
-    }
-    if (internalUpdate.status !== 'running') {
-      update.unsetExecutorId = true
-      update.unsetExpiresAt = true
-    }
-  }
-  if (
-    internalUpdate.onChildrenFinishedProcessingStatus &&
-    internalUpdate.onChildrenFinishedProcessingStatus !== 'processing'
-  ) {
-    update.unsetOnChildrenFinishedProcessingExpiresAt = true
-  }
-  if (internalUpdate.closeStatus && internalUpdate.closeStatus !== 'closing') {
-    update.unsetCloseExpiresAt = true
-  }
-  return omitUndefinedValues(update)
-}
-
 /**
  * Applies a task execution storage update to a task execution storage value. This is used to
  * update the task execution storage value in the storage implementation before returning it to the
@@ -1356,40 +924,43 @@ export class TaskExecutionsStorageWithMutex implements TaskExecutionsStorage {
     return await this.withMutex(() => this.storage.insertMany(executions))
   }
 
-  async getById(
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-  ): Promise<TaskExecutionStorageValue | undefined> {
-    return await this.withMutex(() => this.storage.getById(executionId, filters))
+  async getManyById(
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+    }>,
+  ): Promise<Array<TaskExecutionStorageValue | undefined>> {
+    return await this.withMutex(() => this.storage.getManyById(requests))
   }
 
-  async getBySleepingTaskUniqueId(
-    sleepingTaskUniqueId: string,
-  ): Promise<TaskExecutionStorageValue | undefined> {
-    return await this.withMutex(() => this.storage.getBySleepingTaskUniqueId(sleepingTaskUniqueId))
+  async getManyBySleepingTaskUniqueId(
+    requests: Array<{
+      sleepingTaskUniqueId: string
+    }>,
+  ): Promise<Array<TaskExecutionStorageValue | undefined>> {
+    return await this.withMutex(() => this.storage.getManyBySleepingTaskUniqueId(requests))
   }
 
-  async updateById(
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-    update: TaskExecutionStorageUpdate,
+  async updateManyById(
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+      update: TaskExecutionStorageUpdate
+    }>,
   ): Promise<void> {
-    await this.withMutex(() => this.storage.updateById(executionId, filters, update))
+    await this.withMutex(() => this.storage.updateManyById(requests))
   }
 
-  async updateByIdAndInsertChildrenIfUpdated(
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-    update: TaskExecutionStorageUpdate,
-    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
+  async updateManyByIdAndInsertChildrenIfUpdated(
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+      update: TaskExecutionStorageUpdate
+      childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>
+    }>,
   ): Promise<void> {
     return await this.withMutex(() =>
-      this.storage.updateByIdAndInsertChildrenIfUpdated(
-        executionId,
-        filters,
-        update,
-        childrenTaskExecutionsToInsertIfAnyUpdated,
-      ),
+      this.storage.updateManyByIdAndInsertChildrenIfUpdated(requests),
     )
   }
 
@@ -1493,19 +1064,23 @@ export class TaskExecutionsStorageWithMutex implements TaskExecutionsStorage {
     )
   }
 
-  async getByParentExecutionId(
-    parentExecutionId: string,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.withMutex(() => this.storage.getByParentExecutionId(parentExecutionId))
+  async getManyByParentExecutionId(
+    requests: Array<{
+      parentExecutionId: string
+    }>,
+  ): Promise<Array<Array<TaskExecutionStorageValue>>> {
+    return await this.withMutex(() => this.storage.getManyByParentExecutionId(requests))
   }
 
-  async updateByParentExecutionIdAndIsFinished(
-    parentExecutionId: string,
-    isFinished: boolean,
-    update: TaskExecutionStorageUpdate,
+  async updateManyByParentExecutionIdAndIsFinished(
+    requests: Array<{
+      parentExecutionId: string
+      isFinished: boolean
+      update: TaskExecutionStorageUpdate
+    }>,
   ): Promise<void> {
     return await this.withMutex(() =>
-      this.storage.updateByParentExecutionIdAndIsFinished(parentExecutionId, isFinished, update),
+      this.storage.updateManyByParentExecutionIdAndIsFinished(requests),
     )
   }
 
@@ -1531,5 +1106,364 @@ export class TaskExecutionsStorageWithMutex implements TaskExecutionsStorage {
 
   async deleteAll(): Promise<void> {
     return await this.withMutex(() => this.storage.deleteAll())
+  }
+}
+
+/**
+ * A storage interface for task executions without batching. It is similar to
+ * {@link TaskExecutionsStorage} but without the batching methods.
+ *
+ * @category Storage
+ */
+export type TaskExecutionsStorageWithoutBatching = Omit<
+  TaskExecutionsStorage,
+  | 'getManyById'
+  | 'getManyBySleepingTaskUniqueId'
+  | 'updateManyById'
+  | 'updateManyByIdAndInsertChildrenIfUpdated'
+  | 'getManyByParentExecutionId'
+  | 'updateManyByParentExecutionIdAndIsFinished'
+> & {
+  /**
+   * Get task execution by id and optionally filter them.
+   *
+   * @param executionId - The id of the task execution to get.
+   * @param filters - The filters to filter the task execution.
+   * @returns The task execution.
+   */
+  getById: (
+    executionId: string,
+    filters: TaskExecutionStorageGetByIdFilters,
+  ) => TaskExecutionStorageValue | undefined | Promise<TaskExecutionStorageValue | undefined>
+
+  /**
+   * Get task execution by sleeping task unique id.
+   *
+   * @param sleepingTaskUniqueId - The unique id of the sleeping task to get.
+   * @returns The task execution.
+   */
+  getBySleepingTaskUniqueId: (
+    sleepingTaskUniqueId: string,
+  ) => TaskExecutionStorageValue | undefined | Promise<TaskExecutionStorageValue | undefined>
+
+  /**
+   * Update task execution by id and optionally filter them.
+   *
+   * @param executionId - The id of the task execution to update.
+   * @param filters - The filters to filter the task execution.
+   * @param update - The update object.
+   */
+  updateById: (
+    executionId: string,
+    filters: TaskExecutionStorageGetByIdFilters,
+    update: TaskExecutionStorageUpdate,
+  ) => void | Promise<void>
+
+  /**
+   * Update task execution by id and insert children task executions if updated.
+   *
+   * @param executionId - The id of the task execution to update.
+   * @param filters - The filters to filter the task execution.
+   * @param update - The update object.
+   * @param childrenTaskExecutionsToInsertIfAnyUpdated - The children task executions to insert if
+   *   the task execution was updated.
+   */
+  updateByIdAndInsertChildrenIfUpdated: (
+    executionId: string,
+    filters: TaskExecutionStorageGetByIdFilters,
+    update: TaskExecutionStorageUpdate,
+    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
+  ) => void | Promise<void>
+
+  /**
+   * Get task executions by parent execution id.
+   *
+   * @param parentExecutionId - The id of the parent task execution to get.
+   * @returns The task executions.
+   */
+  getByParentExecutionId: (
+    parentExecutionId: string,
+  ) => Array<TaskExecutionStorageValue> | Promise<Array<TaskExecutionStorageValue>>
+
+  /**
+   * Update task executions by parent execution id and is finished.
+   *
+   * @param parentExecutionId - The id of the parent task execution to update.
+   * @param isFinished - The is finished of the task executions to update.
+   * @param update - The update object.
+   */
+  updateByParentExecutionIdAndIsFinished: (
+    parentExecutionId: string,
+    isFinished: boolean,
+    update: TaskExecutionStorageUpdate,
+  ) => void | Promise<void>
+}
+
+/**
+ * Wraps a {@link TaskExecutionsStorageWithoutBatching} and implements batching methods.
+ *
+ * @category Storage
+ */
+export class TaskExecutionsStorageWithBatching implements TaskExecutionsStorage {
+  private readonly storage: TaskExecutionsStorageWithoutBatching
+  private readonly disableParallelRequests: boolean
+
+  constructor(storage: TaskExecutionsStorageWithoutBatching, disableParallelRequests = false) {
+    this.storage = storage
+    this.disableParallelRequests = disableParallelRequests
+  }
+
+  async insertMany(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+    return await this.storage.insertMany(executions)
+  }
+
+  async getManyById(
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+    }>,
+  ): Promise<Array<TaskExecutionStorageValue | undefined>> {
+    if (this.disableParallelRequests) {
+      const results: Array<TaskExecutionStorageValue | undefined> = []
+      for (const request of requests) {
+        const result = await this.storage.getById(request.executionId, request.filters)
+        results.push(result)
+      }
+      return results
+    }
+
+    return await Promise.all(
+      requests.map((request) => this.storage.getById(request.executionId, request.filters)),
+    )
+  }
+
+  async getManyBySleepingTaskUniqueId(
+    requests: Array<{
+      sleepingTaskUniqueId: string
+    }>,
+  ): Promise<Array<TaskExecutionStorageValue | undefined>> {
+    if (this.disableParallelRequests) {
+      const results: Array<TaskExecutionStorageValue | undefined> = []
+      for (const request of requests) {
+        const result = await this.storage.getBySleepingTaskUniqueId(request.sleepingTaskUniqueId)
+        results.push(result)
+      }
+      return results
+    }
+
+    return await Promise.all(
+      requests.map((request) =>
+        this.storage.getBySleepingTaskUniqueId(request.sleepingTaskUniqueId),
+      ),
+    )
+  }
+
+  async updateManyById(
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+      update: TaskExecutionStorageUpdate
+    }>,
+  ): Promise<void> {
+    if (this.disableParallelRequests) {
+      for (const request of requests) {
+        await this.storage.updateById(request.executionId, request.filters, request.update)
+      }
+      return
+    }
+
+    await Promise.all(
+      requests.map((request) =>
+        this.storage.updateById(request.executionId, request.filters, request.update),
+      ),
+    )
+  }
+
+  async updateManyByIdAndInsertChildrenIfUpdated(
+    requests: Array<{
+      executionId: string
+      filters: TaskExecutionStorageGetByIdFilters
+      update: TaskExecutionStorageUpdate
+      childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>
+    }>,
+  ): Promise<void> {
+    if (this.disableParallelRequests) {
+      for (const request of requests) {
+        await this.storage.updateByIdAndInsertChildrenIfUpdated(
+          request.executionId,
+          request.filters,
+          request.update,
+          request.childrenTaskExecutionsToInsertIfAnyUpdated,
+        )
+      }
+      return
+    }
+
+    await Promise.all(
+      requests.map((request) =>
+        this.storage.updateByIdAndInsertChildrenIfUpdated(
+          request.executionId,
+          request.filters,
+          request.update,
+          request.childrenTaskExecutionsToInsertIfAnyUpdated,
+        ),
+      ),
+    )
+  }
+
+  async updateByStatusAndStartAtLessThanAndReturn(
+    status: TaskExecutionStatus,
+    startAtLessThan: number,
+    update: TaskExecutionStorageUpdate,
+    updateExpiresAtWithStartedAt: number,
+    limit: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.storage.updateByStatusAndStartAtLessThanAndReturn(
+      status,
+      startAtLessThan,
+      update,
+      updateExpiresAtWithStartedAt,
+      limit,
+    )
+  }
+
+  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
+    status: TaskExecutionStatus,
+    onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
+    update: TaskExecutionStorageUpdate,
+    limit: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
+      status,
+      onChildrenFinishedProcessingStatus,
+      update,
+      limit,
+    )
+  }
+
+  async updateByCloseStatusAndReturn(
+    closeStatus: TaskExecutionCloseStatus,
+    update: TaskExecutionStorageUpdate,
+    limit: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.storage.updateByCloseStatusAndReturn(closeStatus, update, limit)
+  }
+
+  async updateByIsSleepingTaskAndExpiresAtLessThan(
+    isSleepingTask: boolean,
+    expiresAtLessThan: number,
+    update: TaskExecutionStorageUpdate,
+    limit: number,
+  ): Promise<number> {
+    return await this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(
+      isSleepingTask,
+      expiresAtLessThan,
+      update,
+      limit,
+    )
+  }
+
+  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
+    onChildrenFinishedProcessingExpiresAtLessThan: number,
+    update: TaskExecutionStorageUpdate,
+    limit: number,
+  ): Promise<number> {
+    return await this.storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
+      onChildrenFinishedProcessingExpiresAtLessThan,
+      update,
+      limit,
+    )
+  }
+
+  async updateByCloseExpiresAtLessThan(
+    closeExpiresAtLessThan: number,
+    update: TaskExecutionStorageUpdate,
+    limit: number,
+  ): Promise<number> {
+    return await this.storage.updateByCloseExpiresAtLessThan(closeExpiresAtLessThan, update, limit)
+  }
+
+  async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
+    executorId: string,
+    needsPromiseCancellation: boolean,
+    update: TaskExecutionStorageUpdate,
+    limit: number,
+  ): Promise<Array<TaskExecutionStorageValue>> {
+    return await this.storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
+      executorId,
+      needsPromiseCancellation,
+      update,
+      limit,
+    )
+  }
+
+  async getManyByParentExecutionId(
+    requests: Array<{
+      parentExecutionId: string
+    }>,
+  ): Promise<Array<Array<TaskExecutionStorageValue>>> {
+    if (this.disableParallelRequests) {
+      const results: Array<Array<TaskExecutionStorageValue>> = []
+      for (const request of requests) {
+        const result = await this.storage.getByParentExecutionId(request.parentExecutionId)
+        results.push(result)
+      }
+      return results
+    }
+
+    return await Promise.all(
+      requests.map((request) => this.storage.getByParentExecutionId(request.parentExecutionId)),
+    )
+  }
+
+  async updateManyByParentExecutionIdAndIsFinished(
+    requests: Array<{
+      parentExecutionId: string
+      isFinished: boolean
+      update: TaskExecutionStorageUpdate
+    }>,
+  ): Promise<void> {
+    if (this.disableParallelRequests) {
+      for (const request of requests) {
+        await this.storage.updateByParentExecutionIdAndIsFinished(
+          request.parentExecutionId,
+          request.isFinished,
+          request.update,
+        )
+      }
+      return
+    }
+
+    await Promise.all(
+      requests.map((request) =>
+        this.storage.updateByParentExecutionIdAndIsFinished(
+          request.parentExecutionId,
+          request.isFinished,
+          request.update,
+        ),
+      ),
+    )
+  }
+
+  async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
+    isFinished: boolean,
+    closeStatus: TaskExecutionCloseStatus,
+    update: TaskExecutionStorageUpdate,
+    limit: number,
+  ): Promise<number> {
+    return await this.storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
+      isFinished,
+      closeStatus,
+      update,
+      limit,
+    )
+  }
+
+  async deleteById(executionId: string): Promise<void> {
+    return await this.storage.deleteById(executionId)
+  }
+
+  async deleteAll(): Promise<void> {
+    return await this.storage.deleteAll()
   }
 }

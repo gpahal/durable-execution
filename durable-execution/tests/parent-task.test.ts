@@ -1023,7 +1023,14 @@ describe('parentTask', () => {
     expect(finishedExecution.output.output).toBe('parent_output')
 
     while (true) {
-      const executionStorageValue = await storage.getById(handle.getExecutionId(), {})
+      const executionStorageValues = await storage.getManyById([
+        { executionId: handle.getExecutionId(), filters: {} },
+      ])
+      expect(executionStorageValues).toBeDefined()
+      assert(executionStorageValues)
+      expect(executionStorageValues.length).toBe(1)
+
+      const executionStorageValue = executionStorageValues[0]!
       expect(executionStorageValue).toBeDefined()
       assert(executionStorageValue)
       expect(executionStorageValue.status).toBe('completed')

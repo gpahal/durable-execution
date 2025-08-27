@@ -29,7 +29,6 @@ describe('index', () => {
       .withExposedPorts(3210, 3211)
       .start()
     const convexUrl = `http://127.0.0.1:${container.getMappedPort(3210)}`
-    let storage: ConvexTaskExecutionsStorage | undefined
     try {
       await withTemporaryFile('.env.local', async (tmpEnvFile) => {
         await fs.writeFile(
@@ -43,23 +42,20 @@ describe('index', () => {
 
         await sleep(1000)
         const convexClient = new ConvexHttpClient(convexUrl)
-        storage = new ConvexTaskExecutionsStorage(
+        const storage = new ConvexTaskExecutionsStorage(
           convexClient,
           'SUPER_SECRET',
           api.taskExecutionsStorage,
           {
             totalShards: 1,
             enableTestMode: true,
-            logLevel: 'error',
           },
         )
-        storage.startBackgroundProcesses()
-        await runStorageTest(storage)
+        await runStorageTest(storage, {
+          enableStorageBatching: true,
+        })
       })
     } finally {
-      if (storage) {
-        await storage.shutdown()
-      }
       await container.stop()
     }
   })

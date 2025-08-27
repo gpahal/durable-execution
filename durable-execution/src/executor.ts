@@ -7,7 +7,7 @@ import { DurableExecutionCancelledError, DurableExecutionError } from './errors'
 import { DurableExecutorCore } from './executor-core'
 import type { Logger, LoggerInternal, LogLevel } from './logger'
 import { type Serializer } from './serializer'
-import type { TaskExecutionsStorage, TaskExecutionsStorageInternal } from './storage'
+import type { TaskExecutionsStorage } from './storage'
 import {
   type AnyTask,
   type DefaultParentTaskOutput,
@@ -29,7 +29,7 @@ export const zDurableExecutorOptions = z.object({
   backgroundProcessIntraBatchSleepMs: z
     .number()
     .nullish()
-    .transform((val) => val ?? 250),
+    .transform((val) => val ?? 500),
 })
 
 /**
@@ -138,7 +138,7 @@ export const zDurableExecutorOptions = z.object({
  * @category Executor
  */
 export class DurableExecutor {
-  private readonly core: DurableExecutorCore<undefined>
+  private readonly core: DurableExecutorCore
 
   readonly id: string
   private readonly logger: LoggerInternal
@@ -158,7 +158,7 @@ export class DurableExecutor {
    * @param options.expireLeewayMs - The expiration leeway duration after which a task execution is
    *   considered expired. If not provided, defaults to 300_000 (5 minutes).
    * @param options.backgroundProcessIntraBatchSleepMs - The duration to sleep between batches of
-   *   background processes. If not provided, defaults to 250 (250ms).
+   *   background processes. If not provided, defaults to 500 (500ms).
    * @param options.maxConcurrentTaskExecutions - The maximum number of tasks that can run concurrently.
    *   If not provided, defaults to 5000.
    * @param options.maxTaskExecutionsPerBatch - The maximum number of tasks to process in each batch.
@@ -179,8 +179,11 @@ export class DurableExecutor {
    *   If not provided, defaults to 1000.
    * @param options.maxSerializedInputDataSize - The maximum size of serialized input data in bytes.
    *   If not provided, defaults to 1MB.
-   * @param options.maxSerializedOutputDataSize - The maximum size of serialized output data in bytes.
-   *   If not provided, defaults to 1MB.
+   * @param options.enableStorageBatching - Whether to enable storage batching. If not provided,
+   *   defaults to false.
+   * @param options.storageBatchingBackgroundProcessIntraBatchSleepMs - The sleep duration between
+   *   batches of storage operations. Only applicable if storage batching is enabled. If not
+   *   provided, defaults to 10ms.
    * @param options.storageMaxRetryAttempts - The maximum number of times to retry a storage
    *   operation. If not provided, defaults to 1.
    */
@@ -205,6 +208,8 @@ export class DurableExecutor {
       maxChildrenPerTaskExecution?: number
       maxSerializedInputDataSize?: number
       maxSerializedOutputDataSize?: number
+      enableStorageBatching?: boolean
+      storageBatchingBackgroundProcessIntraBatchSleepMs?: number
       storageMaxRetryAttempts?: number
     } = {},
   ) {
@@ -215,7 +220,7 @@ export class DurableExecutor {
       )
     }
 
-    this.core = new DurableExecutorCore(() => storage, coreOptions)
+    this.core = new DurableExecutorCore(storage, coreOptions)
     this.id = this.core.id
     this.logger = this.core.logger
     this.backgroundProcessIntraBatchSleepMs = parsedOptions.data.backgroundProcessIntraBatchSleepMs
@@ -385,8 +390,7 @@ export class DurableExecutor {
           },
         ]
   ): Promise<TaskExecutionHandle<InferTaskOutput<TTask>>> {
-    // @ts-expect-error - This is safe
-    return await this.core.enqueueTask(undefined, ...rest)
+    return await this.core.enqueueTask(...rest)
   }
 
   /**
@@ -400,7 +404,7 @@ export class DurableExecutor {
     task: TTask,
     executionId: string,
   ): Promise<TaskExecutionHandle<InferTaskOutput<TTask>>> {
-    return await this.core.getTaskExecutionHandle(undefined, task, executionId)
+    return await this.core.getTaskExecutionHandle(task, executionId)
   }
 
   /**
@@ -417,12 +421,7 @@ export class DurableExecutor {
     sleepingTaskUniqueId: string,
     options: WakeupSleepingTaskExecutionOptions<InferTaskOutput<TTask>>,
   ): Promise<FinishedTaskExecution<InferTaskOutput<TTask>>> {
-    return await this.core.wakeupSleepingTaskExecution(
-      undefined,
-      task,
-      sleepingTaskUniqueId,
-      options,
-    )
+    return await this.core.wakeupSleepingTaskExecution(task, sleepingTaskUniqueId, options)
   }
 
   /**
@@ -430,26 +429,21 @@ export class DurableExecutor {
    * the durable executor.
    */
   startBackgroundProcesses(): void {
-    this.core.throwIfShutdown()
-
-    this.logger.info('Starting background processes')
-    this.core.addBackgroundProcessesPromise(
+    this.core.startBackgroundProcesses(() => [
       this.startBackgroundProcessesInternal().catch((error) => {
         this.logger.error('Background processes exited with error', error)
       }),
-    )
-    this.logger.info('Started background processes')
+    ])
   }
 
   private async startBackgroundProcessesInternal(): Promise<void> {
-    const storage = this.core.getStorage(undefined)
     await Promise.all([
-      this.processReadyTaskExecutions(storage),
-      this.processOnChildrenFinishedTaskExecutions(storage),
-      this.markFinishedTaskExecutionsAsCloseStatusReady(storage),
-      this.closeFinishedTaskExecutions(storage),
-      this.cancelNeedsPromiseCancellationTaskExecutions(storage),
-      this.retryExpiredTaskExecutions(storage),
+      this.processReadyTaskExecutions(),
+      this.processOnChildrenFinishedTaskExecutions(),
+      this.markFinishedTaskExecutionsAsCloseStatusReady(),
+      this.closeFinishedTaskExecutions(),
+      this.cancelNeedsPromiseCancellationTaskExecutions(),
+      this.retryExpiredTaskExecutions(),
     ])
   }
 
@@ -483,10 +477,7 @@ export class DurableExecutor {
 
     const runBackgroundProcessSingleBatch = async (): Promise<boolean> => {
       try {
-        const isDone = await this.core.withTimingStats(
-          `bgProcess_${processName.replaceAll(' ', '_')}`,
-          singleBatchProcessFn,
-        )
+        const isDone = await singleBatchProcessFn()
 
         consecutiveErrors = 0
         backgroundProcessIntraBatchSleepMs = isDone
@@ -528,48 +519,42 @@ export class DurableExecutor {
     }
   }
 
-  private async processReadyTaskExecutions(storage: TaskExecutionsStorageInternal): Promise<void> {
+  private async processReadyTaskExecutions(): Promise<void> {
     return this.runBackgroundProcess('processing ready task executions', () =>
-      this.core.processReadyTaskExecutionsSingleBatch(storage),
+      this.core.processReadyTaskExecutionsSingleBatch(),
     )
   }
 
-  private async processOnChildrenFinishedTaskExecutions(
-    storage: TaskExecutionsStorageInternal,
-  ): Promise<void> {
+  private async processOnChildrenFinishedTaskExecutions(): Promise<void> {
     return this.runBackgroundProcess('processing on children finished task executions', () =>
-      this.core.processOnChildrenFinishedTaskExecutionsSingleBatch(storage),
+      this.core.processOnChildrenFinishedTaskExecutionsSingleBatch(),
     )
   }
 
-  private async markFinishedTaskExecutionsAsCloseStatusReady(
-    storage: TaskExecutionsStorageInternal,
-  ): Promise<void> {
+  private async markFinishedTaskExecutionsAsCloseStatusReady(): Promise<void> {
     return this.runBackgroundProcess('marking finished task executions as close status ready', () =>
-      this.core.markFinishedTaskExecutionsAsCloseStatusReadySingleBatch(storage),
+      this.core.markFinishedTaskExecutionsAsCloseStatusReadySingleBatch(),
     )
   }
 
-  private async closeFinishedTaskExecutions(storage: TaskExecutionsStorageInternal): Promise<void> {
+  private async closeFinishedTaskExecutions(): Promise<void> {
     return this.runBackgroundProcess('closing finished task executions', () =>
-      this.core.closeFinishedTaskExecutionsSingleBatch(storage),
+      this.core.closeFinishedTaskExecutionsSingleBatch(),
     )
   }
 
-  private async cancelNeedsPromiseCancellationTaskExecutions(
-    storage: TaskExecutionsStorageInternal,
-  ): Promise<void> {
+  private async cancelNeedsPromiseCancellationTaskExecutions(): Promise<void> {
     return this.runBackgroundProcess(
       'cancelling needs promise cancellation task executions',
-      () => this.core.cancelsNeedPromiseCancellationTaskExecutionsSingleBatch(storage),
+      () => this.core.cancelsNeedPromiseCancellationTaskExecutionsSingleBatch(),
       2,
     )
   }
 
-  private async retryExpiredTaskExecutions(storage: TaskExecutionsStorageInternal): Promise<void> {
+  private async retryExpiredTaskExecutions(): Promise<void> {
     return this.runBackgroundProcess(
       'retrying expired task executions',
-      () => this.core.retryExpiredTaskExecutionsSingleBatch(storage),
+      () => this.core.retryExpiredTaskExecutionsSingleBatch(),
       10,
     )
   }
@@ -607,13 +592,22 @@ export class DurableExecutor {
    *
    * @returns The timing stats.
    */
-  getTimingStats(): Record<
+  getStorageTimingStats(): Record<
     string,
     {
       count: number
       meanMs: number
     }
   > {
-    return this.core.getTimingStats()
+    return this.core.getStorageTimingStats()
+  }
+
+  /**
+   * Get per second storage call counts for monitoring and debugging.
+   *
+   * @returns The per second storage call counts.
+   */
+  getStoragePerSecondCallCounts(): Map<number, number> {
+    return this.core.getStoragePerSecondCallCounts()
   }
 }

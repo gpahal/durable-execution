@@ -996,7 +996,7 @@ describe('examples', () => {
     )
   })
 
-  it('should complete polling task', { timeout: 10_000 }, async () => {
+  it('should complete polling task', async () => {
     let value: number | undefined
     setTimeout(() => {
       value = 10
@@ -1039,7 +1039,7 @@ describe('examples', () => {
     )
   })
 
-  it('should complete polling task manually', { timeout: 10_000 }, async () => {
+  it('should complete polling task manually', async () => {
     let value: number | undefined
     setTimeout(() => {
       value = 10

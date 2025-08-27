@@ -8,11 +8,13 @@ import {
   type BaseSQLiteDatabase,
 } from 'drizzle-orm/sqlite-core'
 import {
+  TaskExecutionsStorageWithBatching,
   TaskExecutionsStorageWithMutex,
   type DurableExecutionErrorStorageValue,
   type TaskExecutionCloseStatus,
   type TaskExecutionOnChildrenFinishedProcessingStatus,
   type TaskExecutionsStorage,
+  type TaskExecutionsStorageWithoutBatching,
   type TaskExecutionStatus,
   type TaskExecutionStorageGetByIdFilters,
   type TaskExecutionStorageUpdate,
@@ -224,7 +226,10 @@ export function createSQLiteTaskExecutionsStorage<
   } = {},
 ): TaskExecutionsStorage {
   return new TaskExecutionsStorageWithMutex(
-    new SQLiteTaskExecutionsStorageNonAtomic(db, taskExecutionsTable, options),
+    new TaskExecutionsStorageWithBatching(
+      new SQLiteTaskExecutionsStorageNonAtomic(db, taskExecutionsTable, options),
+      true,
+    ),
   )
 }
 
@@ -232,7 +237,7 @@ class SQLiteTaskExecutionsStorageNonAtomic<
   TRunResult,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
-> implements TaskExecutionsStorage
+> implements TaskExecutionsStorageWithoutBatching
 {
   private readonly db: BaseSQLiteDatabase<'async', TRunResult, TFullSchema, TSchema>
   private readonly taskExecutionsTable: TaskExecutionsSQLiteTable

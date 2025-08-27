@@ -9,5 +9,6 @@ export default defineConfig({
       provider: 'v8',
       include: ['src/**/*.ts'],
     },
+    testTimeout: 15_000,
   },
 })

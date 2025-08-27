@@ -11,7 +11,7 @@ import { loadInMemoryTaskExecutionsStorageFromFile } from './in-memory-storage-u
 const testsDir = path.dirname(fileURLToPath(import.meta.url))
 
 describe('executorCrash', () => {
-  it('should handle executor crash', { timeout: 30_000 }, async () => {
+  it('should handle executor crash', async () => {
     const storageFilePath = path.join(testsDir, 'test.json')
     await rm(storageFilePath, { force: true })
 

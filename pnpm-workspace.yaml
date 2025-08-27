@@ -22,12 +22,12 @@ catalogs:
   dev:
     '@changesets/cli': ^2.29.6
     '@edge-runtime/vm': ^5.0.0
-    '@gpahal/eslint-config': ^0.0.113
-    '@gpahal/prettier-config': ^0.0.30
+    '@gpahal/eslint-config': ^0.0.114
+    '@gpahal/prettier-config': ^0.0.31
     '@gpahal/std-node': ^0.0.35
     '@gpahal/tsconfig': ^0.0.20
-    '@ianvs/prettier-plugin-sort-imports': ^4.6.2
-    '@libsql/client': ^0.15.13
+    '@ianvs/prettier-plugin-sort-imports': ^4.6.3
+    '@libsql/client': ^0.15.14
     '@orpc/client': ^1.8.5
     '@orpc/contract': ^1.8.5
     '@orpc/server': ^1.8.5

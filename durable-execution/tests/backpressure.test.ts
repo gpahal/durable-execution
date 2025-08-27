@@ -22,7 +22,7 @@ describe('backpressure', () => {
       await executor?.shutdown()
     })
 
-    it('should respect maxConcurrentTaskExecutions limit', { timeout: 15_000 }, async () => {
+    it('should respect maxConcurrentTaskExecutions limit', async () => {
       let runningCount = 0
       let maxObservedRunning = 0
       const completedPromises: Array<(value: void) => void> = []

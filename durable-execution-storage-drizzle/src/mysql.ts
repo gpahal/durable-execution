@@ -15,17 +15,19 @@ import {
   type MySqlQueryResultKind,
   type PreparedQueryHKTBase,
 } from 'drizzle-orm/mysql-core'
-import type {
-  DurableExecutionErrorStorageValue,
-  TaskExecutionCloseStatus,
-  TaskExecutionOnChildrenFinishedProcessingStatus,
-  TaskExecutionsStorage,
-  TaskExecutionStatus,
-  TaskExecutionStorageGetByIdFilters,
-  TaskExecutionStorageUpdate,
-  TaskExecutionStorageValue,
-  TaskExecutionSummary,
-  TaskRetryOptions,
+import {
+  TaskExecutionsStorageWithBatching,
+  type DurableExecutionErrorStorageValue,
+  type TaskExecutionCloseStatus,
+  type TaskExecutionOnChildrenFinishedProcessingStatus,
+  type TaskExecutionsStorage,
+  type TaskExecutionsStorageWithoutBatching,
+  type TaskExecutionStatus,
+  type TaskExecutionStorageGetByIdFilters,
+  type TaskExecutionStorageUpdate,
+  type TaskExecutionStorageValue,
+  type TaskExecutionSummary,
+  type TaskRetryOptions,
 } from 'durable-execution'
 
 import {
@@ -230,7 +232,9 @@ export function createMySqlTaskExecutionsStorage<
     enableTestMode?: boolean
   } = {},
 ): TaskExecutionsStorage {
-  return new MySqlTaskExecutionsStorage(db, taskExecutionsTable, getAffectedRowsCount, options)
+  return new TaskExecutionsStorageWithBatching(
+    new MySqlTaskExecutionsStorage(db, taskExecutionsTable, getAffectedRowsCount, options),
+  )
 }
 
 class MySqlTaskExecutionsStorage<
@@ -238,7 +242,7 @@ class MySqlTaskExecutionsStorage<
   TPreparedQueryHKT extends PreparedQueryHKTBase,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
-> implements TaskExecutionsStorage
+> implements TaskExecutionsStorageWithoutBatching
 {
   private readonly db: MySqlDatabase<TQueryResult, TPreparedQueryHKT, TFullSchema, TSchema>
   private readonly taskExecutionsTable: TaskExecutionsMySqlTable

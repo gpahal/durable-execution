@@ -1,47 +1,22 @@
 import { z } from 'zod'
 
-import {
-  createCancelSignal,
-  createTimeoutCancelSignal,
-  type CancelSignal,
-} from '@gpahal/std/cancel'
-import { getErrorMessage } from '@gpahal/std/errors'
+import { createTimeoutCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
 import { isFunction } from '@gpahal/std/functions'
-import { sleep } from '@gpahal/std/promises'
 
+import { DurableExecutionError, DurableExecutionTimedOutError } from './errors'
 import {
-  convertDurableExecutionErrorToStorageValue,
-  DurableExecutionCancelledError,
-  DurableExecutionError,
-  DurableExecutionNotFoundError,
-  DurableExecutionTimedOutError,
-} from './errors'
-import type { Logger } from './logger'
-import type { SerializerInternal } from './serializer'
-import {
-  convertTaskExecutionStorageValueToTaskExecution,
-  type TaskExecutionsStorageInternal,
-  type TaskExecutionStorageUpdateInternal,
-} from './storage'
-import {
-  FINISHED_TASK_EXECUTION_STATUSES,
   isFinalizeTaskOptionsParentTaskOptions,
   isFinalizeTaskOptionsTaskOptions,
   type ChildTask,
   type CommonTaskOptions,
   type DefaultParentTaskOutput,
   type FinalizeTaskOptions,
-  type FinishedTaskExecution,
-  type InferTaskOutput,
   type ParentTaskOptions,
   type SleepingTaskOptions,
-  type Task,
   type TaskEnqueueOptions,
-  type TaskExecutionHandle,
   type TaskOptions,
   type TaskRetryOptions,
   type TaskRunContext,
-  type WakeupSleepingTaskExecutionOptions,
 } from './task'
 import { createCancellablePromiseCustom, generateId } from './utils'
 
@@ -382,173 +357,6 @@ export class TaskInternal {
     clearTimeout()
     return result
   }
-}
-
-export function getTaskExecutionHandleInternal<TOutput>(
-  storage: TaskExecutionsStorageInternal,
-  serializer: SerializerInternal,
-  logger: Logger,
-  taskId: string,
-  executionId: string,
-  withTimingStats?: <T>(name: string, fn: () => T | Promise<T>) => Promise<T>,
-): TaskExecutionHandle<TOutput> {
-  return {
-    getTaskId: () => taskId,
-    getExecutionId: () => executionId,
-    getExecution: async () => {
-      const execution = withTimingStats
-        ? await withTimingStats('taskExecutionHandle_getExecution_getById', () =>
-            storage.getById(executionId, {}),
-          )
-        : await storage.getById(executionId, {})
-      if (!execution) {
-        throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
-      }
-      return convertTaskExecutionStorageValueToTaskExecution(execution, serializer)
-    },
-    waitAndGetFinishedExecution: async ({
-      signal,
-      pollingIntervalMs,
-    }: {
-      signal?: CancelSignal | AbortSignal
-      pollingIntervalMs?: number
-    } = {}) => {
-      const cancelSignal =
-        signal instanceof AbortSignal ? createCancelSignal({ abortSignal: signal })[0] : signal
-
-      const resolvedPollingIntervalMs =
-        pollingIntervalMs && pollingIntervalMs > 0 ? pollingIntervalMs : 2500
-      let isFirstIteration = true
-      while (true) {
-        if (cancelSignal?.isCancelled()) {
-          throw new DurableExecutionCancelledError()
-        }
-
-        if (isFirstIteration) {
-          isFirstIteration = false
-        } else {
-          await createCancellablePromiseCustom(sleep(resolvedPollingIntervalMs), cancelSignal)
-
-          if (cancelSignal?.isCancelled()) {
-            throw new DurableExecutionCancelledError()
-          }
-        }
-
-        const execution = withTimingStats
-          ? await withTimingStats('taskExecutionHandle_waitAndGetFinishedExecution_getById', () =>
-              storage.getById(executionId, {}),
-            )
-          : await storage.getById(executionId, {})
-        if (!execution) {
-          throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
-        }
-
-        if (FINISHED_TASK_EXECUTION_STATUSES.includes(execution.status)) {
-          return convertTaskExecutionStorageValueToTaskExecution(
-            execution,
-            serializer,
-          ) as FinishedTaskExecution<TOutput>
-        } else {
-          logger.debug(
-            `Waiting for task ${executionId} to be finished. Status: ${execution.status}`,
-          )
-        }
-      }
-    },
-    cancel: async () => {
-      const now = Date.now()
-      await storage.updateById(
-        now,
-        executionId,
-        {
-          isFinished: false,
-        },
-        {
-          status: 'cancelled',
-          error: convertDurableExecutionErrorToStorageValue(new DurableExecutionCancelledError()),
-          needsPromiseCancellation: true,
-        },
-      )
-      logger.debug(`Cancelled task execution ${executionId}`)
-    },
-  }
-}
-
-export async function wakeupSleepingTaskExecutionInternal<
-  TTask extends Task<unknown, unknown, true>,
->(
-  storage: TaskExecutionsStorageInternal,
-  serializer: SerializerInternal,
-  logger: Logger,
-  task: TTask,
-  sleepingTaskUniqueId: string,
-  options: WakeupSleepingTaskExecutionOptions<InferTaskOutput<TTask>>,
-): Promise<FinishedTaskExecution<InferTaskOutput<TTask>>> {
-  if (!task.isSleepingTask) {
-    throw DurableExecutionError.nonRetryable(`Task ${task.id} is not a sleeping task`)
-  }
-
-  const execution = await storage.getBySleepingTaskUniqueId(sleepingTaskUniqueId)
-  if (!execution) {
-    throw new DurableExecutionNotFoundError(
-      `Sleeping task execution ${sleepingTaskUniqueId} not found`,
-    )
-  }
-  if (execution.taskId !== task.id) {
-    throw new DurableExecutionNotFoundError(
-      `Sleeping task execution ${sleepingTaskUniqueId} belongs to task ${execution.taskId}`,
-    )
-  }
-  if (execution.isFinished) {
-    return convertTaskExecutionStorageValueToTaskExecution(
-      execution,
-      serializer,
-    ) as FinishedTaskExecution<InferTaskOutput<TTask>>
-  }
-
-  const update: TaskExecutionStorageUpdateInternal = {
-    status: options.status,
-  }
-  if (options.status === 'completed') {
-    update.output = serializer.serialize(options.output)
-  } else if (options.status === 'failed') {
-    update.error = convertDurableExecutionErrorToStorageValue(
-      DurableExecutionError.nonRetryable(getErrorMessage(options.error)),
-    )
-  } else {
-    throw DurableExecutionError.nonRetryable(
-      // @ts-expect-error - This is safe
-      `Invalid status for task execution ${executionId}: ${options.status}`,
-    )
-  }
-
-  const now = Date.now()
-  await storage.updateById(
-    now,
-    execution.executionId,
-    {
-      isSleepingTask: true,
-      isFinished: false,
-    },
-    update,
-  )
-  logger.debug(`Woken up sleeping task execution ${execution.executionId}`)
-
-  const finishedExecution = await storage.getById(execution.executionId, {})
-  if (!finishedExecution) {
-    throw new DurableExecutionNotFoundError(
-      `Sleeping task execution ${execution.executionId} not found`,
-    )
-  }
-  if (!finishedExecution.isFinished) {
-    throw DurableExecutionError.nonRetryable(
-      `Task execution ${execution.executionId} is not a sleeping task execution`,
-    )
-  }
-  return convertTaskExecutionStorageValueToTaskExecution(
-    finishedExecution,
-    serializer,
-  ) as FinishedTaskExecution<InferTaskOutput<TTask>>
 }
 
 export function validateCommonTaskOptions(taskOptions: CommonTaskOptions): {

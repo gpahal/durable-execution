@@ -51,17 +51,17 @@ export default app
 ```ts
 // src/convex/taskExecutionsStorage.ts
 
-import { convertDurableExecutionStorageComponentToPublicApiImpl } from 'durable-execution-storage-convex'
+import {
+  convertDurableExecutionStorageComponentToPublicApiImpl
+} from 'durable-execution-storage-convex'
 
 import { components } from './_generated/api'
 
 export const {
   insertMany,
-  getById,
   getManyById,
-  getBySleepingTaskUniqueId,
+  getManyBySleepingTaskUniqueId,
   updateManyById,
-  updateByIdAndInsertChildrenIfUpdated,
   updateManyByIdAndInsertChildrenIfUpdated,
   updateByStatusAndStartAtLessThanAndReturn,
   updateByStatusAndOCFPStatusAndACCZeroAndReturn,
@@ -70,8 +70,8 @@ export const {
   updateByOCFPExpiresAt,
   updateByCloseExpiresAt,
   updateByExecutorIdAndNPCAndReturn,
-  getByParentExecutionId,
-  updateByParentExecutionIdAndIsFinished,
+  getManyByParentExecutionId,
+  updateManyByParentExecutionIdAndIsFinished,
   updateAndDecrementParentACCByIsFinishedAndCloseStatus,
   deleteById,
   deleteAll,
@@ -103,9 +103,6 @@ const storage = new ConvexTaskExecutionsStorage(
   api.taskExecutionsStorage,
 )
 
-// Start background processes
-storage.startBackgroundProcesses()
-
 // Create and use the executor
 const executor = new DurableExecutor(storage)
 
@@ -132,7 +129,6 @@ executor.startBackgroundProcesses()
 await main()
 
 await executor.shutdown()
-await storage.shutdown()
 ```
 
 ## Database Migrations

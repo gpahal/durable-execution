@@ -54,7 +54,7 @@ pnpm test -t 'should handle timeout'
 - Polling tasks: Repeatedly check conditions until met or timeout
 - Finalize tasks: Post-processing after parent+children complete
 
-**Storage Layer** (`src/storage.ts`, `src/in-memory-storage.ts`): Abstract storage interface requiring ACID transactions. InMemoryStorage for testing, external packages provide production storage (Drizzle ORM).
+**Storage Layer** (`src/storage.ts`, `src/storage-internal.ts`, `src/in-memory-storage.ts`): Abstract storage interface requiring ACID transactions. InMemoryStorage for testing, external packages provide production storage (Drizzle ORM). Includes `TaskExecutionsStorageWithBatching` wrapper for converting individual operations into batch requests (DataLoader pattern), and `TaskExecutionsStorageInternal` with `BatchRequester` for optimizing API calls internally when batching is enabled.
 
 **Error System** (`src/errors.ts`): Hierarchical error system with `DurableExecutionError` base class. Errors explicitly control retry behavior via `retryable()` and `nonRetryable()` static methods.
 

@@ -1,7 +1,9 @@
 import { v, type Infer } from 'convex/values'
-import type { TaskExecutionStorageGetByIdFilters } from 'durable-execution'
-
-import { sleepWithJitter } from '@gpahal/std/promises'
+import type {
+  TaskExecutionCloseStatus,
+  TaskExecutionOnChildrenFinishedProcessingStatus,
+  TaskExecutionStatus,
+} from 'durable-execution'
 
 import {
   applyTaskExecutionIdFilters,
@@ -13,25 +15,12 @@ import {
 } from '../common'
 import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
-import {
-  action,
-  internalMutation,
-  mutation,
-  query,
-  type ActionCtx,
-  type MutationCtx,
-} from './_generated/server'
-import {
-  vTaskExecutionCloseStatus,
-  vTaskExecutionDBInsertValue,
-  vTaskExecutionOnChildrenFinishedProcessingStatus,
-  vTaskExecutionStatus,
-  type TaskExecutionDBInsertValue,
-} from './schema'
+import { action, internalMutation, mutation, query, type MutationCtx } from './_generated/server'
+import { vTaskExecutionDBInsertValue, type TaskExecutionDBInsertValue } from './schema'
 
 const LOCK_EXPIRATION_MS = 60_000
 
-export const acquireLock = internalMutation({
+export const acquireLock = mutation({
   args: {
     key: v.string(),
   },
@@ -57,7 +46,7 @@ export const acquireLock = internalMutation({
   },
 })
 
-export const releaseLock = internalMutation({
+export const releaseLock = mutation({
   args: {
     id: v.id('locks'),
   },
@@ -65,31 +54,6 @@ export const releaseLock = internalMutation({
     await ctx.db.delete(id)
   },
 })
-
-export async function handleActionWithLock<T>(
-  ctx: ActionCtx,
-  key: string,
-  fn: () => Promise<T>,
-  defaultValue: T,
-): Promise<T> {
-  for (let i = 0; i < 10; i++) {
-    const lockId = await ctx.runMutation(internal.lib.acquireLock, {
-      key,
-    })
-    if (!lockId) {
-      await sleepWithJitter(100)
-      continue
-    }
-
-    try {
-      return await fn()
-    } finally {
-      await ctx.runMutation(internal.lib.releaseLock, { id: lockId })
-    }
-  }
-
-  return defaultValue
-}
 
 async function insertOneHelper(ctx: MutationCtx, execution: TaskExecutionDBInsertValue) {
   let existingDBValue = await ctx.db
@@ -191,24 +155,6 @@ export const insertMany = mutation({
   },
 })
 
-export const getById = query({
-  args: {
-    executionId: v.string(),
-    filters: vTaskExecutionStorageGetByIdFilters,
-  },
-  handler: async (ctx, { executionId, filters }) => {
-    const dbValue = await ctx.db
-      .query('taskExecutions')
-      .withIndex('by_executionId', (q) => q.eq('executionId', executionId))
-      .first()
-    if (!dbValue || !applyTaskExecutionIdFilters(dbValue, filters)) {
-      return null
-    }
-
-    return dbValue
-  },
-})
-
 export const getManyById = query({
   args: {
     requests: v.array(
@@ -235,17 +181,30 @@ export const getManyById = query({
   },
 })
 
-export const getBySleepingTaskUniqueId = query({
+export const getManyBySleepingTaskUniqueId = query({
   args: {
-    sleepingTaskUniqueId: v.string(),
+    requests: v.array(
+      v.object({
+        sleepingTaskUniqueId: v.string(),
+      }),
+    ),
   },
-  handler: async (ctx, { sleepingTaskUniqueId }) => {
-    return await ctx.db
-      .query('taskExecutions')
-      .withIndex('by_sleepingTaskUniqueId', (q) =>
-        q.eq('sleepingTaskUniqueId', sleepingTaskUniqueId),
-      )
-      .first()
+  handler: async (ctx, { requests }) => {
+    const dbValues: Array<TaskExecutionDBValue | null> = []
+    for (const { sleepingTaskUniqueId } of requests) {
+      const dbValue = await ctx.db
+        .query('taskExecutions')
+        .withIndex('by_sleepingTaskUniqueId', (q) =>
+          q.eq('sleepingTaskUniqueId', sleepingTaskUniqueId),
+        )
+        .first()
+      if (!dbValue) {
+        dbValues.push(null)
+      } else {
+        dbValues.push(dbValue)
+      }
+    }
+    return dbValues
   },
 })
 
@@ -266,54 +225,11 @@ export const updateManyById = mutation({
         .withIndex('by_executionId', (q) => q.eq('executionId', executionId))
         .first()
       if (!dbValue || !applyTaskExecutionIdFilters(dbValue, filters)) {
-        return
+        continue
       }
 
       await updateOneHelper(ctx, dbValue, update)
     }
-  },
-})
-
-async function updateByIdAndInsertChildrenIfUpdatedHelper(
-  ctx: MutationCtx,
-  executionId: string,
-  filters: TaskExecutionStorageGetByIdFilters,
-  update: TaskExecutionDBUpdateRequest,
-  childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionDBInsertValue>,
-) {
-  const dbValue = await ctx.db
-    .query('taskExecutions')
-    .withIndex('by_executionId', (q) => q.eq('executionId', executionId))
-    .first()
-  if (!dbValue || !applyTaskExecutionIdFilters(dbValue, filters)) {
-    return
-  }
-
-  await updateOneHelper(ctx, dbValue, update)
-  for (const execution of childrenTaskExecutionsToInsertIfAnyUpdated) {
-    execution.parentExecutionDocId = dbValue._id
-  }
-  await insertManyHelper(ctx, childrenTaskExecutionsToInsertIfAnyUpdated)
-}
-
-export const updateByIdAndInsertChildrenIfUpdated = mutation({
-  args: {
-    executionId: v.string(),
-    filters: vTaskExecutionStorageGetByIdFilters,
-    update: vTaskExecutionDBUpdateRequest,
-    childrenTaskExecutionsToInsertIfAnyUpdated: v.array(vTaskExecutionDBInsertValue),
-  },
-  handler: async (
-    ctx,
-    { executionId, filters, update, childrenTaskExecutionsToInsertIfAnyUpdated },
-  ) => {
-    await updateByIdAndInsertChildrenIfUpdatedHelper(
-      ctx,
-      executionId,
-      filters,
-      update,
-      childrenTaskExecutionsToInsertIfAnyUpdated,
-    )
   },
 })
 
@@ -335,29 +251,41 @@ export const updateManyByIdAndInsertChildrenIfUpdated = mutation({
       update,
       childrenTaskExecutionsToInsertIfAnyUpdated,
     } of requests) {
-      await updateByIdAndInsertChildrenIfUpdatedHelper(
-        ctx,
-        executionId,
-        filters,
-        update,
-        childrenTaskExecutionsToInsertIfAnyUpdated,
-      )
+      const dbValue = await ctx.db
+        .query('taskExecutions')
+        .withIndex('by_executionId', (q) => q.eq('executionId', executionId))
+        .first()
+      if (!dbValue || !applyTaskExecutionIdFilters(dbValue, filters)) {
+        continue
+      }
+
+      await updateOneHelper(ctx, dbValue, update)
+      for (const execution of childrenTaskExecutionsToInsertIfAnyUpdated) {
+        execution.parentExecutionDocId = dbValue._id
+      }
+      await insertManyHelper(ctx, childrenTaskExecutionsToInsertIfAnyUpdated)
     }
   },
 })
 
-export const updateByStatusAndStartAtLessThanAndReturnInternal = internalMutation({
-  args: {
-    shard: v.number(),
-    status: vTaskExecutionStatus,
-    startAtLessThan: v.number(),
-    update: vTaskExecutionDBUpdateRequest,
-    updateExpiresAtWithStartedAt: v.number(),
-    limit: v.number(),
-  },
-  handler: async (
+export const updateByStatusAndStartAtLessThanAndReturn = mutation(
+  async (
     ctx,
-    { shard, status, startAtLessThan, update, updateExpiresAtWithStartedAt, limit },
+    {
+      shard,
+      status,
+      startAtLessThan,
+      update,
+      updateExpiresAtWithStartedAt,
+      limit,
+    }: {
+      shard: number
+      status: TaskExecutionStatus
+      startAtLessThan: number
+      update: TaskExecutionDBUpdateRequest
+      updateExpiresAtWithStartedAt: number
+      limit: number
+    },
   ) => {
     const dbValues = await ctx.db
       .query('taskExecutions')
@@ -377,38 +305,25 @@ export const updateByStatusAndStartAtLessThanAndReturnInternal = internalMutatio
 
     return dbValues
   },
-})
+)
 
-export const updateByStatusAndStartAtLessThanAndReturn = action({
-  args: {
-    shard: v.number(),
-    status: vTaskExecutionStatus,
-    startAtLessThan: v.number(),
-    update: vTaskExecutionDBUpdateRequest,
-    updateExpiresAtWithStartedAt: v.number(),
-    limit: v.number(),
-  },
-  handler: async (ctx, args): Promise<Array<TaskExecutionDBValue>> => {
-    return await handleActionWithLock(
-      ctx,
-      `updateByStatusAndStartAtLessThanAndReturn_${args.shard}`,
-      () => {
-        return ctx.runMutation(internal.lib.updateByStatusAndStartAtLessThanAndReturnInternal, args)
-      },
-      [],
-    )
-  },
-})
-
-export const updateByStatusAndOCFPStatusAndACCZeroAndReturnInternal = internalMutation({
-  args: {
-    shard: v.number(),
-    status: vTaskExecutionStatus,
-    ocfpStatus: vTaskExecutionOnChildrenFinishedProcessingStatus,
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, { shard, status, ocfpStatus, update, limit }) => {
+export const updateByStatusAndOCFPStatusAndACCZeroAndReturn = mutation(
+  async (
+    ctx,
+    {
+      shard,
+      status,
+      ocfpStatus,
+      update,
+      limit,
+    }: {
+      shard: number
+      status: TaskExecutionStatus
+      ocfpStatus: TaskExecutionOnChildrenFinishedProcessingStatus
+      update: TaskExecutionDBUpdateRequest
+      limit: number
+    },
+  ) => {
     const dbValues = await ctx.db
       .query('taskExecutions')
       .withIndex('by_shard_status_ocfpStatus_acc_updatedAt', (q) =>
@@ -428,39 +343,23 @@ export const updateByStatusAndOCFPStatusAndACCZeroAndReturnInternal = internalMu
     await updateManyHelper(ctx, dbValues, update)
     return dbValues
   },
-})
+)
 
-export const updateByStatusAndOCFPStatusAndACCZeroAndReturn = action({
-  args: {
-    shard: v.number(),
-    status: vTaskExecutionStatus,
-    ocfpStatus: vTaskExecutionOnChildrenFinishedProcessingStatus,
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, args): Promise<Array<TaskExecutionDBValue>> => {
-    return await handleActionWithLock(
-      ctx,
-      `updateByStatusAndOCFPStatusAndACCZeroAndReturn_${args.shard}`,
-      () => {
-        return ctx.runMutation(
-          internal.lib.updateByStatusAndOCFPStatusAndACCZeroAndReturnInternal,
-          args,
-        )
-      },
-      [],
-    )
-  },
-})
-
-export const updateByCloseStatusAndReturnInternal = internalMutation({
-  args: {
-    shard: v.number(),
-    closeStatus: vTaskExecutionCloseStatus,
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, { shard, closeStatus, update, limit }) => {
+export const updateByCloseStatusAndReturn = mutation(
+  async (
+    ctx,
+    {
+      shard,
+      closeStatus,
+      update,
+      limit,
+    }: {
+      shard: number
+      closeStatus: TaskExecutionCloseStatus
+      update: TaskExecutionDBUpdateRequest
+      limit: number
+    },
+  ) => {
     const dbValues = await ctx.db
       .query('taskExecutions')
       .withIndex('by_shard_closeStatus_updatedAt', (q) =>
@@ -475,35 +374,23 @@ export const updateByCloseStatusAndReturnInternal = internalMutation({
     await updateManyHelper(ctx, dbValues, update)
     return dbValues
   },
-})
+)
 
-export const updateByCloseStatusAndReturn = action({
-  args: {
-    shard: v.number(),
-    closeStatus: vTaskExecutionCloseStatus,
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, args): Promise<Array<TaskExecutionDBValue>> => {
-    return await handleActionWithLock(
-      ctx,
-      `updateByCloseStatusAndReturn_${args.shard}`,
-      () => {
-        return ctx.runMutation(internal.lib.updateByCloseStatusAndReturnInternal, args)
-      },
-      [],
-    )
-  },
-})
-
-export const updateByIsSleepingTaskAndExpiresAtLessThanInternal = internalMutation({
-  args: {
-    isSleepingTask: v.boolean(),
-    expiresAtLessThan: v.number(),
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, { isSleepingTask, expiresAtLessThan, update, limit }) => {
+export const updateByIsSleepingTaskAndExpiresAtLessThan = mutation(
+  async (
+    ctx,
+    {
+      isSleepingTask,
+      expiresAtLessThan,
+      update,
+      limit,
+    }: {
+      isSleepingTask: boolean
+      expiresAtLessThan: number
+      update: TaskExecutionDBUpdateRequest
+      limit: number
+    },
+  ) => {
     const dbValues = await ctx.db
       .query('taskExecutions')
       .withIndex('by_isSleepingTask_expiresAt', (q) =>
@@ -521,37 +408,21 @@ export const updateByIsSleepingTaskAndExpiresAtLessThanInternal = internalMutati
     await updateManyHelper(ctx, dbValues, update)
     return dbValues.length
   },
-})
+)
 
-export const updateByIsSleepingTaskAndExpiresAtLessThan = action({
-  args: {
-    isSleepingTask: v.boolean(),
-    expiresAtLessThan: v.number(),
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, args): Promise<number> => {
-    return await handleActionWithLock(
-      ctx,
-      `updateByIsSleepingTaskAndExpiresAtLessThan`,
-      () => {
-        return ctx.runMutation(
-          internal.lib.updateByIsSleepingTaskAndExpiresAtLessThanInternal,
-          args,
-        )
-      },
-      0,
-    )
-  },
-})
-
-export const updateByOCFPExpiresAtInternal = internalMutation({
-  args: {
-    ocfpExpiresAtLessThan: v.number(),
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, { ocfpExpiresAtLessThan, update, limit }) => {
+export const updateByOCFPExpiresAt = mutation(
+  async (
+    ctx,
+    {
+      ocfpExpiresAtLessThan,
+      update,
+      limit,
+    }: {
+      ocfpExpiresAtLessThan: number
+      update: TaskExecutionDBUpdateRequest
+      limit: number
+    },
+  ) => {
     const dbValues = await ctx.db
       .query('taskExecutions')
       .withIndex('by_ocfpExpiresAt', (q) =>
@@ -566,33 +437,21 @@ export const updateByOCFPExpiresAtInternal = internalMutation({
     await updateManyHelper(ctx, dbValues, update)
     return dbValues.length
   },
-})
+)
 
-export const updateByOCFPExpiresAt = action({
-  args: {
-    ocfpExpiresAtLessThan: v.number(),
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, args): Promise<number> => {
-    return await handleActionWithLock(
-      ctx,
-      `updateByOCFPExpiresAt`,
-      () => {
-        return ctx.runMutation(internal.lib.updateByOCFPExpiresAtInternal, args)
-      },
-      0,
-    )
-  },
-})
-
-export const updateByCloseExpiresAtInternal = internalMutation({
-  args: {
-    closeExpiresAtLessThan: v.number(),
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, { closeExpiresAtLessThan, update, limit }) => {
+export const updateByCloseExpiresAt = mutation(
+  async (
+    ctx,
+    {
+      closeExpiresAtLessThan,
+      update,
+      limit,
+    }: {
+      closeExpiresAtLessThan: number
+      update: TaskExecutionDBUpdateRequest
+      limit: number
+    },
+  ) => {
     const dbValues = await ctx.db
       .query('taskExecutions')
       .withIndex('by_closeExpiresAt', (q) =>
@@ -607,35 +466,25 @@ export const updateByCloseExpiresAtInternal = internalMutation({
     await updateManyHelper(ctx, dbValues, update)
     return dbValues.length
   },
-})
+)
 
-export const updateByCloseExpiresAt = action({
-  args: {
-    closeExpiresAtLessThan: v.number(),
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, args): Promise<number> => {
-    return await handleActionWithLock(
-      ctx,
-      `updateByCloseExpiresAt`,
-      () => {
-        return ctx.runMutation(internal.lib.updateByCloseExpiresAtInternal, args)
-      },
-      0,
-    )
-  },
-})
-
-export const updateByExecutorIdAndNPCAndReturnInternal = internalMutation({
-  args: {
-    shard: v.number(),
-    executorId: v.string(),
-    npc: v.boolean(),
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, { shard, executorId, npc, update, limit }) => {
+export const updateByExecutorIdAndNPCAndReturn = mutation(
+  async (
+    ctx,
+    {
+      shard,
+      executorId,
+      npc,
+      update,
+      limit,
+    }: {
+      shard: number
+      executorId: string
+      npc: boolean
+      update: TaskExecutionDBUpdateRequest
+      limit: number
+    },
+  ) => {
     const dbValues = await ctx.db
       .query('taskExecutions')
       .withIndex('by_shard_executorId_npc_updatedAt', (q) =>
@@ -654,69 +503,72 @@ export const updateByExecutorIdAndNPCAndReturnInternal = internalMutation({
     await updateManyHelper(ctx, dbValues, update)
     return dbValues
   },
-})
+)
 
-export const updateByExecutorIdAndNPCAndReturn = action({
+export const getManyByParentExecutionId = query({
   args: {
-    shard: v.number(),
-    executorId: v.string(),
-    npc: v.boolean(),
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
+    requests: v.array(
+      v.object({
+        parentExecutionId: v.string(),
+      }),
+    ),
   },
-  handler: async (ctx, args): Promise<Array<TaskExecutionDBValue>> => {
-    return await handleActionWithLock(
-      ctx,
-      `updateByExecutorIdAndNPCAndReturn_${args.shard}`,
-      () => {
-        return ctx.runMutation(internal.lib.updateByExecutorIdAndNPCAndReturnInternal, args)
-      },
-      [],
-    )
-  },
-})
-
-export const getByParentExecutionId = query({
-  args: {
-    parentExecutionId: v.string(),
-  },
-  handler: async (ctx, { parentExecutionId }) => {
-    return await ctx.db
-      .query('taskExecutions')
-      .withIndex('by_parentExecutionId_isFinished', (q) =>
-        q.eq('parentExecutionId', parentExecutionId),
-      )
-      .collect()
+  handler: async (ctx, { requests }) => {
+    const dbValues: Array<Array<TaskExecutionDBValue>> = []
+    for (const { parentExecutionId } of requests) {
+      const currDbValues = await ctx.db
+        .query('taskExecutions')
+        .withIndex('by_parentExecutionId_isFinished', (q) =>
+          q.eq('parentExecutionId', parentExecutionId),
+        )
+        .collect()
+      dbValues.push(currDbValues)
+    }
+    return dbValues
   },
 })
 
-export const updateByParentExecutionIdAndIsFinished = mutation({
+export const updateManyByParentExecutionIdAndIsFinished = mutation({
   args: {
-    parentExecutionId: v.string(),
-    isFinished: v.boolean(),
-    update: vTaskExecutionDBUpdateRequest,
+    requests: v.array(
+      v.object({
+        parentExecutionId: v.string(),
+        isFinished: v.boolean(),
+        update: vTaskExecutionDBUpdateRequest,
+      }),
+    ),
   },
-  handler: async (ctx, { parentExecutionId, isFinished, update }) => {
-    const dbValues = await ctx.db
-      .query('taskExecutions')
-      .withIndex('by_parentExecutionId_isFinished', (q) =>
-        q.eq('parentExecutionId', parentExecutionId).eq('isFinished', isFinished),
-      )
-      .collect()
+  handler: async (ctx, { requests }) => {
+    for (const { parentExecutionId, isFinished, update } of requests) {
+      const dbValues = await ctx.db
+        .query('taskExecutions')
+        .withIndex('by_parentExecutionId_isFinished', (q) =>
+          q.eq('parentExecutionId', parentExecutionId).eq('isFinished', isFinished),
+        )
+        .collect()
 
-    await updateManyHelper(ctx, dbValues, update)
+      await updateManyHelper(ctx, dbValues, update)
+    }
   },
 })
 
-export const updateAndDecrementParentACCByIsFinishedAndCloseStatusInternal = internalMutation({
-  args: {
-    shard: v.number(),
-    isFinished: v.boolean(),
-    closeStatus: vTaskExecutionCloseStatus,
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, { shard, isFinished, closeStatus, update, limit }) => {
+export const updateAndDecrementParentACCByIsFinishedAndCloseStatus = mutation(
+  async (
+    ctx,
+    {
+      shard,
+      isFinished,
+      closeStatus,
+      update,
+      limit,
+    }: {
+      shard: number
+      isFinished: boolean
+      closeStatus: TaskExecutionCloseStatus
+      update: TaskExecutionDBUpdateRequest
+      limit: number
+    },
+  ) => {
     const dbValues = await ctx.db
       .query('taskExecutions')
       .withIndex('by_shard_isFinished_closeStatus_updatedAt', (q) =>
@@ -772,30 +624,7 @@ export const updateAndDecrementParentACCByIsFinishedAndCloseStatusInternal = int
 
     return dbValues.length
   },
-})
-
-export const updateAndDecrementParentACCByIsFinishedAndCloseStatus = action({
-  args: {
-    shard: v.number(),
-    isFinished: v.boolean(),
-    closeStatus: vTaskExecutionCloseStatus,
-    update: vTaskExecutionDBUpdateRequest,
-    limit: v.number(),
-  },
-  handler: async (ctx, args): Promise<number> => {
-    return await handleActionWithLock(
-      ctx,
-      `updateAndDecrementParentACCByIsFinishedAndCloseStatus_${args.shard}`,
-      () => {
-        return ctx.runMutation(
-          internal.lib.updateAndDecrementParentACCByIsFinishedAndCloseStatusInternal,
-          args,
-        )
-      },
-      0,
-    )
-  },
-})
+)
 
 export const deleteById = mutation({
   args: {

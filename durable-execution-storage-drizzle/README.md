@@ -36,7 +36,10 @@ pnpm add durable-execution durable-execution-storage-drizzle drizzle-orm
 ```ts
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { DurableExecutor } from 'durable-execution'
-import { createPgTaskExecutionsTable, createPgTaskExecutionsStorage } from 'durable-execution-storage-drizzle'
+import {
+  createPgTaskExecutionsTable,
+  createPgTaskExecutionsStorage
+} from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
 const db = drizzle(process.env.DATABASE_URL!)
@@ -81,7 +84,10 @@ await executor.shutdown()
 ```ts
 import { drizzle } from 'drizzle-orm/mysql2'
 import { DurableExecutor } from 'durable-execution'
-import { createMySqlTaskExecutionsTable, createMySqlTaskExecutionsStorage } from 'durable-execution-storage-drizzle'
+import {
+  createMySqlTaskExecutionsTable,
+  createMySqlTaskExecutionsStorage
+} from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
 const db = drizzle(process.env.DATABASE_URL!)
@@ -91,7 +97,11 @@ const taskExecutionsTable = createMySqlTaskExecutionsTable()
 // Export the table from your schema file
 
 // Create the storage instance
-const storage = createMySqlTaskExecutionsStorage(db, taskExecutionsTable, (result) => result[0].affectedRows)
+const storage = createMySqlTaskExecutionsStorage(
+  db,
+  taskExecutionsTable,
+  (result) => result[0].affectedRows
+)
 
 // Create and use the executor
 const executor = new DurableExecutor(storage)
@@ -126,7 +136,10 @@ await executor.shutdown()
 ```ts
 import { drizzle } from 'drizzle-orm/libsql'
 import { DurableExecutor } from 'durable-execution'
-import { createSQLiteTaskExecutionsTable, createSQLiteTaskExecutionsStorage } from 'durable-execution-storage-drizzle'
+import {
+  createSQLiteTaskExecutionsTable,
+  createSQLiteTaskExecutionsStorage
+} from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
 const db = drizzle(process.env.DATABASE_URL!)

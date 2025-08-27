@@ -4,7 +4,8 @@
 [![License](https://img.shields.io/npm/l/durable-execution-storage-test-utils)](https://github.com/gpahal/durable-execution/blob/main/LICENSE)
 [![Coverage](https://img.shields.io/codecov/c/github/gpahal/durable-execution/main?flag=durable-execution-storage-test-utils)](https://codecov.io/gh/gpahal/durable-execution?flag=durable-execution-storage-test-utils)
 
-Test utilities for validating [durable-execution](https://github.com/gpahal/durable-execution) storage implementations.
+Test utilities for validating [durable-execution](https://github.com/gpahal/durable-execution)
+storage implementations.
 
 ## Installation
 
@@ -24,7 +25,8 @@ pnpm add durable-execution durable-execution-storage-test-utils
 
 ### Testing
 
-The primary use case is validating that your storage implementation correctly handles all aspects of durable task execution:
+The primary use case is validating that your storage implementation correctly handles all aspects
+of durable task execution:
 
 ```ts
 import { describe, test } from 'vitest'
@@ -35,9 +37,11 @@ describe('MyDatabaseStorage', () => {
   test('validates complete storage behavior', async () => {
     const storage = new MyDatabaseStorage(connectionString)
 
-    await runStorageTest(storage, async () => {
-      // Cleanup database after tests
-      await storage.close()
+    await runStorageTest(storage, {
+      storageCleanup: async () => {
+        // Cleanup database after tests
+        await storage.close()
+      },
     })
   })
 })
@@ -53,7 +57,9 @@ The test suite will automatically verify:
 - ✅ Background processing (expiration, closure)
 - ✅ Storage consistency under high concurrency
 
-See [`tests/index.test.ts`](./tests/index.test.ts) for a complete example using `InMemoryTaskExecutionsStorage`. The suite internally spins up a `DurableExecutor` and validates storage behavior across many scenarios.
+See [`tests/index.test.ts`](./tests/index.test.ts) for a complete example using
+`InMemoryTaskExecutionsStorage`. The suite internally spins up a `DurableExecutor` and validates
+storage behavior across many scenarios.
 
 ### Benchmarking
 
@@ -66,18 +72,26 @@ import { InMemoryTaskExecutionsStorage } from 'durable-execution'
 await runStorageBench("in memory", () => new InMemoryTaskExecutionsStorage())
 ```
 
-See [`scripts/bench.ts`](./scripts/bench.ts) for a complete example using `InMemoryTaskExecutionsStorage`. Benchmarks report per-executor timing stats aggregated across runs.
+See [`scripts/bench.ts`](./scripts/bench.ts) for a complete example using
+`InMemoryTaskExecutionsStorage`. Benchmarks report per-executor timing stats aggregated across
+runs.
 
 ## API Reference
 
 ### `runStorageTest`
 
-The main test suite that comprehensively validates storage implementations through complex scenarios.
+The main test suite that comprehensively validates storage implementations through complex
+scenarios.
 
 **Parameters:**
 
 - `storage: TaskExecutionsStorage` - The storage implementation to test
-- `cleanup?: () => void | Promise<void>` - Optional cleanup function called after tests complete
+- `options?: object` - Optional configuration options
+  - `storageCleanup?: () => void | Promise<void>` - Cleanup function called after tests complete
+    (default: no cleanup)
+  - `enableStorageBatching?: boolean` - Whether to enable storage batching (default: false)
+  - `storageBatchingBackgroundProcessIntraBatchSleepMs?: number` - Artificial delay to add to
+    storage batching operations (default: 10ms)
 
 **Features tested:**
 
@@ -106,17 +120,23 @@ describe('My Storage Implementation', () => {
 
 ### `runStorageBench`
 
-The benchmark suite that measures the performance of storage implementations under various workloads.
+The benchmark suite that measures the performance of storage implementations under various
+workloads.
 
 **Parameters:**
 
 - `name: string` - The name of the storage implementation
-- `getStorage: () => TaskExecutionsStorage | Promise<TaskExecutionsStorage>` - A function that returns the storage implementation to test
-- `options?: object` - Optional configuration options:
-  - `storageCleanup?: (storage: TaskExecutionsStorage) => void | Promise<void>` - Cleanup function called after benchmark completes
+- `getStorage: () => TaskExecutionsStorage | Promise<TaskExecutionsStorage>` - A function that
+  returns the storage implementation to test
+- `options?: object` - Optional configuration options
+  - `storageCleanup?: (storage: TaskExecutionsStorage) => void | Promise<void>` - Cleanup function
+    called after benchmark completes (default: no cleanup)
   - `storageSlowdownMs?: number` - Artificial delay to add to storage operations (default: 0)
   - `executorsCount?: number` - Number of concurrent executors to run (default: 1)
   - `backgroundProcessesCount?: number` - Number of background processes per executor (default: 3)
+  - `enableStorageBatching?: boolean` - Whether to enable storage batching. (default: false)
+  - `storageBatchingBackgroundProcessIntraBatchSleepMs?: number` - Artificial delay to add to
+    storage batching operations (default: 10ms)
   - `childTasksCount?: number` - Number of child tasks per parent task (default: 50)
   - `parentTasksCount?: number` - Number of parent tasks to create (default: 100)
   - `sequentialTasksCount?: number` - Number of sequential tasks to create (default: 100)
@@ -139,7 +159,7 @@ await runStorageBench(
       // Clean up database after benchmark
       await storage.close()
     },
-    executorsCount: 3,
+    executorsCount: 1,
     parentTasksCount: 50,
     childTasksCount: 25,
   },
@@ -150,8 +170,10 @@ await runStorageBench(
 
 Utilities for managing temporary files and directories in tests:
 
-- `withTemporaryDirectory(fn: (dirPath: string) => Promise<void>)` - Creates and cleans up a temporary directory
-- `withTemporaryFile(filename: string, fn: (filePath: string) => Promise<void>)` - Creates and cleans up a temporary file
+- `withTemporaryDirectory(fn: (dirPath: string) => Promise<void>)` - Creates and cleans up a
+  temporary directory
+- `withTemporaryFile(filename: string, fn: (filePath: string) => Promise<void>)` - Creates and
+  cleans up a temporary file
 - `cleanupTemporaryFiles()` - Removes any leftover temporary files
 
 ## Links

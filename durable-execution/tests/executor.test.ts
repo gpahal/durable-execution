@@ -43,7 +43,7 @@ describe('executor', () => {
     ).toThrow('Durable executor shutdown')
   })
 
-  it('should handle executor shutdown with running task', { timeout: 10_000 }, async () => {
+  it('should handle executor shutdown with running task', async () => {
     let executionCount = 0
     const taskOptions = {
       id: 'test',
@@ -84,7 +84,7 @@ describe('executor', () => {
     expect(execution.finishedAt.getTime()).toBeGreaterThanOrEqual(execution.startedAt.getTime())
   })
 
-  it('should handle unknown task', { timeout: 10_000 }, async () => {
+  it('should handle unknown task', async () => {
     const task = executor.task({
       id: 'test',
       timeoutMs: 10_000,
@@ -248,58 +248,54 @@ describe('executor', () => {
     }).rejects.toThrow(DurableExecutionError)
   })
 
-  it(
-    'should handle storage insert failures during task enqueueing',
-    { timeout: 10_000 },
-    async () => {
-      const failingStorage = new InMemoryTaskExecutionsStorage()
-      const originalInsert = failingStorage.insertMany.bind(failingStorage)
-      let insertCallCount = 0
-      failingStorage.insertMany = () => {
-        insertCallCount++
-        throw new Error('Storage insert failed')
-      }
-
-      const failingExecutor = new DurableExecutor(failingStorage, {
-        logLevel: 'error',
-      })
-      failingExecutor.startBackgroundProcesses()
-
-      const testTask = failingExecutor.task({
-        id: 'test',
-        timeoutMs: 10_000,
-        run: () => 'test',
-      })
-
-      await expect(async () => {
-        await failingExecutor.enqueueTask(testTask)
-      }).rejects.toThrow('Storage insert failed')
-
-      expect(insertCallCount).toBeGreaterThan(0)
-
-      failingStorage.insertMany = originalInsert
-      const handle = await failingExecutor.enqueueTask(testTask)
-      const execution = await handle.waitAndGetFinishedExecution({
-        pollingIntervalMs: 100,
-      })
-      expect(execution.status).toBe('completed')
-
-      await failingExecutor.shutdown()
-    },
-  )
-
-  it('should handle storage updateById failures during status transitions', async () => {
+  it('should handle storage insert failures during task enqueueing', async () => {
     const failingStorage = new InMemoryTaskExecutionsStorage()
-    const originalUpdateById = failingStorage.updateById.bind(failingStorage)
-    let updateByIdCallCount = 0
+    const originalInsert = failingStorage.insertMany.bind(failingStorage)
+    let insertCallCount = 0
+    failingStorage.insertMany = () => {
+      insertCallCount++
+      throw new Error('Storage insert failed')
+    }
+
+    const failingExecutor = new DurableExecutor(failingStorage, {
+      logLevel: 'error',
+    })
+    failingExecutor.startBackgroundProcesses()
+
+    const testTask = failingExecutor.task({
+      id: 'test',
+      timeoutMs: 10_000,
+      run: () => 'test',
+    })
+
+    await expect(async () => {
+      await failingExecutor.enqueueTask(testTask)
+    }).rejects.toThrow('Storage insert failed')
+
+    expect(insertCallCount).toBeGreaterThan(0)
+
+    failingStorage.insertMany = originalInsert
+    const handle = await failingExecutor.enqueueTask(testTask)
+    const execution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(execution.status).toBe('completed')
+
+    await failingExecutor.shutdown()
+  })
+
+  it('should handle storage updateManyById failures during status transitions', async () => {
+    const failingStorage = new InMemoryTaskExecutionsStorage()
+    const originalUpdateManyById = failingStorage.updateManyById.bind(failingStorage)
+    let updateManyByIdCallCount = 0
     let shouldFail = false
 
-    failingStorage.updateById = async (...args) => {
-      updateByIdCallCount++
-      if (shouldFail && updateByIdCallCount > 2) {
-        throw new Error('Storage updateById failed')
+    failingStorage.updateManyById = async (...args) => {
+      updateManyByIdCallCount++
+      if (shouldFail && updateManyByIdCallCount > 2) {
+        throw new Error('Storage updateManyById failed')
       }
-      return originalUpdateById(...args)
+      return originalUpdateManyById(...args)
     }
 
     const failingExecutor = new DurableExecutor(failingStorage, {
@@ -329,46 +325,42 @@ describe('executor', () => {
     await failingExecutor.shutdown()
   })
 
-  it(
-    'should handle storage getById failures during task retrieval',
-    { timeout: 10_000 },
-    async () => {
-      const failingStorage = new InMemoryTaskExecutionsStorage()
-      const originalGetById = failingStorage.getById.bind(failingStorage)
-      let shouldFail = false
+  it('should handle storage getManyById failures during task retrieval', async () => {
+    const failingStorage = new InMemoryTaskExecutionsStorage()
+    const originalGetManyById = failingStorage.getManyById.bind(failingStorage)
+    let shouldFail = false
 
-      failingStorage.getById = async (...args) => {
-        if (shouldFail) {
-          throw new Error('Storage getById failed')
-        }
-        return originalGetById(...args)
+    failingStorage.getManyById = async (...args) => {
+      if (shouldFail) {
+        throw new Error('Storage getManyById failed')
       }
+      return originalGetManyById(...args)
+    }
 
-      const failingExecutor = new DurableExecutor(failingStorage, {
-        logLevel: 'error',
-      })
-      failingExecutor.startBackgroundProcesses()
+    const failingExecutor = new DurableExecutor(failingStorage, {
+      logLevel: 'error',
+    })
+    failingExecutor.startBackgroundProcesses()
 
-      const testTask = failingExecutor.task({
-        id: 'test',
-        timeoutMs: 10_000,
-        run: () => 'test',
-      })
+    const testTask = failingExecutor.task({
+      id: 'test',
+      timeoutMs: 10_000,
+      run: () => 'test',
+    })
 
-      const handle = await failingExecutor.enqueueTask(testTask)
+    const handle = await failingExecutor.enqueueTask(testTask)
 
-      shouldFail = true
-      await expect(async () => {
-        await handle.getExecution()
-      }).rejects.toThrow('Storage getById failed')
+    shouldFail = true
+    await expect(async () => {
+      await handle.getExecution()
+    }).rejects.toThrow('Storage getManyById failed')
 
-      shouldFail = false
-      const execution = await handle.getExecution()
-      expect(execution).toBeDefined()
+    shouldFail = false
+    const execution = await handle.getExecution()
+    expect(execution).toBeDefined()
 
-      await failingExecutor.shutdown()
-    },
-  )
+    await failingExecutor.shutdown()
+  })
 
   it('should handle race condition with duplicate task execution pickup', async () => {
     const testStorage = new InMemoryTaskExecutionsStorage()
@@ -418,12 +410,13 @@ describe('executor', () => {
     await executor2.shutdown()
   })
 
-  it('should handle storage failures within retry attempts during atomic updateByIdAndInsertManyIfUpdated operations', async () => {
+  it('should handle storage failures within retry attempts during atomic updateManyByIdAndInsertManyIfUpdated operations', async () => {
     const failingStorage = new InMemoryTaskExecutionsStorage()
-    const originalMethod = failingStorage.updateByIdAndInsertChildrenIfUpdated.bind(failingStorage)
+    const originalMethod =
+      failingStorage.updateManyByIdAndInsertChildrenIfUpdated.bind(failingStorage)
     let failureCount = 0
 
-    failingStorage.updateByIdAndInsertChildrenIfUpdated = async (...args) => {
+    failingStorage.updateManyByIdAndInsertChildrenIfUpdated = async (...args) => {
       if (failureCount < 1) {
         failureCount++
         throw new Error('Atomic operation failed')
@@ -467,12 +460,13 @@ describe('executor', () => {
     await failingExecutor.shutdown()
   })
 
-  it('should handle storage failures more than retry attempts during atomic updateByIdAndInsertManyIfUpdated operations', async () => {
+  it('should handle storage failures more than retry attempts during atomic updateManyByIdAndInsertManyIfUpdated operations', async () => {
     const failingStorage = new InMemoryTaskExecutionsStorage()
-    const originalMethod = failingStorage.updateByIdAndInsertChildrenIfUpdated.bind(failingStorage)
+    const originalMethod =
+      failingStorage.updateManyByIdAndInsertChildrenIfUpdated.bind(failingStorage)
     let failureCount = 0
 
-    failingStorage.updateByIdAndInsertChildrenIfUpdated = async (...args) => {
+    failingStorage.updateManyByIdAndInsertChildrenIfUpdated = async (...args) => {
       if (failureCount < 2) {
         failureCount++
         throw new Error('Atomic operation failed')

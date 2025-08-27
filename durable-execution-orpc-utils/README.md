@@ -194,7 +194,8 @@ The library automatically maps oRPC errors to durable execution errors:
 
 ## API Reference
 
-- `createTasksRouter(osBuilder, executor, tasks)` - Creates oRPC router with routes for task operations including sleeping task wake-up
+- `createTasksRouter(osBuilder, executor, tasks)` - Creates oRPC router with routes for task
+  operations including sleeping task wake-up
 - `convertProcedureClientToTask(executor, options, procedure)` - Converts oRPC procedure to task
 
 ## Links

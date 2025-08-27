@@ -16,18 +16,18 @@ async function main() {
       enableTestMode: true,
     },
   )
-  storage.startBackgroundProcesses()
 
   try {
     await runWithStorage(storage)
   } finally {
     await storage.deleteAll()
-    await storage.shutdown()
   }
 }
 
 async function runWithStorage(storage: ConvexTaskExecutionsStorage) {
-  const executor = new DurableExecutor(storage)
+  const executor = new DurableExecutor(storage, {
+    enableStorageBatching: true,
+  })
   executor.startBackgroundProcesses()
   try {
     await runWithExecutor(executor)
