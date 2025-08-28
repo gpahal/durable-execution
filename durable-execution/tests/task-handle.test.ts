@@ -131,6 +131,34 @@ describe('taskHandle', () => {
     ).rejects.toThrow('Task execution cancelled')
   })
 
+  it('should handle wait and get finished task execution with cancelled abort signal after polling delay', async () => {
+    const task = executor.task({
+      id: 'test',
+      timeoutMs: 1000,
+      run: async () => {
+        await sleep(1)
+        return 'test'
+      },
+    })
+
+    const originalHandle = await executor.enqueueTask(task)
+    const executionId = originalHandle.getExecutionId()
+    const handle = await executor.getTaskExecutionHandle(task, executionId)
+    expect(handle.getTaskId()).toBe('test')
+    expect(handle.getExecutionId()).toBeDefined()
+
+    const abortController = new AbortController()
+    setTimeout(() => {
+      abortController.abort()
+    }, 500)
+    await expect(
+      handle.waitAndGetFinishedExecution({
+        signal: abortController.signal,
+        pollingIntervalMs: 1000,
+      }),
+    ).rejects.toThrow('Task execution cancelled')
+  })
+
   it('should handle wait and get finished task execution with cancel signal after finishing', async () => {
     const task = executor.task({
       id: 'test',
@@ -176,5 +204,22 @@ describe('taskHandle', () => {
       handle.waitAndGetFinishedExecution({ signal: cancelSignal, pollingIntervalMs: 100 }),
     ).rejects.toThrow('Task execution cancelled')
     clearTimeout()
+  })
+
+  it('should handle invalid sleeping task unique id', async () => {
+    const task = executor.sleepingTask<string>({
+      id: 'test',
+      timeoutMs: 1000,
+    })
+
+    // @ts-expect-error - Testing invalid input
+    await expect(executor.enqueueTask(task, undefined)).rejects.toThrow()
+
+    // @ts-expect-error - Testing invalid input
+    await expect(executor.enqueueTask(task, 10)).rejects.toThrow()
+
+    await expect(executor.enqueueTask(task, '')).rejects.toThrow()
+
+    await expect(executor.enqueueTask(task, 'a'.repeat(300))).rejects.toThrow()
   })
 })

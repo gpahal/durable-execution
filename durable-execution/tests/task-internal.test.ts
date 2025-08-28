@@ -1,6 +1,7 @@
 import { DurableExecutionError, type CommonTaskOptions, type TaskEnqueueOptions } from '../src'
 import {
   generateTaskExecutionId,
+  overrideTaskEnqueueOptions,
   validateCommonTaskOptions,
   validateEnqueueOptions,
   validateTaskId,
@@ -22,6 +23,22 @@ describe('validateCommonTaskOptions', () => {
           maxAttempts: 2,
           delayMultiplier: 2,
         },
+        timeoutMs: 2000,
+      },
+      {
+        id: 'test2',
+        retryOptions: {
+          maxAttempts: 1,
+        },
+        sleepMsBeforeRun: 0,
+        timeoutMs: 2000,
+      },
+      {
+        id: 'test2',
+        retryOptions: {
+          maxAttempts: 1,
+        },
+        sleepMsBeforeRun: 1,
         timeoutMs: 2000,
       },
       {
@@ -295,5 +312,59 @@ describe('generateTaskExecutionId', () => {
     expect(id2).toMatch(/^te_/)
     expect(id1.length).toBeGreaterThan(10)
     expect(id2.length).toBeGreaterThan(10)
+  })
+})
+
+describe('overrideTaskEnqueueOptions', () => {
+  it('should override retry options when provided', () => {
+    const existingOptions = {
+      retryOptions: { maxAttempts: 1 },
+      sleepMsBeforeRun: 1000,
+      timeoutMs: 2000,
+    }
+
+    const overrideOptions = {
+      retryOptions: { maxAttempts: 3, baseDelayMs: 500 },
+    }
+
+    const result = overrideTaskEnqueueOptions(existingOptions, overrideOptions)
+
+    expect(result.retryOptions).toEqual({ maxAttempts: 3, baseDelayMs: 500 })
+    expect(result.sleepMsBeforeRun).toBe(1000)
+    expect(result.timeoutMs).toBe(2000)
+  })
+
+  it('should use existing options when override is null', () => {
+    const existingOptions = {
+      retryOptions: { maxAttempts: 2 },
+      sleepMsBeforeRun: 500,
+      timeoutMs: 1500,
+    }
+
+    const result = overrideTaskEnqueueOptions(existingOptions)
+
+    expect(result).toEqual(existingOptions)
+  })
+
+  it('should override all options when provided', () => {
+    const existingOptions = {
+      retryOptions: { maxAttempts: 1 },
+      sleepMsBeforeRun: 1000,
+      timeoutMs: 2000,
+    }
+
+    const overrideOptions = {
+      retryOptions: { maxAttempts: 3 },
+      sleepMsBeforeRun: 2000,
+      timeoutMs: 3000,
+    }
+
+    const result = overrideTaskEnqueueOptions(existingOptions, overrideOptions)
+
+    expect(result).toEqual({
+      retryOptions: { maxAttempts: 3 },
+      sleepMsBeforeRun: 2000,
+      timeoutMs: 3000,
+    })
   })
 })

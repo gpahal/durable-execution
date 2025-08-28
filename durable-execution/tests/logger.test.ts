@@ -104,4 +104,39 @@ describe('logger', () => {
     expect(() => enabledLogger.error('test')).not.toThrow()
     expect(executionCount).toBe(3)
   })
+
+  it('should execute console logger methods', () => {
+    const originalConsoleDebug = console.debug
+    const originalConsoleInfo = console.info
+    const originalConsoleError = console.error
+
+    let debugCalled = false
+    let infoCalled = false
+    let errorCalled = false
+
+    console.debug = () => {
+      debugCalled = true
+    }
+    console.info = () => {
+      infoCalled = true
+    }
+    console.error = () => {
+      errorCalled = true
+    }
+
+    try {
+      const logger = createConsoleLogger('test-logger')
+      logger.debug('debug message')
+      logger.info('info message')
+      logger.error('error message')
+
+      expect(debugCalled).toBe(true)
+      expect(infoCalled).toBe(true)
+      expect(errorCalled).toBe(true)
+    } finally {
+      console.debug = originalConsoleDebug
+      console.info = originalConsoleInfo
+      console.error = originalConsoleError
+    }
+  })
 })

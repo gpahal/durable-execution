@@ -1277,18 +1277,18 @@ async function testUpdateByStatusAndStartAtLessThanAndReturn(storage: TaskExecut
   await storage.insertMany(executions)
 
   now = Date.now() + 1000
-  const updatedExecutions = await storage.updateByStatusAndStartAtLessThanAndReturn(
-    'ready',
-    future + 1000,
-    {
+  const updatedExecutions = await storage.updateByStatusAndStartAtLessThanAndReturn({
+    status: 'ready',
+    startAtLessThan: future + 1000,
+    update: {
       status: 'running',
       executorId: 'test-executor',
       startedAt: now,
       updatedAt: now,
     },
-    now + 10_000,
-    2,
-  )
+    updateExpiresAtWithStartedAt: now + 10_000,
+    limit: 2,
+  })
 
   expect(updatedExecutions).toHaveLength(2)
   expect(updatedExecutions[0]!.executionId).toBe(executions[0]!.executionId)
@@ -1324,13 +1324,13 @@ async function testUpdateByStatusAndStartAtLessThanAndReturn(storage: TaskExecut
   expect(nonUpdatedExecution2?.status).toBe('running')
   expect(nonUpdatedExecution3?.status).toBe('completed')
 
-  const noMatchedExecutions = await storage.updateByStatusAndStartAtLessThanAndReturn(
-    'failed',
-    future + 1000,
-    { updatedAt: now },
-    now + 10_000,
-    10,
-  )
+  const noMatchedExecutions = await storage.updateByStatusAndStartAtLessThanAndReturn({
+    status: 'failed',
+    startAtLessThan: future + 1000,
+    update: { updatedAt: now },
+    updateExpiresAtWithStartedAt: now + 10_000,
+    limit: 10,
+  })
   expect(noMatchedExecutions).toHaveLength(0)
 }
 
@@ -1383,14 +1383,16 @@ async function testUpdateByStatusAndOnChildrenFinishedProcessingStatusAndActiveC
   now = Date.now()
   const updatedExecutions =
     await storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
-      'waiting_for_children',
-      'idle',
       {
-        onChildrenFinishedProcessingStatus: 'processing',
-        onChildrenFinishedProcessingExpiresAt: now + 10_000,
-        updatedAt: now,
+        status: 'waiting_for_children',
+        onChildrenFinishedProcessingStatus: 'idle',
+        update: {
+          onChildrenFinishedProcessingStatus: 'processing',
+          onChildrenFinishedProcessingExpiresAt: now + 10_000,
+          updatedAt: now,
+        },
+        limit: 2,
       },
-      2,
     )
 
   expect(updatedExecutions).toHaveLength(2)
@@ -1456,15 +1458,15 @@ async function testUpdateByCloseStatusAndReturn(storage: TaskExecutionsStorage) 
 
   await sleep(500)
   now = Date.now()
-  const updatedExecutions = await storage.updateByCloseStatusAndReturn(
-    'ready',
-    {
+  const updatedExecutions = await storage.updateByCloseStatusAndReturn({
+    closeStatus: 'ready',
+    update: {
       closeStatus: 'closing',
       closeExpiresAt: now + 10_000,
       updatedAt: now,
     },
-    2,
-  )
+    limit: 2,
+  })
 
   expect(updatedExecutions).toHaveLength(2)
   expect(updatedExecutions[0]!.executionId).toBe(executions[0]!.executionId)
@@ -1529,10 +1531,10 @@ async function testUpdateByIsSleepingTaskAndExpiresAtLessThan(storage: TaskExecu
 
   await sleep(500)
   now = Date.now() + 1000
-  let updatedCount = await storage.updateByIsSleepingTaskAndExpiresAtLessThan(
-    false,
-    now,
-    {
+  let updatedCount = await storage.updateByIsSleepingTaskAndExpiresAtLessThan({
+    isSleepingTask: false,
+    expiresAtLessThan: now,
+    update: {
       status: 'ready',
       error: {
         message: 'Task expired',
@@ -1543,8 +1545,8 @@ async function testUpdateByIsSleepingTaskAndExpiresAtLessThan(storage: TaskExecu
       startAt: now,
       updatedAt: now,
     },
-    2,
-  )
+    limit: 2,
+  })
 
   expect(updatedCount).toBe(2)
   const updatedExecution1 = (
@@ -1585,10 +1587,10 @@ async function testUpdateByIsSleepingTaskAndExpiresAtLessThan(storage: TaskExecu
   expect(nonUpdatedExecution3?.status).toBe('ready')
 
   now = Date.now() + 1000
-  updatedCount = await storage.updateByIsSleepingTaskAndExpiresAtLessThan(
-    true,
-    now,
-    {
+  updatedCount = await storage.updateByIsSleepingTaskAndExpiresAtLessThan({
+    isSleepingTask: true,
+    expiresAtLessThan: now,
+    update: {
       status: 'timed_out',
       error: {
         message: 'Task timed out',
@@ -1598,8 +1600,8 @@ async function testUpdateByIsSleepingTaskAndExpiresAtLessThan(storage: TaskExecu
       },
       updatedAt: now,
     },
-    2,
-  )
+    limit: 2,
+  })
 
   expect(updatedCount).toBe(1)
   const updatedExecution3 = (
@@ -1648,15 +1650,15 @@ async function testUpdateByOnChildrenFinishedProcessingExpiresAtLessThan(
 
   await sleep(500)
   now = Date.now() + 1000
-  const updatedCount = await storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
-    now,
-    {
+  const updatedCount = await storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan({
+    onChildrenFinishedProcessingExpiresAtLessThan: now,
+    update: {
       onChildrenFinishedProcessingStatus: 'processed',
       unsetOnChildrenFinishedProcessingExpiresAt: true,
       updatedAt: now,
     },
-    2,
-  )
+    limit: 2,
+  })
 
   expect(updatedCount).toBe(2)
   const updatedExecution1 = (
@@ -1715,15 +1717,15 @@ async function testUpdateByCloseExpiresAtLessThan(storage: TaskExecutionsStorage
 
   await sleep(500)
   now = Date.now() + 1000
-  const updatedCount = await storage.updateByCloseExpiresAtLessThan(
-    now,
-    {
+  const updatedCount = await storage.updateByCloseExpiresAtLessThan({
+    closeExpiresAtLessThan: now,
+    update: {
       closeStatus: 'closed',
       unsetCloseExpiresAt: true,
       updatedAt: now,
     },
-    2,
-  )
+    limit: 2,
+  })
 
   expect(updatedCount).toBe(2)
   const updatedExecution1 = (
@@ -1788,15 +1790,15 @@ async function testUpdateByExecutorIdAndNeedsPromiseCancellationAndReturn(
 
   await sleep(500)
   now = Date.now()
-  const updatedExecutions = await storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
-    'executor1',
-    true,
-    {
+  const updatedExecutions = await storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn({
+    executorId: 'executor1',
+    needsPromiseCancellation: true,
+    update: {
       needsPromiseCancellation: false,
       updatedAt: now,
     },
-    2,
-  )
+    limit: 2,
+  })
 
   expect(updatedExecutions).toHaveLength(2)
   expect(updatedExecutions[0]!.executionId).toBe(executions[0]!.executionId)
@@ -2167,15 +2169,15 @@ async function testUpdateAndDecrementParentActiveChildrenCountByIsFinishedAndClo
   await sleep(500)
   now = Date.now()
   let updatedCount =
-    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-      true,
-      'idle',
-      {
+    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus({
+      isFinished: true,
+      closeStatus: 'idle',
+      update: {
         closeStatus: 'ready',
         updatedAt: now,
       },
-      2,
-    )
+      limit: 2,
+    })
 
   expect(updatedCount).toBe(2)
 
@@ -2208,15 +2210,15 @@ async function testUpdateAndDecrementParentActiveChildrenCountByIsFinishedAndClo
 
   now = Date.now()
   updatedCount =
-    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-      true,
-      'idle',
-      {
+    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus({
+      isFinished: true,
+      closeStatus: 'idle',
+      update: {
         closeStatus: 'ready',
         updatedAt: now,
       },
-      10,
-    )
+      limit: 10,
+    })
 
   expect(updatedCount).toBe(1)
 
@@ -2236,12 +2238,12 @@ async function testUpdateAndDecrementParentActiveChildrenCountByIsFinishedAndClo
 
   now = Date.now()
   updatedCount =
-    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-      true,
-      'idle',
-      { updatedAt: now },
-      10,
-    )
+    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus({
+      isFinished: true,
+      closeStatus: 'idle',
+      update: { updatedAt: now },
+      limit: 10,
+    })
   expect(updatedCount).toBe(0)
 }
 
@@ -2318,29 +2320,29 @@ class TaskExecutionsStorageWrapper implements TaskExecutionsStorage {
     this.storageSlowdownMs = storageSlowdownMs
   }
 
-  async insertMany(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+  async insertMany(executions: ReadonlyArray<TaskExecutionStorageValue>): Promise<void> {
     await sleep(this.storageSlowdownMs)
     await this.storage.insertMany(executions)
   }
 
   async getManyById(
-    requests: Array<{ executionId: string; filters: TaskExecutionStorageGetByIdFilters }>,
+    requests: ReadonlyArray<{ executionId: string; filters?: TaskExecutionStorageGetByIdFilters }>,
   ): Promise<Array<TaskExecutionStorageValue | undefined>> {
     await sleep(this.storageSlowdownMs)
     return this.storage.getManyById(requests)
   }
 
   async getManyBySleepingTaskUniqueId(
-    requests: Array<{ sleepingTaskUniqueId: string }>,
+    requests: ReadonlyArray<{ sleepingTaskUniqueId: string }>,
   ): Promise<Array<TaskExecutionStorageValue | undefined>> {
     await sleep(this.storageSlowdownMs)
     return this.storage.getManyBySleepingTaskUniqueId(requests)
   }
 
   async updateManyById(
-    requests: Array<{
+    requests: ReadonlyArray<{
       executionId: string
-      filters: TaskExecutionStorageGetByIdFilters
+      filters?: TaskExecutionStorageGetByIdFilters
       update: TaskExecutionStorageUpdate
     }>,
   ): Promise<void> {
@@ -2349,119 +2351,96 @@ class TaskExecutionsStorageWrapper implements TaskExecutionsStorage {
   }
 
   async updateManyByIdAndInsertChildrenIfUpdated(
-    requests: Array<{
+    requests: ReadonlyArray<{
       executionId: string
-      filters: TaskExecutionStorageGetByIdFilters
+      filters?: TaskExecutionStorageGetByIdFilters
       update: TaskExecutionStorageUpdate
-      childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>
+      childrenTaskExecutionsToInsertIfAnyUpdated: ReadonlyArray<TaskExecutionStorageValue>
     }>,
   ): Promise<void> {
     await sleep(this.storageSlowdownMs)
     await this.storage.updateManyByIdAndInsertChildrenIfUpdated(requests)
   }
 
-  async updateByStatusAndStartAtLessThanAndReturn(
-    status: TaskExecutionStatus,
-    startAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    updateExpiresAtWithStartedAt: number,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByStatusAndStartAtLessThanAndReturn(request: {
+    status: TaskExecutionStatus
+    startAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    updateExpiresAtWithStartedAt: number
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     await sleep(this.storageSlowdownMs)
-    return this.storage.updateByStatusAndStartAtLessThanAndReturn(
-      status,
-      startAtLessThan,
-      update,
-      updateExpiresAtWithStartedAt,
-      limit,
-    )
+    return this.storage.updateByStatusAndStartAtLessThanAndReturn(request)
   }
 
-  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
-    status: TaskExecutionStatus,
-    onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(request: {
+    status: TaskExecutionStatus
+    onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     await sleep(this.storageSlowdownMs)
     return this.storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
-      status,
-      onChildrenFinishedProcessingStatus,
-      update,
-      limit,
+      request,
     )
   }
 
-  async updateByCloseStatusAndReturn(
-    closeStatus: TaskExecutionCloseStatus,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByCloseStatusAndReturn(request: {
+    closeStatus: TaskExecutionCloseStatus
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     await sleep(this.storageSlowdownMs)
-    return this.storage.updateByCloseStatusAndReturn(closeStatus, update, limit)
+    return this.storage.updateByCloseStatusAndReturn(request)
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThan(
-    isSleepingTask: boolean,
-    expiresAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateByIsSleepingTaskAndExpiresAtLessThan(request: {
+    isSleepingTask: boolean
+    expiresAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     await sleep(this.storageSlowdownMs)
-    return this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(
-      isSleepingTask,
-      expiresAtLessThan,
-      update,
-      limit,
-    )
+    return this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(request)
   }
 
-  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
-    onChildrenFinishedProcessingExpiresAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(request: {
+    onChildrenFinishedProcessingExpiresAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     await sleep(this.storageSlowdownMs)
-    return this.storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
-      onChildrenFinishedProcessingExpiresAtLessThan,
-      update,
-      limit,
-    )
+    return this.storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan(request)
   }
 
-  async updateByCloseExpiresAtLessThan(
-    closeExpiresAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateByCloseExpiresAtLessThan(request: {
+    closeExpiresAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     await sleep(this.storageSlowdownMs)
-    return this.storage.updateByCloseExpiresAtLessThan(closeExpiresAtLessThan, update, limit)
+    return this.storage.updateByCloseExpiresAtLessThan(request)
   }
 
-  async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
-    executorId: string,
-    needsPromiseCancellation: boolean,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(request: {
+    executorId: string
+    needsPromiseCancellation: boolean
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     await sleep(this.storageSlowdownMs)
-    return this.storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
-      executorId,
-      needsPromiseCancellation,
-      update,
-      limit,
-    )
+    return this.storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn(request)
   }
 
   async getManyByParentExecutionId(
-    requests: Array<{ parentExecutionId: string }>,
+    requests: ReadonlyArray<{ parentExecutionId: string }>,
   ): Promise<Array<Array<TaskExecutionStorageValue>>> {
     await sleep(this.storageSlowdownMs)
     return this.storage.getManyByParentExecutionId(requests)
   }
 
   async updateManyByParentExecutionIdAndIsFinished(
-    requests: Array<{
+    requests: ReadonlyArray<{
       parentExecutionId: string
       isFinished: boolean
       update: TaskExecutionStorageUpdate
@@ -2471,23 +2450,20 @@ class TaskExecutionsStorageWrapper implements TaskExecutionsStorage {
     await this.storage.updateManyByParentExecutionIdAndIsFinished(requests)
   }
 
-  async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-    isFinished: boolean,
-    closeStatus: TaskExecutionCloseStatus,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(request: {
+    isFinished: boolean
+    closeStatus: TaskExecutionCloseStatus
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     await sleep(this.storageSlowdownMs)
     return this.storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-      isFinished,
-      closeStatus,
-      update,
-      limit,
+      request,
     )
   }
 
-  async deleteById(executionId: string): Promise<void> {
-    await this.storage.deleteById(executionId)
+  async deleteById(request: { executionId: string }): Promise<void> {
+    await this.storage.deleteById(request)
   }
 
   async deleteAll(): Promise<void> {
@@ -2970,7 +2946,11 @@ export async function withTemporaryDirectory(fn: (dirPath: string) => Promise<vo
   try {
     await fn(dirPath)
   } finally {
-    await fs.rm(dirPath, { recursive: true })
+    try {
+      await fs.rm(dirPath, { recursive: true })
+    } catch {
+      // ignore errors
+    }
   }
 }
 

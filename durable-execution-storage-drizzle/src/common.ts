@@ -310,7 +310,7 @@ export function taskExecutionStorageUpdateToDBUpdate(
   }
 
   if (update.children != null) {
-    dbUpdate.children = update.children
+    dbUpdate.children = update.children as Array<TaskExecutionSummary>
   }
 
   if (update.activeChildrenCount != null) {

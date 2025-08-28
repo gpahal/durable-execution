@@ -94,7 +94,10 @@ async function insertOneHelper(ctx: MutationCtx, execution: TaskExecutionDBInser
   await ctx.db.insert('taskExecutions', execution)
 }
 
-async function insertManyHelper(ctx: MutationCtx, executions: Array<TaskExecutionDBInsertValue>) {
+async function insertManyHelper(
+  ctx: MutationCtx,
+  executions: ReadonlyArray<TaskExecutionDBInsertValue>,
+) {
   for (const execution of executions) {
     await insertOneHelper(ctx, execution)
   }
@@ -138,7 +141,7 @@ async function updateOneHelper(
 
 async function updateManyHelper(
   ctx: MutationCtx,
-  dbValues: Array<TaskExecutionDBValue>,
+  dbValues: ReadonlyArray<TaskExecutionDBValue>,
   update: Infer<typeof vTaskExecutionDBUpdateRequest>,
 ) {
   for (const dbValue of dbValues) {
@@ -160,7 +163,7 @@ export const getManyById = query({
     requests: v.array(
       v.object({
         executionId: v.string(),
-        filters: vTaskExecutionStorageGetByIdFilters,
+        filters: v.optional(vTaskExecutionStorageGetByIdFilters),
       }),
     ),
   },
@@ -213,7 +216,7 @@ export const updateManyById = mutation({
     requests: v.array(
       v.object({
         executionId: v.string(),
-        filters: vTaskExecutionStorageGetByIdFilters,
+        filters: v.optional(vTaskExecutionStorageGetByIdFilters),
         update: vTaskExecutionDBUpdateRequest,
       }),
     ),
@@ -238,7 +241,7 @@ export const updateManyByIdAndInsertChildrenIfUpdated = mutation({
     requests: v.array(
       v.object({
         executionId: v.string(),
-        filters: vTaskExecutionStorageGetByIdFilters,
+        filters: v.optional(vTaskExecutionStorageGetByIdFilters),
         update: vTaskExecutionDBUpdateRequest,
         childrenTaskExecutionsToInsertIfAnyUpdated: v.array(vTaskExecutionDBInsertValue),
       }),

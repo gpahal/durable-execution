@@ -267,7 +267,7 @@ class MySqlTaskExecutionsStorage<
     this.enableTestMode = enableTestMode
   }
 
-  async insertMany(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+  async insertMany(executions: ReadonlyArray<TaskExecutionStorageValue>): Promise<void> {
     if (executions.length === 0) {
       return
     }
@@ -276,10 +276,13 @@ class MySqlTaskExecutionsStorage<
     await this.db.insert(this.taskExecutionsTable).values(rows)
   }
 
-  async getById(
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-  ): Promise<TaskExecutionStorageValue | undefined> {
+  async getById({
+    executionId,
+    filters,
+  }: {
+    executionId: string
+    filters?: TaskExecutionStorageGetByIdFilters
+  }): Promise<TaskExecutionStorageValue | undefined> {
     const rows = await this.db
       .select()
       .from(this.taskExecutionsTable)
@@ -288,9 +291,11 @@ class MySqlTaskExecutionsStorage<
     return rows.length > 0 ? taskExecutionDBValueToStorageValue(rows[0]!) : undefined
   }
 
-  async getBySleepingTaskUniqueId(
-    sleepingTaskUniqueId: string,
-  ): Promise<TaskExecutionStorageValue | undefined> {
+  async getBySleepingTaskUniqueId({
+    sleepingTaskUniqueId,
+  }: {
+    sleepingTaskUniqueId: string
+  }): Promise<TaskExecutionStorageValue | undefined> {
     const rows = await this.db
       .select()
       .from(this.taskExecutionsTable)
@@ -299,11 +304,15 @@ class MySqlTaskExecutionsStorage<
     return rows.length > 0 ? taskExecutionDBValueToStorageValue(rows[0]!) : undefined
   }
 
-  async updateById(
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-    update: TaskExecutionStorageUpdate,
-  ): Promise<void> {
+  async updateById({
+    executionId,
+    filters,
+    update,
+  }: {
+    executionId: string
+    filters?: TaskExecutionStorageGetByIdFilters
+    update: TaskExecutionStorageUpdate
+  }): Promise<void> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     await this.db
@@ -312,16 +321,21 @@ class MySqlTaskExecutionsStorage<
       .where(getByIdWhereCondition(this.taskExecutionsTable, executionId, filters))
   }
 
-  async updateByIdAndInsertChildrenIfUpdated(
-    executionId: string,
-    filters: TaskExecutionStorageGetByIdFilters,
-    update: TaskExecutionStorageUpdate,
-    childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>,
-  ): Promise<void> {
+  async updateByIdAndInsertChildrenIfUpdated({
+    executionId,
+    filters,
+    update,
+    childrenTaskExecutionsToInsertIfAnyUpdated,
+  }: {
+    executionId: string
+    filters?: TaskExecutionStorageGetByIdFilters
+    update: TaskExecutionStorageUpdate
+    childrenTaskExecutionsToInsertIfAnyUpdated: ReadonlyArray<TaskExecutionStorageValue>
+  }): Promise<void> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     if (childrenTaskExecutionsToInsertIfAnyUpdated.length === 0) {
-      return await this.updateById(executionId, filters, update)
+      return await this.updateById({ executionId, filters, update })
     }
 
     const rowsToInsert = childrenTaskExecutionsToInsertIfAnyUpdated.map((execution) =>
@@ -340,13 +354,19 @@ class MySqlTaskExecutionsStorage<
     })
   }
 
-  async updateByStatusAndStartAtLessThanAndReturn(
-    status: TaskExecutionStatus,
-    startAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    updateExpiresAtWithStartedAt: number,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByStatusAndStartAtLessThanAndReturn({
+    status,
+    startAtLessThan,
+    update,
+    updateExpiresAtWithStartedAt,
+    limit,
+  }: {
+    status: TaskExecutionStatus
+    startAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    updateExpiresAtWithStartedAt: number
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     const updatedRows = await this.db.transaction(
@@ -389,12 +409,17 @@ class MySqlTaskExecutionsStorage<
     )
   }
 
-  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
-    status: TaskExecutionStatus,
-    onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn({
+    status,
+    onChildrenFinishedProcessingStatus,
+    update,
+    limit,
+  }: {
+    status: TaskExecutionStatus
+    onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     const updatedRows = await this.db.transaction(
@@ -436,11 +461,15 @@ class MySqlTaskExecutionsStorage<
     return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByCloseStatusAndReturn(
-    closeStatus: TaskExecutionCloseStatus,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByCloseStatusAndReturn({
+    closeStatus,
+    update,
+    limit,
+  }: {
+    closeStatus: TaskExecutionCloseStatus
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     const updatedRows = await this.db.transaction(
@@ -473,12 +502,17 @@ class MySqlTaskExecutionsStorage<
     return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThan(
-    isSleepingTask: boolean,
-    expiresAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateByIsSleepingTaskAndExpiresAtLessThan({
+    isSleepingTask,
+    expiresAtLessThan,
+    update,
+    limit,
+  }: {
+    isSleepingTask: boolean
+    expiresAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     return await this.db.transaction(
@@ -516,11 +550,15 @@ class MySqlTaskExecutionsStorage<
     )
   }
 
-  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
-    onChildrenFinishedProcessingExpiresAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateByOnChildrenFinishedProcessingExpiresAtLessThan({
+    onChildrenFinishedProcessingExpiresAtLessThan,
+    update,
+    limit,
+  }: {
+    onChildrenFinishedProcessingExpiresAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     return await this.db.transaction(
@@ -558,11 +596,15 @@ class MySqlTaskExecutionsStorage<
     )
   }
 
-  async updateByCloseExpiresAtLessThan(
-    closeExpiresAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateByCloseExpiresAtLessThan({
+    closeExpiresAtLessThan,
+    update,
+    limit,
+  }: {
+    closeExpiresAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     return await this.db.transaction(
@@ -595,12 +637,17 @@ class MySqlTaskExecutionsStorage<
     )
   }
 
-  async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
-    executorId: string,
-    needsPromiseCancellation: boolean,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByExecutorIdAndNeedsPromiseCancellationAndReturn({
+    executorId,
+    needsPromiseCancellation,
+    update,
+    limit,
+  }: {
+    executorId: string
+    needsPromiseCancellation: boolean
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     const updatedRows = await this.db.transaction(
@@ -638,9 +685,11 @@ class MySqlTaskExecutionsStorage<
     return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async getByParentExecutionId(
-    parentExecutionId: string,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async getByParentExecutionId({
+    parentExecutionId,
+  }: {
+    parentExecutionId: string
+  }): Promise<Array<TaskExecutionStorageValue>> {
     const rows = await this.db
       .select()
       .from(this.taskExecutionsTable)
@@ -648,11 +697,15 @@ class MySqlTaskExecutionsStorage<
     return rows.map((row) => taskExecutionDBValueToStorageValue(row))
   }
 
-  async updateByParentExecutionIdAndIsFinished(
-    parentExecutionId: string,
-    isFinished: boolean,
-    update: TaskExecutionStorageUpdate,
-  ): Promise<void> {
+  async updateByParentExecutionIdAndIsFinished({
+    parentExecutionId,
+    isFinished,
+    update,
+  }: {
+    parentExecutionId: string
+    isFinished: boolean
+    update: TaskExecutionStorageUpdate
+  }): Promise<void> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     await this.db
@@ -666,12 +719,17 @@ class MySqlTaskExecutionsStorage<
       )
   }
 
-  async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-    isFinished: boolean,
-    closeStatus: TaskExecutionCloseStatus,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus({
+    isFinished,
+    closeStatus,
+    update,
+    limit,
+  }: {
+    isFinished: boolean
+    closeStatus: TaskExecutionCloseStatus
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     return await this.db.transaction(
@@ -739,7 +797,7 @@ class MySqlTaskExecutionsStorage<
     )
   }
 
-  async deleteById(executionId: string): Promise<void> {
+  async deleteById({ executionId }: { executionId: string }): Promise<void> {
     if (!this.enableTestMode) {
       return
     }
@@ -761,16 +819,16 @@ class MySqlTaskExecutionsStorage<
 function getByIdWhereCondition(
   table: TaskExecutionsMySqlTable,
   executionId: string,
-  filters: TaskExecutionStorageGetByIdFilters,
+  filters?: TaskExecutionStorageGetByIdFilters,
 ): SQL | undefined {
   const conditions: Array<SQL> = [eq(table.executionId, executionId)]
-  if (filters.isSleepingTask != null) {
+  if (filters?.isSleepingTask != null) {
     conditions.push(eq(table.isSleepingTask, filters.isSleepingTask))
   }
-  if (filters.status != null) {
+  if (filters?.status != null) {
     conditions.push(eq(table.status, filters.status))
   }
-  if (filters.isFinished != null) {
+  if (filters?.isFinished != null) {
     conditions.push(eq(table.isFinished, filters.isFinished))
   }
   return and(...conditions)

@@ -26,7 +26,7 @@ import {
   taskExecutionDBValueToStorageValue,
   taskExecutionStorageUpdateToDBUpdateRequest,
   taskExecutionStorageValueToDBInsertValue,
-  type TaskExecutionDBUpdate,
+  type TaskExecutionDBUpdateRequest,
   type TaskExecutionDBValue,
 } from '../common'
 import type { Mounts } from '../component/_generated/api'
@@ -143,9 +143,17 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
     insertMany: mutationGeneric(
       async (
         ctx,
-        args: { authSecret: string; args: { executions: Array<TaskExecutionDBInsertValue> } },
+        args: {
+          authSecret: string
+          args: { executions: ReadonlyArray<TaskExecutionDBInsertValue> }
+        },
       ) => {
-        await ctx.runMutation(component.lib.insertMany, verifyArgs(args))
+        await ctx.runMutation(
+          component.lib.insertMany,
+          verifyArgs(args) as {
+            executions: Array<TaskExecutionDBInsertValue>
+          },
+        )
       },
     ),
     getManyById: queryGeneric(
@@ -154,13 +162,21 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
         args: {
           authSecret: string
           args: {
-            requests: Array<{ executionId: string; filters: TaskExecutionStorageGetByIdFilters }>
+            requests: ReadonlyArray<{
+              executionId: string
+              filters?: TaskExecutionStorageGetByIdFilters
+            }>
           }
         },
       ) => {
         return (await ctx.runQuery(
           component.lib.getManyById,
-          verifyArgs(args),
+          verifyArgs(args) as {
+            requests: Array<{
+              executionId: string
+              filters?: TaskExecutionStorageGetByIdFilters
+            }>
+          },
         )) as Array<TaskExecutionDBValue | null>
       },
     ),
@@ -169,12 +185,14 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
         ctx,
         args: {
           authSecret: string
-          args: { requests: Array<{ sleepingTaskUniqueId: string }> }
+          args: { requests: ReadonlyArray<{ sleepingTaskUniqueId: string }> }
         },
       ) => {
         return (await ctx.runQuery(
           component.lib.getManyBySleepingTaskUniqueId,
-          verifyArgs(args),
+          verifyArgs(args) as {
+            requests: Array<{ sleepingTaskUniqueId: string }>
+          },
         )) as Array<TaskExecutionDBValue | null>
       },
     ),
@@ -184,15 +202,24 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
         args: {
           authSecret: string
           args: {
-            requests: Array<{
+            requests: ReadonlyArray<{
               executionId: string
-              filters: TaskExecutionStorageGetByIdFilters
-              update: TaskExecutionDBUpdate
+              filters?: TaskExecutionStorageGetByIdFilters
+              update: TaskExecutionDBUpdateRequest
             }>
           }
         },
       ) => {
-        await ctx.runMutation(component.lib.updateManyById, verifyArgs(args))
+        await ctx.runMutation(
+          component.lib.updateManyById,
+          verifyArgs(args) as {
+            requests: Array<{
+              executionId: string
+              filters?: TaskExecutionStorageGetByIdFilters
+              update: TaskExecutionDBUpdateRequest
+            }>
+          },
+        )
       },
     ),
     updateManyByIdAndInsertChildrenIfUpdated: actionGeneric(
@@ -201,10 +228,10 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
         args: {
           authSecret: string
           args: {
-            requests: Array<{
+            requests: ReadonlyArray<{
               executionId: string
-              filters: TaskExecutionStorageGetByIdFilters
-              update: TaskExecutionStorageUpdate
+              filters?: TaskExecutionStorageGetByIdFilters
+              update: TaskExecutionDBUpdateRequest
               childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionDBInsertValue>
             }>
           }
@@ -212,7 +239,14 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
       ) => {
         await ctx.runMutation(
           component.lib.updateManyByIdAndInsertChildrenIfUpdated,
-          verifyArgs(args),
+          verifyArgs(args) as {
+            requests: Array<{
+              executionId: string
+              filters?: TaskExecutionStorageGetByIdFilters
+              update: TaskExecutionDBUpdateRequest
+              childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionDBInsertValue>
+            }>
+          },
         )
       },
     ),
@@ -225,7 +259,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
             shard: number
             status: TaskExecutionStatus
             startAtLessThan: number
-            update: TaskExecutionStorageUpdate
+            update: TaskExecutionDBUpdateRequest
             updateExpiresAtWithStartedAt: number
             limit: number
           }
@@ -253,7 +287,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
             shard: number
             status: TaskExecutionStatus
             ocfpStatus: TaskExecutionOnChildrenFinishedProcessingStatus
-            update: TaskExecutionDBUpdate
+            update: TaskExecutionDBUpdateRequest
             limit: number
           }
         },
@@ -279,7 +313,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
           args: {
             shard: number
             closeStatus: TaskExecutionCloseStatus
-            update: TaskExecutionDBUpdate
+            update: TaskExecutionDBUpdateRequest
             limit: number
           }
         },
@@ -302,7 +336,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
           args: {
             isSleepingTask: boolean
             expiresAtLessThan: number
-            update: TaskExecutionDBUpdate
+            update: TaskExecutionDBUpdateRequest
             limit: number
           }
         },
@@ -327,7 +361,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
           authSecret: string
           args: {
             ocfpExpiresAtLessThan: number
-            update: TaskExecutionDBUpdate
+            update: TaskExecutionDBUpdateRequest
             limit: number
           }
         },
@@ -347,7 +381,11 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
         ctx,
         args: {
           authSecret: string
-          args: { closeExpiresAtLessThan: number; update: TaskExecutionDBUpdate; limit: number }
+          args: {
+            closeExpiresAtLessThan: number
+            update: TaskExecutionDBUpdateRequest
+            limit: number
+          }
         },
       ) => {
         return await actionWithLock<number>(
@@ -369,7 +407,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
             shard: number
             executorId: string
             npc: boolean
-            update: TaskExecutionDBUpdate
+            update: TaskExecutionDBUpdateRequest
             limit: number
           }
         },
@@ -390,11 +428,16 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
     getManyByParentExecutionId: queryGeneric(
       async (
         ctx,
-        args: { authSecret: string; args: { requests: Array<{ parentExecutionId: string }> } },
+        args: {
+          authSecret: string
+          args: { requests: ReadonlyArray<{ parentExecutionId: string }> }
+        },
       ) => {
         return (await ctx.runQuery(
           component.lib.getManyByParentExecutionId,
-          verifyArgs(args),
+          verifyArgs(args) as {
+            requests: Array<{ parentExecutionId: string }>
+          },
         )) as Array<Array<TaskExecutionDBValue>>
       },
     ),
@@ -404,17 +447,23 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
         args: {
           authSecret: string
           args: {
-            requests: Array<{
+            requests: ReadonlyArray<{
               parentExecutionId: string
               isFinished: boolean
-              update: TaskExecutionDBUpdate
+              update: TaskExecutionDBUpdateRequest
             }>
           }
         },
       ) => {
         await ctx.runMutation(
           component.lib.updateManyByParentExecutionIdAndIsFinished,
-          verifyArgs(args),
+          verifyArgs(args) as {
+            requests: Array<{
+              parentExecutionId: string
+              isFinished: boolean
+              update: TaskExecutionDBUpdateRequest
+            }>
+          },
         )
       },
     ),
@@ -427,7 +476,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
             shard: number
             isFinished: boolean
             closeStatus: TaskExecutionCloseStatus
-            update: TaskExecutionDBUpdate
+            update: TaskExecutionDBUpdateRequest
             limit: number
           }
         },
@@ -599,7 +648,7 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
     this.enableTestMode = parsedOptions.data.enableTestMode
   }
 
-  async insertMany(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+  async insertMany(executions: ReadonlyArray<TaskExecutionStorageValue>): Promise<void> {
     if (executions.length === 0) {
       return
     }
@@ -615,7 +664,7 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
   }
 
   async getManyById(
-    requests: Array<{ executionId: string; filters: TaskExecutionStorageGetByIdFilters }>,
+    requests: ReadonlyArray<{ executionId: string; filters?: TaskExecutionStorageGetByIdFilters }>,
   ): Promise<Array<TaskExecutionStorageValue | undefined>> {
     const dbValues = await this.convexClient.query(this.publicApi.getManyById, {
       authSecret: this.authSecret,
@@ -629,7 +678,7 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
   }
 
   async getManyBySleepingTaskUniqueId(
-    requests: Array<{ sleepingTaskUniqueId: string }>,
+    requests: ReadonlyArray<{ sleepingTaskUniqueId: string }>,
   ): Promise<Array<TaskExecutionStorageValue | undefined>> {
     const dbValues = await this.convexClient.query(this.publicApi.getManyBySleepingTaskUniqueId, {
       authSecret: this.authSecret,
@@ -643,9 +692,9 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
   }
 
   async updateManyById(
-    requests: Array<{
+    requests: ReadonlyArray<{
       executionId: string
-      filters: TaskExecutionStorageGetByIdFilters
+      filters?: TaskExecutionStorageGetByIdFilters
       update: TaskExecutionStorageUpdate
     }>,
   ): Promise<void> {
@@ -661,11 +710,11 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
   }
 
   async updateManyByIdAndInsertChildrenIfUpdated(
-    requests: Array<{
+    requests: ReadonlyArray<{
       executionId: string
-      filters: TaskExecutionStorageGetByIdFilters
+      filters?: TaskExecutionStorageGetByIdFilters
       update: TaskExecutionStorageUpdate
-      childrenTaskExecutionsToInsertIfAnyUpdated: Array<TaskExecutionStorageValue>
+      childrenTaskExecutionsToInsertIfAnyUpdated: ReadonlyArray<TaskExecutionStorageValue>
     }>,
   ): Promise<void> {
     await this.convexClient.action(this.publicApi.updateManyByIdAndInsertChildrenIfUpdated, {
@@ -683,13 +732,19 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateByStatusAndStartAtLessThanAndReturn(
-    status: TaskExecutionStatus,
-    startAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    updateExpiresAtWithStartedAt: number,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByStatusAndStartAtLessThanAndReturn({
+    status,
+    startAtLessThan,
+    update,
+    updateExpiresAtWithStartedAt,
+    limit,
+  }: {
+    status: TaskExecutionStatus
+    startAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    updateExpiresAtWithStartedAt: number
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     const dbValuesArr = await Promise.all(
       this.shards.map((shard) =>
         this.convexClient.action(this.publicApi.updateByStatusAndStartAtLessThanAndReturn, {
@@ -713,12 +768,17 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
       )
   }
 
-  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
-    status: TaskExecutionStatus,
-    onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn({
+    status,
+    onChildrenFinishedProcessingStatus,
+    update,
+    limit,
+  }: {
+    status: TaskExecutionStatus
+    onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     const dbValuesArr = await Promise.all(
       this.shards.map((shard) =>
         this.convexClient.action(this.publicApi.updateByStatusAndOCFPStatusAndACCZeroAndReturn, {
@@ -737,11 +797,15 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
     return dbValuesArr.flat().map((dbValue) => taskExecutionDBValueToStorageValue(dbValue, update))
   }
 
-  async updateByCloseStatusAndReturn(
-    closeStatus: TaskExecutionCloseStatus,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByCloseStatusAndReturn({
+    closeStatus,
+    update,
+    limit,
+  }: {
+    closeStatus: TaskExecutionCloseStatus
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     const dbValuesArr = await Promise.all(
       this.shards.map((shard) =>
         this.convexClient.action(this.publicApi.updateByCloseStatusAndReturn, {
@@ -759,12 +823,17 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
     return dbValuesArr.flat().map((dbValue) => taskExecutionDBValueToStorageValue(dbValue, update))
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThan(
-    isSleepingTask: boolean,
-    expiresAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateByIsSleepingTaskAndExpiresAtLessThan({
+    isSleepingTask,
+    expiresAtLessThan,
+    update,
+    limit,
+  }: {
+    isSleepingTask: boolean
+    expiresAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     return await this.convexClient.action(
       this.publicApi.updateByIsSleepingTaskAndExpiresAtLessThan,
       {
@@ -779,11 +848,15 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
     )
   }
 
-  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
-    onChildrenFinishedProcessingExpiresAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateByOnChildrenFinishedProcessingExpiresAtLessThan({
+    onChildrenFinishedProcessingExpiresAtLessThan,
+    update,
+    limit,
+  }: {
+    onChildrenFinishedProcessingExpiresAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     return await this.convexClient.action(this.publicApi.updateByOCFPExpiresAt, {
       authSecret: this.authSecret,
       args: {
@@ -794,11 +867,15 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateByCloseExpiresAtLessThan(
-    closeExpiresAtLessThan: number,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateByCloseExpiresAtLessThan({
+    closeExpiresAtLessThan,
+    update,
+    limit,
+  }: {
+    closeExpiresAtLessThan: number
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     return await this.convexClient.action(this.publicApi.updateByCloseExpiresAt, {
       authSecret: this.authSecret,
       args: {
@@ -809,12 +886,17 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
-    executorId: string,
-    needsPromiseCancellation: boolean,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
+  async updateByExecutorIdAndNeedsPromiseCancellationAndReturn({
+    executorId,
+    needsPromiseCancellation,
+    update,
+    limit,
+  }: {
+    executorId: string
+    needsPromiseCancellation: boolean
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<Array<TaskExecutionStorageValue>> {
     const dbValuesArr = await Promise.all(
       this.shards.map((shard) =>
         this.convexClient.action(this.publicApi.updateByExecutorIdAndNPCAndReturn, {
@@ -834,7 +916,7 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
   }
 
   async getManyByParentExecutionId(
-    requests: Array<{ parentExecutionId: string }>,
+    requests: ReadonlyArray<{ parentExecutionId: string }>,
   ): Promise<Array<Array<TaskExecutionStorageValue>>> {
     const dbValuesArr = await this.convexClient.query(this.publicApi.getManyByParentExecutionId, {
       authSecret: this.authSecret,
@@ -849,7 +931,7 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
   }
 
   async updateManyByParentExecutionIdAndIsFinished(
-    requests: Array<{
+    requests: ReadonlyArray<{
       parentExecutionId: string
       isFinished: boolean
       update: TaskExecutionStorageUpdate
@@ -866,12 +948,17 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-    isFinished: boolean,
-    closeStatus: TaskExecutionCloseStatus,
-    update: TaskExecutionStorageUpdate,
-    limit: number,
-  ): Promise<number> {
+  async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus({
+    isFinished,
+    closeStatus,
+    update,
+    limit,
+  }: {
+    isFinished: boolean
+    closeStatus: TaskExecutionCloseStatus
+    update: TaskExecutionStorageUpdate
+    limit: number
+  }): Promise<number> {
     const updatedCounts = await Promise.all(
       this.shards.map((shard) =>
         this.convexClient.action(
@@ -892,7 +979,7 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
     return updatedCounts.reduce((a, b) => a + b, 0)
   }
 
-  async deleteById(executionId: string): Promise<void> {
+  async deleteById({ executionId }: { executionId: string }): Promise<void> {
     if (!this.enableTestMode) {
       return
     }

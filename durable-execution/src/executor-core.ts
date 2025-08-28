@@ -359,15 +359,6 @@ export class DurableExecutorCore {
   }
 
   /**
-   * Get the storage for the durable executor core.
-   *
-   * @returns The storage for the durable executor core.
-   */
-  getStorage(): TaskExecutionsStorageInternal {
-    return this.storage
-  }
-
-  /**
    * Add a task to the durable executor. See the
    * [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples) section
    * for more details on creating tasks.
@@ -653,10 +644,6 @@ export class DurableExecutorCore {
           }
         },
         finalize: ({ children }) => {
-          if (children.length === 0) {
-            return undefined
-          }
-
           const lastChild = children.at(-1)!
           if (lastChild.status !== 'completed') {
             throw DurableExecutionError.nonRetryable(
@@ -910,7 +897,7 @@ export class DurableExecutorCore {
       )
     }
 
-    const execution = await this.storage.getById(executionId, {})
+    const execution = await this.storage.getById({ executionId })
     if (!execution) {
       throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
     }
@@ -931,7 +918,7 @@ export class DurableExecutorCore {
       getTaskId: () => taskId,
       getExecutionId: () => executionId,
       getExecution: async () => {
-        const execution = await this.storage.getById(executionId, {})
+        const execution = await this.storage.getById({ executionId })
         if (!execution) {
           throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
         }
@@ -965,7 +952,7 @@ export class DurableExecutorCore {
             }
           }
 
-          const execution = await this.storage.getById(executionId, {})
+          const execution = await this.storage.getById({ executionId })
           if (!execution) {
             throw new DurableExecutionNotFoundError(`Task execution ${executionId} not found`)
           }
@@ -984,18 +971,15 @@ export class DurableExecutorCore {
       },
       cancel: async () => {
         const now = Date.now()
-        await this.storage.updateById(
-          now,
+        await this.storage.updateById(now, {
           executionId,
-          {
-            isFinished: false,
-          },
-          {
+          filters: { isFinished: false },
+          update: {
             status: 'cancelled',
             error: convertDurableExecutionErrorToStorageValue(new DurableExecutionCancelledError()),
             needsPromiseCancellation: true,
           },
-        )
+        })
         this.logger.debug(`Cancelled task execution ${executionId}`)
       },
     }
@@ -1021,7 +1005,7 @@ export class DurableExecutorCore {
       throw DurableExecutionError.nonRetryable(`Task ${task.id} is not a sleeping task`)
     }
 
-    const execution = await this.storage.getBySleepingTaskUniqueId(sleepingTaskUniqueId)
+    const execution = await this.storage.getBySleepingTaskUniqueId({ sleepingTaskUniqueId })
     if (!execution) {
       throw new DurableExecutionNotFoundError(
         `Sleeping task execution ${sleepingTaskUniqueId} not found`,
@@ -1056,18 +1040,17 @@ export class DurableExecutorCore {
     }
 
     const now = Date.now()
-    await this.storage.updateById(
-      now,
-      execution.executionId,
-      {
+    await this.storage.updateById(now, {
+      executionId: execution.executionId,
+      filters: {
         isSleepingTask: true,
         isFinished: false,
       },
       update,
-    )
+    })
     this.logger.debug(`Woken up sleeping task execution ${execution.executionId}`)
 
-    const finishedExecution = await this.storage.getById(execution.executionId, {})
+    const finishedExecution = await this.storage.getById({ executionId: execution.executionId })
     if (!finishedExecution) {
       throw new DurableExecutionNotFoundError(
         `Sleeping task execution ${execution.executionId} not found`,
@@ -1088,7 +1071,9 @@ export class DurableExecutorCore {
    * Start the durable executor core background processes. Use {@link DurableExecutorCore.shutdown}
    * to stop the durable executor.
    */
-  startBackgroundProcesses(getBackgroundProcessesPromises: () => Array<Promise<void>>): void {
+  startBackgroundProcesses(
+    getBackgroundProcessesPromises: () => ReadonlyArray<Promise<void>>,
+  ): void {
     this.throwIfShutdown()
 
     this.logger.info('Starting background processes')
@@ -1163,18 +1148,17 @@ export class DurableExecutorCore {
     const batchLimit = Math.min(this.maxTaskExecutionsPerBatch, availableLimit)
     const now = Date.now()
     const expiresAt = now + this.expireLeewayMs
-    const executions = await this.storage.updateByStatusAndStartAtLessThanAndReturn(
-      now,
-      'ready',
-      now,
-      {
+    const executions = await this.storage.updateByStatusAndStartAtLessThanAndReturn(now, {
+      status: 'ready',
+      startAtLessThan: now,
+      update: {
         executorId: this.id,
         status: 'running',
         startedAt: now,
       },
-      expiresAt,
-      batchLimit,
-    )
+      updateExpiresAtWithStartedAt: expiresAt,
+      limit: batchLimit,
+    })
 
     this.logger.debug(`Processing ${executions.length} ready task executions`)
     if (executions.length === 0) {
@@ -1294,30 +1278,30 @@ export class DurableExecutorCore {
             await (finalizeError
               ? this.storage.updateById(
                   now,
-                  execution.executionId,
                   {
-                    status: 'running',
-                  },
-                  {
-                    status: 'finalize_failed',
-                    error: finalizeError,
-                    children: [],
+                    executionId: execution.executionId,
+                    filters: { status: 'running' },
+                    update: {
+                      status: 'finalize_failed',
+                      error: finalizeError,
+                      children: [],
+                    },
                   },
                   execution,
                 )
               : this.storage.updateById(
                   now,
-                  execution.executionId,
                   {
-                    status: 'running',
-                  },
-                  {
-                    status: 'completed',
-                    output: this.serializer.serialize(
-                      finalizeOutput,
-                      this.maxSerializedOutputDataSize,
-                    ),
-                    children: [],
+                    executionId: execution.executionId,
+                    filters: { status: 'running' },
+                    update: {
+                      status: 'completed',
+                      output: this.serializer.serialize(
+                        finalizeOutput,
+                        this.maxSerializedOutputDataSize,
+                      ),
+                      children: [],
+                    },
                   },
                   execution,
                 ))
@@ -1336,45 +1320,45 @@ export class DurableExecutorCore {
             const executionId = generateTaskExecutionId()
             await this.storage.updateByIdAndInsertChildrenIfUpdated(
               now,
-              execution.executionId,
               {
-                status: 'running',
-              },
-              {
-                status: 'waiting_for_finalize',
-                children: [],
-                finalize: {
-                  taskId: finalizeTaskInternal.id,
-                  executionId,
+                executionId: execution.executionId,
+                filters: { status: 'running' },
+                update: {
+                  status: 'waiting_for_finalize',
+                  children: [],
+                  finalize: {
+                    taskId: finalizeTaskInternal.id,
+                    executionId,
+                  },
                 },
+                childrenTaskExecutionsToInsertIfAnyUpdated: [
+                  createTaskExecutionStorageValue({
+                    now,
+                    root: execution.root ?? {
+                      taskId: execution.taskId,
+                      executionId: execution.executionId,
+                    },
+                    parent: {
+                      taskId: execution.taskId,
+                      executionId: execution.executionId,
+                      indexInParentChildren: 0,
+                      isOnlyChildOfParent: false,
+                      isFinalizeOfParent: true,
+                    },
+                    taskId: finalizeTaskInternal.id,
+                    executionId,
+                    isSleepingTask: false,
+                    retryOptions: finalizeTaskInternal.retryOptions,
+                    sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
+                    timeoutMs: finalizeTaskInternal.timeoutMs,
+                    areChildrenSequential: finalizeTaskInternal.areChildrenSequential,
+                    input: this.serializer.serialize(
+                      finalizeTaskInput,
+                      this.maxSerializedInputDataSize,
+                    ),
+                  }),
+                ],
               },
-              [
-                createTaskExecutionStorageValue({
-                  now,
-                  root: execution.root ?? {
-                    taskId: execution.taskId,
-                    executionId: execution.executionId,
-                  },
-                  parent: {
-                    taskId: execution.taskId,
-                    executionId: execution.executionId,
-                    indexInParentChildren: 0,
-                    isOnlyChildOfParent: false,
-                    isFinalizeOfParent: true,
-                  },
-                  taskId: finalizeTaskInternal.id,
-                  executionId,
-                  isSleepingTask: false,
-                  retryOptions: finalizeTaskInternal.retryOptions,
-                  sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
-                  timeoutMs: finalizeTaskInternal.timeoutMs,
-                  areChildrenSequential: finalizeTaskInternal.areChildrenSequential,
-                  input: this.serializer.serialize(
-                    finalizeTaskInput,
-                    this.maxSerializedInputDataSize,
-                  ),
-                }),
-              ],
               execution,
             )
           }
@@ -1391,14 +1375,14 @@ export class DurableExecutorCore {
               : this.serializer.serialize(runOutput, this.maxSerializedOutputDataSize)
           await this.storage.updateById(
             now,
-            execution.executionId,
             {
-              status: 'running',
-            },
-            {
-              status: 'completed',
-              output,
-              children: [],
+              executionId: execution.executionId,
+              filters: { status: 'running' },
+              update: {
+                status: 'completed',
+                output,
+                children: [],
+              },
             },
             execution,
           )
@@ -1461,17 +1445,17 @@ export class DurableExecutorCore {
 
         await this.storage.updateByIdAndInsertChildrenIfUpdated(
           now,
-          execution.executionId,
           {
-            status: 'running',
+            executionId: execution.executionId,
+            filters: { status: 'running' },
+            update: {
+              status: 'waiting_for_children',
+              runOutput: this.serializer.serialize(runOutput, this.maxSerializedOutputDataSize),
+              children: children,
+              activeChildrenCount: childrenStorageValues.length,
+            },
+            childrenTaskExecutionsToInsertIfAnyUpdated: childrenStorageValues,
           },
-          {
-            status: 'waiting_for_children',
-            runOutput: this.serializer.serialize(runOutput, this.maxSerializedOutputDataSize),
-            children: children,
-            activeChildrenCount: childrenStorageValues.length,
-          },
-          childrenStorageValues,
           execution,
         )
       }
@@ -1521,11 +1505,7 @@ export class DurableExecutorCore {
 
       await this.storage.updateById(
         now,
-        execution.executionId,
-        {
-          status: 'running',
-        },
-        update,
+        { executionId: execution.executionId, filters: { status: 'running' }, update },
         execution,
       )
     }
@@ -1542,13 +1522,15 @@ export class DurableExecutorCore {
     const executions =
       await this.storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
         now,
-        'waiting_for_children',
-        'idle',
         {
-          onChildrenFinishedProcessingStatus: 'processing',
-          onChildrenFinishedProcessingExpiresAt: expiresAt,
+          status: 'waiting_for_children',
+          onChildrenFinishedProcessingStatus: 'idle',
+          update: {
+            onChildrenFinishedProcessingStatus: 'processing',
+            onChildrenFinishedProcessingExpiresAt: expiresAt,
+          },
+          limit: this.processOnChildrenFinishedTaskExecutionsBatchSize,
         },
-        this.processOnChildrenFinishedTaskExecutionsBatchSize,
       )
 
     this.logger.debug(`Processing ${executions.length} on children finished task executions`)
@@ -1564,15 +1546,15 @@ export class DurableExecutorCore {
       const now = Date.now()
       await this.storage.updateById(
         now,
-        execution.executionId,
         {
-          status: 'waiting_for_children',
-        },
-        {
-          status,
-          error: convertDurableExecutionErrorToStorageValue(error),
-          onChildrenFinishedProcessingStatus: 'processed',
-          onChildrenFinishedProcessingFinishedAt: now,
+          executionId: execution.executionId,
+          filters: { status: 'waiting_for_children' },
+          update: {
+            status,
+            error: convertDurableExecutionErrorToStorageValue(error),
+            onChildrenFinishedProcessingStatus: 'processed',
+            onChildrenFinishedProcessingFinishedAt: now,
+          },
         },
         execution,
       )
@@ -1603,10 +1585,9 @@ export class DurableExecutorCore {
             return
           }
 
-          const prevChildTaskExecution = await this.storage.getById(
-            execution.children![firstDummyChildIdx - 1]!.executionId,
-            {},
-          )
+          const prevChildTaskExecution = await this.storage.getById({
+            executionId: execution.children![firstDummyChildIdx - 1]!.executionId,
+          })
           if (!prevChildTaskExecution) {
             await markExecutionAsFailed(
               execution,
@@ -1632,36 +1613,36 @@ export class DurableExecutorCore {
           const now = Date.now()
           await this.storage.updateByIdAndInsertChildrenIfUpdated(
             now,
-            execution.executionId,
             {
-              status: 'waiting_for_children',
+              executionId: execution.executionId,
+              filters: { status: 'waiting_for_children' },
+              update: {
+                children: execution.children!,
+                activeChildrenCount: 1,
+                onChildrenFinishedProcessingStatus: 'idle',
+              },
+              childrenTaskExecutionsToInsertIfAnyUpdated: [
+                createTaskExecutionStorageValue({
+                  now,
+                  root: execution.root,
+                  parent: {
+                    taskId: execution.taskId,
+                    executionId: execution.executionId,
+                    indexInParentChildren: firstDummyChildIdx,
+                    isOnlyChildOfParent: false,
+                    isFinalizeOfParent: false,
+                  },
+                  taskId: firstDummyChild.taskId,
+                  executionId,
+                  isSleepingTask: childTaskInternal.taskType === 'sleepingTask',
+                  retryOptions: childTaskInternal.retryOptions,
+                  sleepMsBeforeRun: childTaskInternal.sleepMsBeforeRun,
+                  timeoutMs: childTaskInternal.timeoutMs,
+                  areChildrenSequential: childTaskInternal.areChildrenSequential,
+                  input: prevChildTaskExecution.output!,
+                }),
+              ],
             },
-            {
-              children: execution.children!,
-              activeChildrenCount: 1,
-              onChildrenFinishedProcessingStatus: 'idle',
-            },
-            [
-              createTaskExecutionStorageValue({
-                now,
-                root: execution.root,
-                parent: {
-                  taskId: execution.taskId,
-                  executionId: execution.executionId,
-                  indexInParentChildren: firstDummyChildIdx,
-                  isOnlyChildOfParent: false,
-                  isFinalizeOfParent: false,
-                },
-                taskId: firstDummyChild.taskId,
-                executionId,
-                isSleepingTask: childTaskInternal.taskType === 'sleepingTask',
-                retryOptions: childTaskInternal.retryOptions,
-                sleepMsBeforeRun: childTaskInternal.sleepMsBeforeRun,
-                timeoutMs: childTaskInternal.timeoutMs,
-                areChildrenSequential: childTaskInternal.areChildrenSequential,
-                input: prevChildTaskExecution.output!,
-              }),
-            ],
             execution,
           )
           return
@@ -1733,26 +1714,26 @@ export class DurableExecutorCore {
         const now = Date.now()
         await this.storage.updateById(
           now,
-          execution.executionId,
           {
-            status: 'waiting_for_children',
-          },
-          {
-            status: 'completed',
-            output:
-              taskInternal.taskType === 'parentTask'
-                ? this.serializer.serialize(
-                    {
-                      output: execution.runOutput
-                        ? this.serializer.deserialize(execution.runOutput)
-                        : undefined,
-                      children: childrenTaskExecutionsForFinalize,
-                    },
-                    this.maxSerializedOutputDataSize,
-                  )
-                : execution.runOutput,
-            onChildrenFinishedProcessingStatus: 'processed',
-            onChildrenFinishedProcessingFinishedAt: now,
+            executionId: execution.executionId,
+            filters: { status: 'waiting_for_children' },
+            update: {
+              status: 'completed',
+              output:
+                taskInternal.taskType === 'parentTask'
+                  ? this.serializer.serialize(
+                      {
+                        output: execution.runOutput
+                          ? this.serializer.deserialize(execution.runOutput)
+                          : undefined,
+                        children: childrenTaskExecutionsForFinalize,
+                      },
+                      this.maxSerializedOutputDataSize,
+                    )
+                  : execution.runOutput,
+              onChildrenFinishedProcessingStatus: 'processed',
+              onChildrenFinishedProcessingFinishedAt: now,
+            },
           },
           execution,
         )
@@ -1778,29 +1759,32 @@ export class DurableExecutorCore {
         await (finalizeError
           ? this.storage.updateById(
               now,
-              execution.executionId,
               {
-                status: 'waiting_for_children',
-              },
-              {
-                status: 'finalize_failed',
-                error: finalizeError,
-                onChildrenFinishedProcessingStatus: 'processed',
-                onChildrenFinishedProcessingFinishedAt: now,
+                executionId: execution.executionId,
+                filters: { status: 'waiting_for_children' },
+                update: {
+                  status: 'finalize_failed',
+                  error: finalizeError,
+                  onChildrenFinishedProcessingStatus: 'processed',
+                  onChildrenFinishedProcessingFinishedAt: now,
+                },
               },
               execution,
             )
           : this.storage.updateById(
               now,
-              execution.executionId,
               {
-                status: 'waiting_for_children',
-              },
-              {
-                status: 'completed',
-                output: this.serializer.serialize(finalizeOutput, this.maxSerializedOutputDataSize),
-                onChildrenFinishedProcessingStatus: 'processed',
-                onChildrenFinishedProcessingFinishedAt: now,
+                executionId: execution.executionId,
+                filters: { status: 'waiting_for_children' },
+                update: {
+                  status: 'completed',
+                  output: this.serializer.serialize(
+                    finalizeOutput,
+                    this.maxSerializedOutputDataSize,
+                  ),
+                  onChildrenFinishedProcessingStatus: 'processed',
+                  onChildrenFinishedProcessingFinishedAt: now,
+                },
               },
               execution,
             ))
@@ -1815,40 +1799,40 @@ export class DurableExecutorCore {
       const now = Date.now()
       await this.storage.updateByIdAndInsertChildrenIfUpdated(
         now,
-        execution.executionId,
         {
-          status: 'waiting_for_children',
-        },
-        {
-          status: 'waiting_for_finalize',
-          finalize: {
-            taskId: finalizeTaskInternal.id,
-            executionId,
-          },
-          onChildrenFinishedProcessingStatus: 'processed',
-          onChildrenFinishedProcessingFinishedAt: now,
-        },
-        [
-          createTaskExecutionStorageValue({
-            now,
-            root: execution.root,
-            parent: {
-              taskId: execution.taskId,
-              executionId: execution.executionId,
-              indexInParentChildren: 0,
-              isOnlyChildOfParent: false,
-              isFinalizeOfParent: true,
+          executionId: execution.executionId,
+          filters: { status: 'waiting_for_children' },
+          update: {
+            status: 'waiting_for_finalize',
+            finalize: {
+              taskId: finalizeTaskInternal.id,
+              executionId,
             },
-            taskId: finalizeTaskInternal.id,
-            executionId,
-            isSleepingTask: false,
-            retryOptions: finalizeTaskInternal.retryOptions,
-            sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
-            timeoutMs: finalizeTaskInternal.timeoutMs,
-            areChildrenSequential: finalizeTaskInternal.areChildrenSequential,
-            input: this.serializer.serialize(finalizeTaskInput, this.maxSerializedInputDataSize),
-          }),
-        ],
+            onChildrenFinishedProcessingStatus: 'processed',
+            onChildrenFinishedProcessingFinishedAt: now,
+          },
+          childrenTaskExecutionsToInsertIfAnyUpdated: [
+            createTaskExecutionStorageValue({
+              now,
+              root: execution.root,
+              parent: {
+                taskId: execution.taskId,
+                executionId: execution.executionId,
+                indexInParentChildren: 0,
+                isOnlyChildOfParent: false,
+                isFinalizeOfParent: true,
+              },
+              taskId: finalizeTaskInternal.id,
+              executionId,
+              isSleepingTask: false,
+              retryOptions: finalizeTaskInternal.retryOptions,
+              sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
+              timeoutMs: finalizeTaskInternal.timeoutMs,
+              areChildrenSequential: finalizeTaskInternal.areChildrenSequential,
+              input: this.serializer.serialize(finalizeTaskInput, this.maxSerializedInputDataSize),
+            }),
+          ],
+        },
         execution,
       )
     }
@@ -1869,12 +1853,14 @@ export class DurableExecutorCore {
     const updatedCount =
       await this.storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
         now,
-        true,
-        'idle',
         {
-          closeStatus: 'ready',
+          isFinished: true,
+          closeStatus: 'idle',
+          update: {
+            closeStatus: 'ready',
+          },
+          limit: this.markFinishedTaskExecutionsAsCloseStatusReadyBatchSize,
         },
-        this.markFinishedTaskExecutionsAsCloseStatusReadyBatchSize,
       )
 
     this.logger.debug(`Marking ${updatedCount} finished task executions as close status ready`)
@@ -1889,15 +1875,14 @@ export class DurableExecutorCore {
   async closeFinishedTaskExecutionsSingleBatch(): Promise<boolean> {
     const now = Date.now()
     const expiresAt = now + 2 * 60 * 1000 + this.expireLeewayMs // 2 minutes + expireLeewayMs
-    const executions = await this.storage.updateByCloseStatusAndReturn(
-      now,
-      'ready',
-      {
+    const executions = await this.storage.updateByCloseStatusAndReturn(now, {
+      closeStatus: 'ready',
+      update: {
         closeStatus: 'closing',
         closeExpiresAt: expiresAt,
       },
-      this.closeFinishedTaskExecutionsBatchSize,
-    )
+      limit: this.closeFinishedTaskExecutionsBatchSize,
+    })
 
     this.logger.debug(`Closing ${executions.length} finished task executions`)
     if (executions.length === 0) {
@@ -1915,13 +1900,13 @@ export class DurableExecutorCore {
       now = Date.now()
       await this.storage.updateById(
         now,
-        execution.executionId,
         {
-          isFinished: true,
-        },
-        {
-          closeStatus: 'closed',
-          closedAt: now,
+          executionId: execution.executionId,
+          filters: { isFinished: true },
+          update: {
+            closeStatus: 'closed',
+            closedAt: now,
+          },
         },
         execution,
       )
@@ -1945,24 +1930,20 @@ export class DurableExecutorCore {
 
     const now = Date.now()
     await (execution.status === 'completed'
-      ? this.storage.updateById(
-          now,
-          execution.parent.executionId,
-          {
-            status: 'waiting_for_finalize',
-          },
-          {
+      ? this.storage.updateById(now, {
+          executionId: execution.parent.executionId,
+          filters: { status: 'waiting_for_finalize' },
+          update: {
             status: 'completed',
             output: execution.output ?? undefined,
           },
-        )
-      : this.storage.updateById(
-          now,
-          execution.parent.executionId,
-          {
+        })
+      : this.storage.updateById(now, {
+          executionId: execution.parent.executionId,
+          filters: {
             status: 'waiting_for_finalize',
           },
-          {
+          update: {
             status: 'finalize_failed',
             error:
               execution.error ||
@@ -1972,7 +1953,7 @@ export class DurableExecutorCore {
                 ),
               ),
           },
-        ))
+        }))
   }
 
   /**
@@ -1990,14 +1971,18 @@ export class DurableExecutorCore {
     }
 
     const now = Date.now()
-    await this.storage.updateByParentExecutionIdAndIsFinished(now, execution.executionId, false, {
-      status: 'cancelled',
-      error: convertDurableExecutionErrorToStorageValue(
-        new DurableExecutionCancelledError(
-          `Parent task ${execution.taskId} with execution id ${execution.executionId} failed: ${execution.error?.message || 'Unknown error'}`,
+    await this.storage.updateByParentExecutionIdAndIsFinished(now, {
+      parentExecutionId: execution.executionId,
+      isFinished: false,
+      update: {
+        status: 'cancelled',
+        error: convertDurableExecutionErrorToStorageValue(
+          new DurableExecutionCancelledError(
+            `Parent task ${execution.taskId} with execution id ${execution.executionId} failed: ${execution.error?.message || 'Unknown error'}`,
+          ),
         ),
-      ),
-      needsPromiseCancellation: true,
+        needsPromiseCancellation: true,
+      },
     })
   }
 
@@ -2014,12 +1999,14 @@ export class DurableExecutorCore {
     const now = Date.now()
     const executions = await this.storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
       now,
-      this.id,
-      true,
       {
-        needsPromiseCancellation: false,
+        executorId: this.id,
+        needsPromiseCancellation: true,
+        update: {
+          needsPromiseCancellation: false,
+        },
+        limit: this.cancelNeedsPromiseCancellationTaskExecutionsBatchSize,
       },
-      this.cancelNeedsPromiseCancellationTaskExecutionsBatchSize,
     )
 
     this.logger.debug(
@@ -2050,61 +2037,57 @@ export class DurableExecutorCore {
    */
   async retryExpiredTaskExecutionsSingleBatch(): Promise<boolean> {
     let now = Date.now()
-    const updatedCount1 = await this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(
-      now,
-      false,
-      now,
-      {
+    const updatedCount1 = await this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(now, {
+      isSleepingTask: false,
+      expiresAtLessThan: now,
+      update: {
         status: 'ready',
         error: convertDurableExecutionErrorToStorageValue(
           DurableExecutionError.nonRetryable('Task execution expired'),
         ),
         startAt: now,
       },
-      this.retryExpiredTaskExecutionsBatchSize,
-    )
+      limit: this.retryExpiredTaskExecutionsBatchSize,
+    })
 
     this.logger.debug(`Retrying ${updatedCount1} expired running task executions`)
 
     now = Date.now()
-    const updatedCount2 = await this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(
-      now,
-      true,
-      now,
-      {
+    const updatedCount2 = await this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(now, {
+      isSleepingTask: true,
+      expiresAtLessThan: now,
+      update: {
         status: 'timed_out',
         error: convertDurableExecutionErrorToStorageValue(new DurableExecutionTimedOutError()),
         startAt: now,
       },
-      this.retryExpiredTaskExecutionsBatchSize,
-    )
+      limit: this.retryExpiredTaskExecutionsBatchSize,
+    })
 
     this.logger.debug(`Timing out ${updatedCount2} expired sleeping task executions`)
 
-    const updatedCount3 = await this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(
-      now,
-      true,
-      now,
-      {
+    const updatedCount3 = await this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(now, {
+      isSleepingTask: true,
+      expiresAtLessThan: now,
+      update: {
         status: 'timed_out',
         error: convertDurableExecutionErrorToStorageValue(new DurableExecutionTimedOutError()),
         startAt: now,
       },
-      this.retryExpiredTaskExecutionsBatchSize,
-    )
+      limit: this.retryExpiredTaskExecutionsBatchSize,
+    })
 
     this.logger.debug(
       `Retrying ${updatedCount3} expired on children finished processing task executions`,
     )
 
-    const updatedCount4 = await this.storage.updateByCloseExpiresAtLessThan(
-      now,
-      now,
-      {
+    const updatedCount4 = await this.storage.updateByCloseExpiresAtLessThan(now, {
+      closeExpiresAtLessThan: now,
+      update: {
         closeStatus: 'ready',
       },
-      this.retryExpiredTaskExecutionsBatchSize,
-    )
+      limit: this.retryExpiredTaskExecutionsBatchSize,
+    })
 
     this.logger.debug(`Retrying ${updatedCount4} expired close task executions`)
 

@@ -174,4 +174,123 @@ describe('InMemoryTaskExecutionsStorage', () => {
     expect(infoStr).toContain(finishedExecution.taskId)
     expect(infoStr).toContain(finishedExecution.executionId)
   })
+
+  it('should handle deleteById for sleeping task', async () => {
+    const sleepingTask = executor.sleepingTask<string>({
+      id: 'sleepingTask',
+      timeoutMs: 30_000,
+    })
+
+    const handle = await executor.enqueueTask(sleepingTask, 'unique-sleep-1')
+    const execution = await handle.getExecution()
+
+    const beforeDelete = await storage.getManyById([
+      { executionId: execution.executionId, filters: {} },
+    ])
+    expect(beforeDelete).toHaveLength(1)
+    expect(beforeDelete[0]).toBeDefined()
+
+    const sleepingTaskExecution = await storage.getManyBySleepingTaskUniqueId([
+      { sleepingTaskUniqueId: 'unique-sleep-1' },
+    ])
+    expect(sleepingTaskExecution).toHaveLength(1)
+    expect(sleepingTaskExecution[0]).toBeDefined()
+
+    await storage.deleteById({ executionId: execution.executionId })
+
+    const afterDelete = await storage.getManyById([
+      { executionId: execution.executionId, filters: {} },
+    ])
+    expect(afterDelete).toHaveLength(1)
+    expect(afterDelete[0]).toBeUndefined()
+
+    const afterDeleteSleeping = await storage.getManyBySleepingTaskUniqueId([
+      { sleepingTaskUniqueId: 'unique-sleep-1' },
+    ])
+    expect(afterDeleteSleeping).toHaveLength(1)
+    expect(afterDeleteSleeping[0]).toBeUndefined()
+  })
+
+  it('should handle deleteAll', async () => {
+    const testTask = executor.task({
+      id: 'test',
+      timeoutMs: 10_000,
+      run: () => 'result',
+    })
+
+    const sleepingTask = executor.sleepingTask<string>({
+      id: 'sleepingTask',
+      timeoutMs: 30_000,
+    })
+
+    const handle1 = await executor.enqueueTask(testTask)
+    const handle2 = await executor.enqueueTask(sleepingTask, 'unique-sleep-2')
+
+    const execution1 = await handle1.getExecution()
+    const execution2 = await handle2.getExecution()
+
+    const beforeDelete = await storage.getManyById([
+      { executionId: execution1.executionId, filters: {} },
+      { executionId: execution2.executionId, filters: {} },
+    ])
+    expect(beforeDelete.filter((e) => e !== undefined)).toHaveLength(2)
+
+    await storage.deleteAll()
+
+    const afterDelete = await storage.getManyById([
+      { executionId: execution1.executionId, filters: {} },
+      { executionId: execution2.executionId, filters: {} },
+    ])
+    expect(afterDelete.filter((e) => e !== undefined)).toHaveLength(0)
+
+    const afterDeleteSleeping = await storage.getManyBySleepingTaskUniqueId([
+      { sleepingTaskUniqueId: 'unique-sleep-2' },
+    ])
+    expect(afterDeleteSleeping.filter((e) => e !== undefined)).toHaveLength(0)
+  })
+
+  it('should handle getByFilterFnAndLimitInternal with limit <= 0', () => {
+    const internalStorage = storage as unknown as {
+      getByFilterFnAndLimitInternal: (fn: () => boolean, limit: number) => Array<unknown>
+    }
+    expect(internalStorage.getByFilterFnAndLimitInternal(() => true, 0)).toEqual([])
+    expect(internalStorage.getByFilterFnAndLimitInternal(() => true, -1)).toEqual([])
+  })
+
+  it('should handle updateByOnChildrenFinishedProcessingExpiresAtLessThan', async () => {
+    const parentTaskOptions = {
+      id: 'parentTask',
+      runParent: () => ({ output: 'parent output', children: [] }),
+      timeoutMs: 10_000,
+    }
+
+    const parentTask = executor.parentTask(parentTaskOptions)
+    const handle = await executor.enqueueTask(parentTask)
+    await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 100 })
+
+    const futureTime = Date.now() + 60_000
+    const count = await storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan({
+      onChildrenFinishedProcessingExpiresAtLessThan: futureTime,
+      update: { status: 'cancelled', updatedAt: Date.now() },
+      limit: 10,
+    })
+
+    expect(count).toBe(0)
+  })
+
+  it('should return empty array with limit <= 0', async () => {
+    const resultZero = await storage.updateByCloseStatusAndReturn({
+      closeStatus: 'ready',
+      update: { updatedAt: Date.now() },
+      limit: 0,
+    })
+    expect(resultZero).toEqual([])
+
+    const resultNegative = await storage.updateByCloseStatusAndReturn({
+      closeStatus: 'ready',
+      update: { updatedAt: Date.now() },
+      limit: -1,
+    })
+    expect(resultNegative).toEqual([])
+  })
 })

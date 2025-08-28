@@ -863,6 +863,11 @@ describe('simpleTask', () => {
     )
   })
 
+  it('should fail with empty sequential tasks', () => {
+    // @ts-expect-error - Testing invalid input
+    expect(() => executor.sequentialTasks('seq', [])).toThrow('No tasks provided')
+  })
+
   it('should fail when task input exceeds serialization size limit', async () => {
     const tooLargeString = 'x'.repeat(1024 * 1024 + 1000)
 
@@ -1351,6 +1356,52 @@ describe('simpleTask', () => {
     ).rejects.toThrow()
   })
 
+  it('should fail wakeup sleeping task execution with invalid inputs', async () => {
+    const nonSleepingTask = executor.task({
+      id: 'nonSleepingTask',
+      timeoutMs: 1000,
+      run: () => {
+        return 'test'
+      },
+    })
+    const sleepingTask1 = executor.sleepingTask<string>({
+      id: 'sleepingTask1',
+      timeoutMs: 1000,
+    })
+    const sleepingTask2 = executor.sleepingTask<string>({
+      id: 'sleepingTask2',
+      timeoutMs: 1000,
+    })
+
+    const handle = await executor.enqueueTask(sleepingTask1, 'test_unique_id')
+
+    await expect(
+      // @ts-expect-error - Testing invalid input
+      executor.wakeupSleepingTaskExecution(nonSleepingTask, 'test_unique_id', {
+        status: 'completed',
+        output: 'test_output',
+      }),
+    ).rejects.toThrow()
+
+    await expect(
+      executor.wakeupSleepingTaskExecution(sleepingTask1, 'invalid_unique_id', {
+        status: 'completed',
+        output: 'test_output',
+      }),
+    ).rejects.toThrow()
+
+    await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+
+    await expect(
+      executor.wakeupSleepingTaskExecution(sleepingTask2, 'test_unique_id', {
+        status: 'completed',
+        output: 'test_output',
+      }),
+    ).rejects.toThrow()
+  })
+
   it('should handle task closure', async () => {
     let executionCount = 0
     const task = executor.task({
@@ -1393,5 +1444,56 @@ describe('simpleTask', () => {
 
       await sleep(100)
     }
+  })
+
+  it('should handle promise cancellation for running task executions', async () => {
+    let taskStarted = false
+    let taskCancelled = false
+
+    const longRunningTask = executor.task({
+      id: 'longRunningCancel',
+      timeoutMs: 30_000,
+      run: async (ctx: TaskRunContext) => {
+        taskStarted = true
+        try {
+          for (let i = 0; i < 100; i++) {
+            if (ctx.cancelSignal.isCancelled()) {
+              taskCancelled = true
+              throw DurableExecutionError.nonRetryable('Task was cancelled')
+            }
+            await sleep(50)
+          }
+          return 'completed'
+        } catch (error) {
+          if (ctx.cancelSignal.isCancelled()) {
+            taskCancelled = true
+          }
+          throw error
+        }
+      },
+    })
+
+    const handle = await executor.enqueueTask(longRunningTask)
+    await sleep(250)
+    expect(taskStarted).toBe(true)
+
+    await handle.cancel()
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 50,
+    })
+
+    expect(finishedExecution.status).toBe('cancelled')
+    assert(finishedExecution.status === 'cancelled')
+    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
+
+    for (let i = 0; i < 5; i++) {
+      if (taskCancelled) {
+        break
+      }
+      await sleep(500)
+    }
+
+    expect(taskCancelled).toBe(true)
   })
 })

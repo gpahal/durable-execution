@@ -60,7 +60,7 @@ export declare const components: {
         {
           requests: Array<{
             executionId: string;
-            filters: {
+            filters?: {
               isFinished?: boolean;
               isSleepingTask?: boolean;
               status?:
@@ -219,7 +219,7 @@ export declare const components: {
         {
           requests: Array<{
             executionId: string;
-            filters: {
+            filters?: {
               isFinished?: boolean;
               isSleepingTask?: boolean;
               status?:
@@ -349,7 +349,7 @@ export declare const components: {
               updatedAt: number;
             }>;
             executionId: string;
-            filters: {
+            filters?: {
               isFinished?: boolean;
               isSleepingTask?: boolean;
               status?:

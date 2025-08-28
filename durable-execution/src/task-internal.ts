@@ -33,7 +33,7 @@ export type TaskOptionsInternal = {
     input: unknown,
   ) => Promise<{
     output: unknown
-    children: Array<ChildTask>
+    children: ReadonlyArray<ChildTask>
   }>
   finalize: ((input: DefaultParentTaskOutput) => Promise<unknown>) | TaskOptionsInternal | undefined
 }
@@ -214,7 +214,7 @@ export class TaskInternal {
     input: unknown,
   ) => Promise<{
     output: unknown
-    children: Array<ChildTask>
+    children: ReadonlyArray<ChildTask>
   }>
   readonly finalize:
     | ((input: DefaultParentTaskOutput) => Promise<unknown>)
@@ -234,7 +234,7 @@ export class TaskInternal {
       input: unknown,
     ) => Promise<{
       output: unknown
-      children: Array<ChildTask>
+      children: ReadonlyArray<ChildTask>
     }>,
     finalize: ((input: DefaultParentTaskOutput) => Promise<unknown>) | TaskInternal | undefined,
   ) {
@@ -337,7 +337,7 @@ export class TaskInternal {
     cancelSignal: CancelSignal,
   ): Promise<{
     output: unknown
-    children: Array<ChildTask>
+    children: ReadonlyArray<ChildTask>
   }> {
     if (this.validateInputFn) {
       input = await this.validateInputFn(this.id, input)

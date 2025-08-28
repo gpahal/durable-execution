@@ -2,6 +2,7 @@ import { sleep } from '@gpahal/std/promises'
 
 import {
   ChildTask,
+  DurableExecutionCancelledError,
   DurableExecutionError,
   DurableExecutionNotFoundError,
   DurableExecutor,
@@ -28,6 +29,17 @@ describe('executor', () => {
     if (executor) {
       await executor.shutdown()
     }
+  })
+
+  it('should throw with invalid durable executor options', () => {
+    expect(
+      () =>
+        new DurableExecutor(storage, {
+          logLevel: 'error',
+          // @ts-expect-error - Testing invalid input
+          maxSerializedInputDataSize: 'invalid',
+        }),
+    ).toThrow('Invalid options')
   })
 
   it('should throw if shutdown', async () => {
@@ -223,6 +235,28 @@ describe('executor', () => {
     await expect(async () => {
       await executor.getTaskExecutionHandle(testTask2, execution1.executionId)
     }).rejects.toThrow(DurableExecutionNotFoundError)
+  })
+
+  it('should throw when getting execution for non-existent execution', async () => {
+    const testTask = executor.task({
+      id: 'test',
+      timeoutMs: 10_000,
+      run: () => 'test',
+    })
+
+    const handle = await executor.enqueueTask(testTask)
+    await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+
+    await storage.deleteById({ executionId: handle.getExecutionId() })
+
+    await expect(handle.getExecution()).rejects.toThrow(DurableExecutionNotFoundError)
+    await expect(
+      handle.waitAndGetFinishedExecution({
+        pollingIntervalMs: 100,
+      }),
+    ).rejects.toThrow(DurableExecutionNotFoundError)
   })
 
   it('should handle shutdown idempotently', async () => {
@@ -660,7 +694,7 @@ describe('executor', () => {
       expect(execution.children[0]!.executionId).toMatch(/^te_/)
 
       const childTaskExecutionId = execution.children[0]!.executionId
-      await storage.deleteById(childTaskExecutionId)
+      await storage.deleteById({ executionId: childTaskExecutionId })
       executor.startBackgroundProcesses()
 
       const finishedExecution = await handle.waitAndGetFinishedExecution({
@@ -672,6 +706,55 @@ describe('executor', () => {
     } finally {
       storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
         originalFn
+    }
+  })
+
+  it('should return storage timing stats', async () => {
+    const testTask = executor.task({
+      id: 'test',
+      timeoutMs: 10_000,
+      run: () => 'test result',
+    })
+
+    await executor.enqueueTask(testTask)
+    await sleep(500)
+
+    const stats = executor.getStorageTimingStats()
+    expect(stats).toBeDefined()
+    expect(typeof stats).toBe('object')
+
+    const statKeys = Object.keys(stats)
+    expect(statKeys.length).toBeGreaterThan(0)
+
+    for (const key of statKeys) {
+      expect(stats[key]).toBeDefined()
+      expect(typeof stats[key]!.count).toBe('number')
+      expect(typeof stats[key]!.meanMs).toBe('number')
+      expect(stats[key]!.count).toBeGreaterThan(0)
+      expect(stats[key]!.meanMs).toBeGreaterThanOrEqual(0)
+    }
+  })
+
+  it('should return storage per second call counts', async () => {
+    const testTask = executor.task({
+      id: 'test',
+      timeoutMs: 10_000,
+      run: () => 'test result',
+    })
+
+    await executor.enqueueTask(testTask)
+    await sleep(500)
+
+    const callCounts = executor.getStoragePerSecondCallCounts()
+    expect(callCounts).toBeDefined()
+    expect(callCounts instanceof Map).toBe(true)
+
+    expect(callCounts.size).toBeGreaterThan(0)
+
+    for (const [timestamp, count] of callCounts.entries()) {
+      expect(typeof timestamp).toBe('number')
+      expect(typeof count).toBe('number')
+      expect(count).toBeGreaterThan(0)
     }
   })
 })
@@ -735,5 +818,107 @@ describe('runBackgroundProcess', () => {
     expect(sleepTimes.every((sleepTime) => sleepTime > 10)).toBe(true)
 
     await expect(promise).resolves.not.toThrow()
+  })
+
+  it('should handle consecutive errors and cancellation in background process', async () => {
+    let errorCount = 0
+    let wasShutdown = false
+
+    const promise = executor.testRunBackgroundProcess('test', () => {
+      if (wasShutdown) {
+        throw new DurableExecutionCancelledError('Shutdown requested')
+      }
+
+      errorCount++
+      if (errorCount <= 50) {
+        throw new Error(`Consecutive error ${errorCount}`)
+      }
+
+      return Promise.resolve(true)
+    })
+
+    await sleep(1500)
+    const shutdownPromise = executor.shutdown()
+    await sleep(100)
+    wasShutdown = true
+    await shutdownPromise
+
+    await expect(promise).resolves.not.toThrow()
+    expect(errorCount).toBeGreaterThan(10)
+  })
+
+  it('should handle background process errors without shutdown', async () => {
+    let errorCount = 0
+
+    const promise = executor.testRunBackgroundProcess('test', () => {
+      errorCount++
+      if (errorCount <= 3) {
+        throw new Error(`Background process error ${errorCount}`)
+      }
+      return Promise.resolve(true)
+    })
+
+    await sleep(400)
+    await executor.shutdown()
+
+    await expect(promise).resolves.not.toThrow()
+  })
+
+  it('should apply exponential backoff when consecutive errors exceed threshold', async () => {
+    let errorCount = 0
+
+    const promise = executor.testRunBackgroundProcess('test', async () => {
+      errorCount++
+      await sleep(1)
+      if (errorCount <= 10) {
+        throw new Error(`Consecutive error ${errorCount}`)
+      }
+      return true
+    })
+
+    await sleep(500)
+    await executor.shutdown()
+
+    await expect(promise).resolves.not.toThrow()
+    expect(errorCount).toBeGreaterThan(5)
+  })
+
+  it('should catch and log errors in background process loop', async () => {
+    let errorLogged = false
+
+    const mockLogger = {
+      debug: () => {
+        // Do nothing
+      },
+      info: () => {
+        // Do nothing
+      },
+      error: (message: string) => {
+        if (message.includes('Error in test')) {
+          errorLogged = true
+        }
+      },
+    }
+
+    const testExecutor = new TestDurableExecutor(storage, {
+      logLevel: 'error',
+      backgroundProcessIntraBatchSleepMs: 50,
+      logger: mockLogger,
+    })
+
+    let callCount = 0
+    const promise = testExecutor.testRunBackgroundProcess('test', () => {
+      callCount++
+      if (callCount === 1) {
+        throw new Error('Simulated error in background process loop')
+      }
+      return Promise.resolve(true)
+    })
+
+    await sleep(200)
+    await testExecutor.shutdown()
+
+    await expect(promise).resolves.not.toThrow()
+    expect(errorLogged).toBe(true)
   })
 })

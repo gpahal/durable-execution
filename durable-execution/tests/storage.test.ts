@@ -175,7 +175,7 @@ describe('getTaskExecutionStorageUpdate', () => {
     const update = getTaskExecutionStorageUpdate(now, {
       status: 'cancelled',
     })
-    expect(update.unsetExecutorId).toBe(true)
+    expect(update.unsetExecutorId).toBeUndefined()
     expect(update.isFinished).toBe(true)
     expect(update.unsetRunOutput).toBe(true)
     expect(update.unsetError).toBeUndefined()
@@ -1248,72 +1248,74 @@ describe('TaskExecutionsStorageWithMutex', () => {
     ])
     expect(executionCount).toBe(5)
 
-    await storage.updateByStatusAndStartAtLessThanAndReturn(
-      'completed',
-      now,
-      {
+    await storage.updateByStatusAndStartAtLessThanAndReturn({
+      status: 'completed',
+      startAtLessThan: now,
+      update: {
         updatedAt: now,
       },
-      now,
-      0,
-    )
+      updateExpiresAtWithStartedAt: now,
+      limit: 0,
+    })
     expect(executionCount).toBe(6)
 
     await storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
-      'completed',
-      'idle',
       {
-        updatedAt: now,
+        status: 'completed',
+        onChildrenFinishedProcessingStatus: 'idle',
+        update: {
+          updatedAt: now,
+        },
+        limit: 1,
       },
-      1,
     )
     expect(executionCount).toBe(7)
 
-    await storage.updateByCloseStatusAndReturn(
-      'idle',
-      {
+    await storage.updateByCloseStatusAndReturn({
+      closeStatus: 'idle',
+      update: {
         updatedAt: now,
       },
-      1,
-    )
+      limit: 1,
+    })
     expect(executionCount).toBe(8)
 
-    await storage.updateByIsSleepingTaskAndExpiresAtLessThan(
-      false,
-      now,
-      {
+    await storage.updateByIsSleepingTaskAndExpiresAtLessThan({
+      isSleepingTask: false,
+      expiresAtLessThan: now,
+      update: {
         updatedAt: now,
       },
-      1,
-    )
+      limit: 1,
+    })
     expect(executionCount).toBe(9)
 
-    await storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
-      now,
-      {
+    await storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan({
+      onChildrenFinishedProcessingExpiresAtLessThan: now,
+      update: {
         updatedAt: now,
       },
-      1,
-    )
+      limit: 1,
+    })
     expect(executionCount).toBe(10)
 
-    await storage.updateByCloseExpiresAtLessThan(
-      now,
-      {
+    await storage.updateByCloseExpiresAtLessThan({
+      closeExpiresAtLessThan: now,
+      update: {
         updatedAt: now,
       },
-      1,
-    )
+      limit: 1,
+    })
     expect(executionCount).toBe(11)
 
-    await storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
-      'de_executor_id',
-      true,
-      {
+    await storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn({
+      executorId: 'de_executor_id',
+      needsPromiseCancellation: true,
+      update: {
         updatedAt: now,
       },
-      1,
-    )
+      limit: 1,
+    })
     expect(executionCount).toBe(12)
 
     await storage.getManyByParentExecutionId([{ parentExecutionId: 'executionId' }])
@@ -1330,17 +1332,17 @@ describe('TaskExecutionsStorageWithMutex', () => {
     ])
     expect(executionCount).toBe(14)
 
-    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-      true,
-      'idle',
-      {
+    await storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus({
+      isFinished: true,
+      closeStatus: 'idle',
+      update: {
         updatedAt: now,
       },
-      1,
-    )
+      limit: 1,
+    })
     expect(executionCount).toBe(15)
 
-    await storage.deleteById('executionId')
+    await storage.deleteById({ executionId: 'executionId' })
     expect(executionCount).toBe(16)
 
     await storage.deleteAll()

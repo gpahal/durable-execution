@@ -510,12 +510,8 @@ export class DurableExecutor {
 
     await sleepWithJitter(this.backgroundProcessIntraBatchSleepMs)
     while (!this.core.shutdownSignal.isCancelled()) {
-      try {
-        const isDone = await runBackgroundProcessSingleBatch()
-        await sleepWithJitter(isDone ? backgroundProcessIntraBatchSleepMs : 0)
-      } catch (error) {
-        this.logger.error(`Error in ${processName}`, error)
-      }
+      const isDone = await runBackgroundProcessSingleBatch()
+      await sleepWithJitter(isDone ? backgroundProcessIntraBatchSleepMs : 0)
     }
   }
 

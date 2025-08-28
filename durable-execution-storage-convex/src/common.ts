@@ -269,7 +269,7 @@ export function taskExecutionStorageUpdateToDBUpdateRequest(
     expiresAt: update.expiresAt,
     unsetExpiresAt: update.unsetExpiresAt,
     finishedAt: update.finishedAt,
-    children: update.children,
+    children: update.children as Array<TaskExecutionSummary>,
     acc: update.activeChildrenCount,
     ocfpStatus: update.onChildrenFinishedProcessingStatus,
     ocfpExpiresAt: update.onChildrenFinishedProcessingExpiresAt,
@@ -411,15 +411,15 @@ export const vTaskExecutionStorageGetByIdFilters = v.object({
 
 export function applyTaskExecutionIdFilters(
   execution: TaskExecutionDBInsertValue,
-  filters: TaskExecutionStorageGetByIdFilters,
+  filters?: TaskExecutionStorageGetByIdFilters | null,
 ) {
-  if (filters.isSleepingTask != null && execution.isSleepingTask !== filters.isSleepingTask) {
+  if (filters?.isSleepingTask != null && execution.isSleepingTask !== filters.isSleepingTask) {
     return false
   }
-  if (filters.status != null && execution.status !== filters.status) {
+  if (filters?.status != null && execution.status !== filters.status) {
     return false
   }
-  if (filters.isFinished != null && execution.isFinished !== filters.isFinished) {
+  if (filters?.isFinished != null && execution.isFinished !== filters.isFinished) {
     return false
   }
   return true

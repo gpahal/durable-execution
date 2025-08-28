@@ -225,4 +225,33 @@ describe('executorClient', () => {
       await executorClient.getTaskExecutionHandle('test', 'some-id')
     }).rejects.toThrow(DurableExecutionError)
   })
+
+  it('should wake up sleeping task execution', async () => {
+    const sleepingTask = executor.sleepingTask<string>({
+      id: 'sleeping',
+      timeoutMs: 30_000,
+    })
+
+    const tasks = { sleepingTask }
+    const executorClient = new DurableExecutorClient(storage, tasks, {
+      logLevel: 'error',
+    })
+
+    const handle = await executorClient.enqueueTask('sleepingTask', 'unique-sleep-1')
+    const execution = await handle.getExecution()
+    expect(execution.status).toBe('running')
+
+    const finishedExecution = await executorClient.wakeupSleepingTaskExecution(
+      sleepingTask,
+      'unique-sleep-1',
+      {
+        status: 'completed',
+        output: 'woken up',
+      },
+    )
+
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.output).toBe('woken up')
+  })
 })

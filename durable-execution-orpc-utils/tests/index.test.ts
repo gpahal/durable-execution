@@ -183,6 +183,57 @@ describe('server', () => {
     ).rejects.toThrow('Task invalid not found')
   })
 
+  it('should handle non-sleeping task to wakeup sleeping task execution', async () => {
+    const regularTask = executor.task({
+      id: 'regular',
+      timeoutMs: 5000,
+      run: (_, input: { n: number }) => {
+        return { n: input.n + 1 }
+      },
+    })
+
+    const tasks = { regularTask }
+    const router = createTasksRouter(os, executor, tasks)
+    const client = createRouterClient(router, { context: {} })
+
+    await expect(
+      client.wakeupSleepingTaskExecution({
+        taskId: 'regularTask',
+        sleepingTaskUniqueId: 'unique_id',
+        options: {
+          status: 'completed',
+          output: { n: 1 } as never,
+        },
+      }),
+    ).rejects.toThrow('Task regularTask is not a sleeping task')
+  })
+
+  it('should handle generic error when waking up sleeping task execution', async () => {
+    const sleepingTask = executor.sleepingTask<string>({
+      id: 'sleeping',
+      timeoutMs: 10_000,
+    })
+
+    const tasks = { sleepingTask }
+    const router = createTasksRouter(os, executor, tasks)
+    const client = createRouterClient(router, { context: {} })
+
+    vi.spyOn(executor, 'wakeupSleepingTaskExecution').mockRejectedValueOnce(
+      new Error('Database connection lost'),
+    )
+
+    await expect(
+      client.wakeupSleepingTaskExecution({
+        taskId: 'sleepingTask',
+        sleepingTaskUniqueId: 'unique_id',
+        options: {
+          status: 'completed',
+          output: 'test_output',
+        },
+      }),
+    ).rejects.toThrow('Database connection lost')
+  })
+
   it('should complete procedureClientTask', async () => {
     let executionCount = 0
     const add1Proc = os
@@ -714,5 +765,37 @@ describe('convertProcedureClientToTask', () => {
     assert(finishedExecution.status === 'failed')
     expect(finishedExecution.error.isRetryable).toBe(true)
     expect(finishedExecution.error.isInternal).toBe(true)
+  })
+
+  it('should handle non-error thrown values as internal server error', async () => {
+    let executionCount = 0
+    const testProc = os
+      .input(type<{ n: number }>())
+      .output(type<{ n: number }>())
+      .handler(() => {
+        executionCount++
+        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        throw 'Unknown error type'
+      })
+
+    const router = { test: testProc }
+    const client = createRouterClient(router, { context: {} })
+    const task = convertProcedureClientToTask(
+      executor,
+      { id: 'test_unknown_error', timeoutMs: 1000 },
+      client.test,
+    )
+
+    const handle = await executor.enqueueTask(task, { n: 0 })
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 25,
+    })
+
+    expect(executionCount).toBe(1)
+    expect(finishedExecution.status).toBe('failed')
+    assert(finishedExecution.status === 'failed')
+    expect(finishedExecution.error.isRetryable).toBe(true)
+    expect(finishedExecution.error.isInternal).toBe(true)
+    expect(finishedExecution.error.message).toBe('Internal server error')
   })
 })

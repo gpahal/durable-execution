@@ -305,8 +305,8 @@ export type SleepingTaskOptions<TOutput = unknown> = Pick<CommonTaskOptions, 'id
  * function completes, along with the output of the parent task.
  *
  * The `runParent` function is similar to the `run` function in {@link TaskOptions}, but the
- * output is of the form `{ output: TRunOutput, children: Array<ChildTask> }` where the children
- * are the tasks to be run in parallel after the run function completes.
+ * output is of the form `{ output: TRunOutput, children: ReadonlyArray<ChildTask> }` where the
+ * children are the tasks to be run in parallel after the run function completes.
  *
  * The `finalize` function or task is run after the runParent function and all the children tasks
  * finish. It is useful for combining the output of the runParent function and children tasks. It
@@ -323,7 +323,7 @@ export type SleepingTaskOptions<TOutput = unknown> = Pick<CommonTaskOptions, 'id
  *
  * If `finalize` is provided, the output of the whole task is the output of the `finalize` function
  * or task. If it is not provided, the output of the whole task is of the form
- * `{ output: TRunOutput, children: Array<FinishedChildTaskExecution> }`.
+ * `{ output: TRunOutput, children: ReadonlyArray<FinishedChildTaskExecution> }`.
  *
  * See the [task examples](https://gpahal.github.io/durable-execution/index.html#task-examples)
  * section for more details on creating tasks.
@@ -423,11 +423,11 @@ export type ParentTaskOptions<
   ) =>
     | {
         output: TRunOutput
-        children?: Array<ChildTask>
+        children?: ReadonlyArray<ChildTask>
       }
     | Promise<{
         output: TRunOutput
-        children?: Array<ChildTask>
+        children?: ReadonlyArray<ChildTask>
       }>
   /**
    * Function or task to run after the runParent function and children tasks finish. This is useful
@@ -449,7 +449,7 @@ export type ParentTaskOptions<
  * ```ts
  * {
  *   output: TRunOutput,
- *   children: Array<FinishedChildTaskExecution>
+ *   children: ReadonlyArray<FinishedChildTaskExecution>
  * }
  * ```
  *
@@ -477,7 +477,7 @@ export type FinalizeTaskOptions<
  */
 export type DefaultParentTaskOutput<TRunOutput = unknown> = {
   output: TRunOutput
-  children: Array<FinishedChildTaskExecution>
+  children: ReadonlyArray<FinishedChildTaskExecution>
 }
 
 export function isFinalizeTaskOptionsTaskOptions<
@@ -798,7 +798,7 @@ export class ChildTask<TTask extends AnyTask = AnyTask> {
       : [task: TTask, input: InferTaskInput<TTask>, options?: TaskEnqueueOptions<TTask>]
   ) {
     this.task = rest[0]
-    this.input = (rest.length > 0 ? rest[1] : undefined)!
+    this.input = rest[1]!
     this.options = (rest.length > 2 ? rest[2] : undefined) as
       | TaskEnqueueOptions<AnyTask>
       | undefined
@@ -901,7 +901,7 @@ export const ALL_TASK_EXECUTION_STATUSES = [
   'finalize_failed',
   'completed',
   'cancelled',
-] as Array<TaskExecutionStatus>
+] as ReadonlyArray<TaskExecutionStatus>
 
 /**
  * All possible statuses of a task execution that are considered active.
@@ -913,7 +913,7 @@ export const ACTIVE_TASK_EXECUTION_STATUSES = [
   'running',
   'waiting_for_children',
   'waiting_for_finalize',
-] as Array<TaskExecutionStatus>
+] as ReadonlyArray<TaskExecutionStatus>
 
 /**
  * All possible statuses of a task execution that are considered finished.
@@ -926,7 +926,7 @@ export const FINISHED_TASK_EXECUTION_STATUSES = [
   'finalize_failed',
   'completed',
   'cancelled',
-] as Array<TaskExecutionStatus>
+] as ReadonlyArray<TaskExecutionStatus>
 
 /**
  * All possible statuses of a task execution that are considered errored.
@@ -938,7 +938,7 @@ export const ERRORED_TASK_EXECUTION_STATUSES = [
   'timed_out',
   'finalize_failed',
   'cancelled',
-] as Array<TaskExecutionStatus>
+] as ReadonlyArray<TaskExecutionStatus>
 
 /**
  * Runtime options for enqueuing a task that override the task's default configuration.

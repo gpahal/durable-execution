@@ -147,4 +147,20 @@ describe('serializer', () => {
     expect(result).toBeDefined()
     expect(result.length).toBeGreaterThan(1000)
   })
+
+  it('should handle early size estimation edge case in serializer', () => {
+    const serializer = new SerializerInternal(createSuperjsonSerializer())
+
+    const value = 'a'.repeat(100)
+    const serialized = serializer.serialize(value)
+
+    const maxSize = Math.floor(serialized.length * 2.5)
+
+    const result = serializer.serialize(value, maxSize)
+    expect(result).toBeDefined()
+    expect(result).toBe(serialized)
+
+    expect(serialized.length * 4).toBeGreaterThan(maxSize)
+    expect(Buffer.byteLength(serialized, 'utf8')).toBeLessThanOrEqual(maxSize)
+  })
 })

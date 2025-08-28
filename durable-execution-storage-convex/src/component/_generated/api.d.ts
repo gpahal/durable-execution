@@ -43,7 +43,7 @@ export type Mounts = {
       {
         requests: Array<{
           executionId: string;
-          filters: {
+          filters?: {
             isFinished?: boolean;
             isSleepingTask?: boolean;
             status?:
@@ -187,7 +187,7 @@ export type Mounts = {
       {
         requests: Array<{
           executionId: string;
-          filters: {
+          filters?: {
             isFinished?: boolean;
             isSleepingTask?: boolean;
             status?:
@@ -317,7 +317,7 @@ export type Mounts = {
             updatedAt: number;
           }>;
           executionId: string;
-          filters: {
+          filters?: {
             isFinished?: boolean;
             isSleepingTask?: boolean;
             status?:
