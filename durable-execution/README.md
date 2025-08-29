@@ -41,20 +41,11 @@ failure or if the task is retried.
 Use `DurableExecutor` directly to enqueue and execute tasks within the same process. This is the
 simplest way to use durable-execution for local or single-process scenarios.
 
-### Separate enqueueing and execution workers
+### Separate server process or module
 
-- `DurableExecutor` is used to execute tasks and is a long running process. Start as many as you
-  need based on the number of tasks you want to execute. These can also be used to enqueue tasks.
-- `DurableExecutorClient` is used to enqueue tasks and can be used from serverless functions or
-  other short lived processes. See
-  [DurableExecutorClient](https://gpahal.github.io/durable-execution/classes/DurableExecutorClient.html)
-  for more details.
-
-### Separate server process
-
-A durable executor can also be started as its own separate server process. Tasks can be enqueued
-with API calls to the durable executor process. Utilities to create a typesafe implementation of
-the durable executor server are provided in the
+A durable executor can also be started as its own separate server process or just as a separate
+module. Tasks can be enqueued with RPC calls to the durable executor process. Utilities to create a
+typesafe implementation of the durable executor server are provided in the
 [durable-execution-orpc-utils](https://github.com/gpahal/durable-execution/tree/main/durable-execution-orpc-utils)
 package using the [oRPC](https://orpc.unnoq.com/) library.
 

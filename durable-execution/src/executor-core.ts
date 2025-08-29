@@ -158,6 +158,7 @@ export const zDurableExecutorCoreOptions = z.object({
  * background processes.
  *
  * @category Executor
+ * @internal
  */
 export class DurableExecutorCore {
   readonly id: string

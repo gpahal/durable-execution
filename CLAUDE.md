@@ -70,7 +70,6 @@ This is a TypeScript monorepo for a **durable execution engine** - a system that
 - **Sequential Tasks**: Chain dependent tasks where output flows to next input
 - **Sleeping Tasks**: Tasks that wait for external events/webhooks to wake them up. Remain in `running` state until explicitly woken via `wakeupSleepingTaskExecution()` with a completion status and output
 - **Polling Tasks**: Tasks that repeatedly check for a condition until met or timed out
-- **Client Tasks**: Type-safe remote execution via `DurableExecutorClient`
 
 **Storage Layer**: Abstract `TaskExecutionsStorage` interface requiring ACID transactions. Production uses Drizzle ORM implementations (PostgreSQL/MySQL/SQLite), testing uses `InMemoryTaskExecutionsStorage`. For storage implementations that don't support batch operations natively, use `TaskExecutionsStorageWithBatching` wrapper to convert individual operations into efficient batch requests (DataLoader pattern). The executor internally uses `TaskExecutionsStorageInternal` with `BatchRequester` to optimize API calls by batching multiple operations when `enableBatching` is enabled.
 

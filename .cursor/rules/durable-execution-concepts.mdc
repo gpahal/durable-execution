@@ -251,22 +251,6 @@ const executor = new DurableExecutor(storage)
 
 ## Integration Points
 
-### Client Libraries
-
-Use [DurableExecutorClient](mdc:durable-execution/src/executor-client.ts) for remote execution:
-
-```ts
-import { DurableExecutorClient } from 'durable-execution'
-
-const client = new DurableExecutorClient(tasks, storage)
-const handle = await client.enqueueTask(emailTask, { to: 'user@example.com', subject: 'Hello' })
-const result = await handle.waitAndGetFinishedExecution()
-```
-
-- Type-safe task invocation
-- Network resilience and retry logic
-- Integration with oRPC for RPC-style APIs
-
 ### Monitoring and Logging
 
 - Implement custom `Logger` interface for structured logging

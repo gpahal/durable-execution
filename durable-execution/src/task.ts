@@ -54,30 +54,6 @@ export type AnyTask =
 /**
  * Type-safe record of available tasks.
  *
- * This type ensures compile-time safety when enqueuing tasks, providing autocomplete for task names
- * and type checking for inputs/outputs.
- *
- * @example
- * ```ts
- * // Define your tasks with proper types
- * const emailTask = executor.task<{to: string}, {messageId: string}>({...})
- * const reportTask = executor.task<{userId: string}, {reportUrl: string}>({...})
- *
- * // Create task registry
- * const tasks = {
- *   sendEmail: emailTask,
- *   generateReport: reportTask,
- * } as const  // Use 'as const' for better type inference
- *
- * // Client gets full type safety
- * const client = new DurableExecutorClient(storage, tasks)
- *
- * // TypeScript knows available tasks and their types
- * await client.enqueueTask('sendEmail', { to: 'user@example.com' })
- * // Error: 'invalidTask' doesn't exist
- * // await client.enqueueTask('invalidTask', {})
- * ```
- *
  * @category Task
  */
 export type AnyTasks = Record<string, AnyTask>

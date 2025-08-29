@@ -1,5 +1,4 @@
 export { DurableExecutor } from './executor'
-export { DurableExecutorClient } from './executor-client'
 export { DurableExecutorCore } from './executor-core'
 export {
   type Task,
