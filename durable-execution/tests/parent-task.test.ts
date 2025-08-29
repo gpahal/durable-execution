@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { sleep } from '@gpahal/std/promises'
 
 import {
-  ChildTask,
+  childTask,
   DurableExecutionError,
   DurableExecutor,
   InMemoryTaskExecutionsStorage,
@@ -55,7 +55,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [new ChildTask(child1), new ChildTask(child2)],
+          children: [childTask(child1), childTask(child2)],
         }
       },
     })
@@ -154,7 +154,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [new ChildTask(child1), new ChildTask(child2)],
+          children: [childTask(child1), childTask(child2)],
         }
       },
       finalize: async ({ output, children }) => {
@@ -211,7 +211,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [new ChildTask(child1), new ChildTask(child2)],
+          children: [childTask(child1), childTask(child2)],
         }
       },
       finalize: {
@@ -356,7 +356,7 @@ describe('parentTask', () => {
           await sleep(1)
           return {
             output: input.name,
-            children: [new ChildTask(child1), new ChildTask(child2)],
+            children: [childTask(child1), childTask(child2)],
           }
         },
       })
@@ -429,7 +429,7 @@ describe('parentTask', () => {
           await sleep(1)
           return {
             output: input.name,
-            children: [new ChildTask(child1), new ChildTask(child2)],
+            children: [childTask(child1), childTask(child2)],
           }
         },
       })
@@ -485,7 +485,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [new ChildTask(child1), new ChildTask(child2)],
+          children: [childTask(child1), childTask(child2)],
         }
       },
       finalize: async ({ output, children }) => {
@@ -550,7 +550,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [new ChildTask(child1), new ChildTask(child2)],
+          children: [childTask(child1), childTask(child2)],
         }
       },
       finalize: async ({ output, children }) => {
@@ -615,7 +615,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [new ChildTask(child1), new ChildTask(child2)],
+          children: [childTask(child1), childTask(child2)],
         }
       },
       finalize: {
@@ -698,7 +698,7 @@ describe('parentTask', () => {
         await sleep(1)
         return {
           output: 'test_output',
-          children: [new ChildTask(child1), new ChildTask(child2)],
+          children: [childTask(child1), childTask(child2)],
         }
       },
       finalize: {
@@ -709,7 +709,7 @@ describe('parentTask', () => {
           await sleep(1)
           return {
             output: `${output}_${children.map((c) => (c.status === 'completed' ? c.output : '')).join('_')}`,
-            children: [new ChildTask(finalizeTaskChild1), new ChildTask(finalizeTaskChild2)],
+            children: [childTask(finalizeTaskChild1), childTask(finalizeTaskChild2)],
           }
         },
         finalize: {
@@ -770,7 +770,7 @@ describe('parentTask', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [new ChildTask(slowChildTask)],
+          children: [childTask(slowChildTask)],
         }
       },
     })
@@ -806,7 +806,7 @@ describe('parentTask', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [new ChildTask(grandchildTask)],
+          children: [childTask(grandchildTask)],
         }
       },
       finalize: {
@@ -826,7 +826,7 @@ describe('parentTask', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [new ChildTask(childParentTask)],
+          children: [childTask(childParentTask)],
         }
       },
       finalize: {
@@ -852,7 +852,7 @@ describe('parentTask', () => {
   })
 
   it('should handle parent task with children finalization timeout', async () => {
-    const childTask = executor.task({
+    const child = executor.task({
       id: 'timeout_child',
       timeoutMs: 100,
       run: async () => {
@@ -867,7 +867,7 @@ describe('parentTask', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [new ChildTask(childTask)],
+          children: [childTask(child)],
         }
       },
       finalize: {
@@ -901,7 +901,7 @@ describe('parentTask', () => {
       id: 'parent',
       timeoutMs: 1000,
       runParent: () => {
-        return { output: 'parent_output', children: [new ChildTask(task, 'test_unique_id')] }
+        return { output: 'parent_output', children: [childTask(task, 'test_unique_id')] }
       },
       finalize: {
         id: 'finalizeTask',
@@ -952,7 +952,7 @@ describe('parentTask', () => {
       id: 'parent',
       timeoutMs: 1000,
       runParent: () => {
-        return { output: 'parent_output', children: [new ChildTask(task, 'test_unique_id')] }
+        return { output: 'parent_output', children: [childTask(task, 'test_unique_id')] }
       },
       finalize: {
         id: 'finalizeTask',
@@ -1008,7 +1008,7 @@ describe('parentTask', () => {
       id: 'parent',
       timeoutMs: 1000,
       runParent: () => {
-        return { output: 'parent_output', children: [new ChildTask(task)] }
+        return { output: 'parent_output', children: [childTask(task)] }
       },
     })
 

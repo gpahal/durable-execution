@@ -36,7 +36,7 @@ import {
   type TaskExecutionStorageUpdateInternal,
 } from './storage-internal'
 import {
-  ChildTask,
+  childTask,
   FINISHED_TASK_EXECUTION_STATUSES,
   type AnyTask,
   type DefaultParentTaskOutput,
@@ -630,10 +630,7 @@ export class DurableExecutorCore {
         runParent: (_, input) => {
           return {
             output: undefined,
-            children: [
-              new ChildTask(firstTask, input),
-              ...otherTasks.map((task) => new ChildTask(task, undefined)),
-            ],
+            children: [childTask(firstTask, input), ...otherTasks.map((task) => childTask(task))],
           }
         },
         finalize: ({ children }) => {
@@ -689,7 +686,7 @@ export class DurableExecutorCore {
         return {
           output: input,
           children: [
-            new ChildTask(pollTask, input.input, {
+            childTask(pollTask, input.input, {
               sleepMsBeforeRun: (sleepMsBeforeRun && isFunction(sleepMsBeforeRun)
                 ? sleepMsBeforeRun(input.attempt)
                 : sleepMsBeforeRun != null
@@ -723,7 +720,7 @@ export class DurableExecutorCore {
           return {
             output: { isSuccess: false },
             children: [
-              new ChildTask(pollingTaskInner, { input: input.input, attempt: input.attempt + 1 }),
+              childTask(pollingTaskInner, { input: input.input, attempt: input.attempt + 1 }),
             ],
           }
         },
@@ -757,7 +754,7 @@ export class DurableExecutorCore {
       runParent: (_, input) => {
         return {
           output: undefined,
-          children: [new ChildTask(pollingTaskInner, { input, attempt: 0 })],
+          children: [childTask(pollingTaskInner, { input, attempt: 0 })],
         }
       },
       finalize: ({ children }) => {

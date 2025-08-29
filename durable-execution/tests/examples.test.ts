@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { sleep } from '@gpahal/std/promises'
 
 import {
-  ChildTask,
+  childTask,
   DurableExecutionError,
   DurableExecutor,
   InMemoryTaskExecutionsStorage,
@@ -244,8 +244,8 @@ describe('examples', () => {
         return {
           output: `Hello from parent task, ${input.name}!`,
           children: [
-            new ChildTask(taskA, { name: input.name }),
-            new ChildTask(taskB, { name: input.name }),
+            childTask(taskA, { name: input.name }),
+            childTask(taskB, { name: input.name }),
           ],
         }
       },
@@ -300,8 +300,8 @@ describe('examples', () => {
         return {
           output: `Hello from parent task, ${input.name}!`,
           children: [
-            new ChildTask(taskA, { name: input.name }),
-            new ChildTask(taskB, { name: input.name }),
+            childTask(taskA, { name: input.name }),
+            childTask(taskB, { name: input.name }),
           ],
         }
       },
@@ -369,7 +369,7 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from parent task, ${input.name}!`,
-          children: [new ChildTask(taskA, { name: input.name }), new ChildTask(taskB)],
+          children: [childTask(taskA, { name: input.name }), childTask(taskB)],
         }
       },
       finalize: {
@@ -436,7 +436,7 @@ describe('examples', () => {
       runParent: (ctx, input: { name: string }) => {
         return {
           output: `Hello from parent task, ${input.name}!`,
-          children: [new ChildTask(taskA, { name: input.name }), new ChildTask(taskB)],
+          children: [childTask(taskA, { name: input.name }), childTask(taskB)],
         }
       },
       finalize: {
@@ -568,7 +568,7 @@ describe('examples', () => {
         runParent: (ctx, { output }) => {
           return {
             output: output.taskBOutput,
-            children: [new ChildTask(taskC, { name: output.name })],
+            children: [childTask(taskC, { name: output.name })],
           }
         },
         finalize: {
@@ -605,7 +605,7 @@ describe('examples', () => {
         runParent: (ctx, { output }) => {
           return {
             output: output.taskAOutput,
-            children: [new ChildTask(taskB, { name: output.name })],
+            children: [childTask(taskB, { name: output.name })],
           }
         },
         finalize: {
@@ -691,8 +691,8 @@ describe('examples', () => {
             taskAOutput: `Hello from task A, ${input.name}!`,
           },
           children: [
-            new ChildTask(taskA1, { name: input.name }),
-            new ChildTask(taskA2, { name: input.name }),
+            childTask(taskA1, { name: input.name }),
+            childTask(taskA2, { name: input.name }),
           ],
         }
       },
@@ -730,8 +730,8 @@ describe('examples', () => {
             taskBOutput: `Hello from task B, ${input.name}!`,
           },
           children: [
-            new ChildTask(taskB1, { name: input.name }),
-            new ChildTask(taskB2, { name: input.name }),
+            childTask(taskB1, { name: input.name }),
+            childTask(taskB2, { name: input.name }),
           ],
         }
       },
@@ -842,9 +842,9 @@ describe('examples', () => {
         return {
           output: `Hello from task A, ${input.name}!`,
           children: [
-            new ChildTask(taskA1, { name: input.name }),
-            new ChildTask(taskA2, { name: input.name }),
-            new ChildTask(taskA3, { name: input.name }),
+            childTask(taskA1, { name: input.name }),
+            childTask(taskA2, { name: input.name }),
+            childTask(taskA3, { name: input.name }),
           ],
         }
       },
@@ -880,8 +880,8 @@ describe('examples', () => {
         return {
           output: `Hello from root task, ${input.name}!`,
           children: [
-            new ChildTask(taskA, { name: input.name }),
-            new ChildTask(taskB, { name: input.name }),
+            childTask(taskA, { name: input.name }),
+            childTask(taskB, { name: input.name }),
           ],
         }
       },
@@ -955,7 +955,7 @@ describe('examples', () => {
           return {
             output: undefined,
             children:
-              input.index >= 9 ? [] : [new ChildTask(recursiveTask, { index: input.index + 1 })],
+              input.index >= 9 ? [] : [childTask(recursiveTask, { index: input.index + 1 })],
           }
         },
         finalize: {
@@ -1072,7 +1072,7 @@ describe('examples', () => {
             } as
               | { isDone: false; value: undefined; prevCount: number }
               | { isDone: true; value: number; prevCount: number },
-            children: [new ChildTask(pollingTask, { prevCount: input.prevCount + 1 })],
+            children: [childTask(pollingTask, { prevCount: input.prevCount + 1 })],
           }
         },
         finalize: {
@@ -1133,7 +1133,7 @@ describe('examples', () => {
         const entityId = 'entity_id'
         return {
           output: 'parent_output',
-          children: [new ChildTask(waitForWebhookTask, entityId)],
+          children: [childTask(waitForWebhookTask, entityId)],
         }
       },
       finalize: {

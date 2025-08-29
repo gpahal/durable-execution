@@ -94,8 +94,8 @@ export const zDurableExecutorOptions = z.object({
  *           fileSize: 100,
  *         },
  *         children: [
- *           new ChildTask(extractFileTitle, { filePath: input.filePath }),
- *           new ChildTask(summarizeFile, { filePath: input.filePath }),
+ *           childTask(extractFileTitle, { filePath: input.filePath }),
+ *           childTask(summarizeFile, { filePath: input.filePath }),
  *         ],
  *       }
  *     },

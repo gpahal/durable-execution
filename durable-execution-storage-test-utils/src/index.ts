@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import {
-  ChildTask,
+  childTask,
   DurableExecutor,
   FINISHED_TASK_EXECUTION_STATUSES,
   type ParentTaskExecutionSummary,
@@ -166,9 +166,9 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
       return {
         output: `Hello from task A, ${input.name}!`,
         children: [
-          new ChildTask(taskA1, { name: input.name }),
-          new ChildTask(taskA2, { name: input.name }),
-          new ChildTask(taskA3, { name: input.name }),
+          childTask(taskA1, { name: input.name }),
+          childTask(taskA2, { name: input.name }),
+          childTask(taskA3, { name: input.name }),
         ],
       }
     },
@@ -203,10 +203,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     runParent: (ctx, input: { name: string }) => {
       return {
         output: `Hello from root task, ${input.name}!`,
-        children: [
-          new ChildTask(taskA, { name: input.name }),
-          new ChildTask(taskB, { name: input.name }),
-        ],
+        children: [childTask(taskA, { name: input.name }), childTask(taskB, { name: input.name })],
       }
     },
     finalize: {
@@ -286,7 +283,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     runParent: () => {
       return {
         output: undefined,
-        children: [new ChildTask(failingTask)],
+        children: [childTask(failingTask)],
       }
     },
     finalize: {
@@ -308,7 +305,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     runParent: () => {
       return {
         output: undefined,
-        children: [new ChildTask(taskA1, { name: 'world' })],
+        children: [childTask(taskA1, { name: 'world' })],
       }
     },
     finalize: {
@@ -377,7 +374,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     runParent: () => {
       return {
         output: 'parent_output',
-        children: [new ChildTask(sleepingTask, 'test_unique_id')],
+        children: [childTask(sleepingTask, 'test_unique_id')],
       }
     },
     finalize: {
@@ -407,7 +404,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     id: 'closeTestParentTask',
     timeoutMs: 1000,
     runParent: () => {
-      return { output: 'parent_output', children: [new ChildTask(closeTestTask)] }
+      return { output: 'parent_output', children: [childTask(closeTestTask)] }
     },
   })
 

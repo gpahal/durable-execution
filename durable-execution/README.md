@@ -152,8 +152,8 @@ const uploadFile = executor
           fileSize: 100,
         },
         children: [
-          new ChildTask(extractFileTitle, { filePath: input.filePath }),
-          new ChildTask(summarizeFile, { filePath: input.filePath }),
+          childTask(extractFileTitle, { filePath: input.filePath }),
+          childTask(summarizeFile, { filePath: input.filePath }),
         ],
       }
     },
@@ -362,8 +362,8 @@ const parentTask = executor.parentTask({
     return {
       output: `Hello from parent task, ${input.name}!`,
       children: [
-        new ChildTask(taskA, { name: input.name }),
-        new ChildTask(taskB, { name: input.name }),
+        childTask(taskA, { name: input.name }),
+        childTask(taskB, { name: input.name }),
       ],
     }
   },
@@ -419,8 +419,8 @@ const parentTask = executor.parentTask({
     return {
       output: `Hello from parent task, ${input.name}!`,
       children: [
-        new ChildTask(taskA, { name: input.name }),
-        new ChildTask(taskB, { name: input.name }),
+        childTask(taskA, { name: input.name }),
+        childTask(taskB, { name: input.name }),
       ],
     }
   },
@@ -482,8 +482,8 @@ const parentTask = executor.parentTask({
     return {
       output: `Hello from parent task, ${input.name}!`,
       children: [
-        new ChildTask(taskA, { name: input.name }),
-        new ChildTask(taskB),
+        childTask(taskA, { name: input.name }),
+        childTask(taskB),
       ],
     }
   },
@@ -546,8 +546,8 @@ const resilientParentTask = executor.parentTask({
     return {
       output: `Hello from parent task, ${input.name}!`,
       children: [
-        new ChildTask(taskA, { name: input.name }),
-        new ChildTask(taskB),
+        childTask(taskA, { name: input.name }),
+        childTask(taskB),
       ],
     }
   },
@@ -689,7 +689,7 @@ const taskB = executor.parentTask({
     runParent: (ctx, { output }) => {
       return {
         output: output.taskBOutput,
-        children: [new ChildTask(taskC, { name: output.name })],
+        children: [childTask(taskC, { name: output.name })],
       }
     },
     finalize: {
@@ -726,7 +726,7 @@ const taskA = executor.parentTask({
     runParent: (ctx, { output }) => {
       return {
         output: output.taskAOutput,
-        children: [new ChildTask(taskB, { name: output.name })],
+        children: [childTask(taskB, { name: output.name })],
       }
     },
     finalize: {
@@ -816,8 +816,8 @@ const taskA = executor.parentTask({
         taskAOutput: `Hello from task A, ${input.name}!`,
       },
       children: [
-        new ChildTask(taskA1, { name: input.name }),
-        new ChildTask(taskA2, { name: input.name }),
+        childTask(taskA1, { name: input.name }),
+        childTask(taskA2, { name: input.name }),
       ],
     }
   },
@@ -855,8 +855,8 @@ const taskB = executor.parentTask({
         taskBOutput: `Hello from task B, ${input.name}!`,
       },
       children: [
-        new ChildTask(taskB1, { name: input.name }),
-        new ChildTask(taskB2, { name: input.name }),
+        childTask(taskB1, { name: input.name }),
+        childTask(taskB2, { name: input.name }),
       ],
     }
   },
@@ -970,9 +970,9 @@ const taskA = executor.parentTask({
     return {
       output: `Hello from task A, ${input.name}!`,
       children: [
-        new ChildTask(taskA1, { name: input.name }),
-        new ChildTask(taskA2, { name: input.name }),
-        new ChildTask(taskA3, { name: input.name }),
+        childTask(taskA1, { name: input.name }),
+        childTask(taskA2, { name: input.name }),
+        childTask(taskA3, { name: input.name }),
       ],
     }
   },
@@ -1008,8 +1008,8 @@ const rootTask = executor.parentTask({
     return {
       output: `Hello from root task, ${input.name}!`,
       children: [
-        new ChildTask(taskA, { name: input.name }),
-        new ChildTask(taskB, { name: input.name }),
+        childTask(taskA, { name: input.name }),
+        childTask(taskB, { name: input.name }),
       ],
     }
   },
@@ -1078,7 +1078,7 @@ const recursiveTask: Task<{ index: number }, { count: number }> = executor
       return {
         output: undefined,
         children:
-          input.index >= 9 ? [] : [new ChildTask(recursiveTask, { index: input.index + 1 })],
+          input.index >= 9 ? [] : [childTask(recursiveTask, { index: input.index + 1 })],
       }
     },
     finalize: {
@@ -1181,7 +1181,7 @@ const pollingTask: Task<{ prevCount: number }, { count: number; value: number }>
         } as
           | { isDone: false; value: undefined; prevCount: number }
           | { isDone: true; value: number; prevCount: number },
-        children: [new ChildTask(pollingTask, { prevCount: input.prevCount + 1 })],
+        children: [childTask(pollingTask, { prevCount: input.prevCount + 1 })],
       }
     },
     finalize: {
@@ -1238,7 +1238,7 @@ const parentTask = executor.parentTask({
     const entityId = 'entity_id'
     return {
       output: 'parent_output',
-      children: [new ChildTask(waitForWebhookTask, entityId)],
+      children: [childTask(waitForWebhookTask, entityId)],
     }
   },
   finalize: {

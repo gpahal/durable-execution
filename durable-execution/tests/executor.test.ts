@@ -1,7 +1,7 @@
 import { sleep } from '@gpahal/std/promises'
 
 import {
-  ChildTask,
+  childTask,
   DurableExecutionCancelledError,
   DurableExecutionError,
   DurableExecutionNotFoundError,
@@ -464,7 +464,7 @@ describe('executor', () => {
     })
     failingExecutor.startBackgroundProcesses()
 
-    const childTask = failingExecutor.task({
+    const child = failingExecutor.task({
       id: 'child',
       timeoutMs: 5000,
       run: () => 'child result',
@@ -476,7 +476,7 @@ describe('executor', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [new ChildTask(childTask)],
+          children: [childTask(child)],
         }
       },
     })
@@ -514,7 +514,7 @@ describe('executor', () => {
     })
     failingExecutor.startBackgroundProcesses()
 
-    const childTask = failingExecutor.task({
+    const child = failingExecutor.task({
       id: 'child',
       timeoutMs: 5000,
       run: () => 'child result',
@@ -526,7 +526,7 @@ describe('executor', () => {
       runParent: () => {
         return {
           output: undefined,
-          children: [new ChildTask(childTask)],
+          children: [childTask(child)],
         }
       },
     })
@@ -583,7 +583,7 @@ describe('executor', () => {
       }
 
     try {
-      const childTask = executor.task({
+      const child = executor.task({
         id: 'child',
         timeoutMs: 10_000,
         run: () => 'child',
@@ -595,7 +595,7 @@ describe('executor', () => {
         runParent: () => {
           return {
             output: 'parent',
-            children: [new ChildTask(childTask)],
+            children: [childTask(child)],
           }
         },
         finalize: {
@@ -652,7 +652,7 @@ describe('executor', () => {
         timeoutMs: 10_000,
         run: () => 'child',
       }
-      const childTask = executor.task(childTaskOptions)
+      const child = executor.task(childTaskOptions)
 
       const parentTaskOptions: ParentTaskOptions<undefined, string, string, unknown> = {
         id: 'parent',
@@ -660,7 +660,7 @@ describe('executor', () => {
         runParent: () => {
           return {
             output: 'parent',
-            children: [new ChildTask(childTask)],
+            children: [childTask(child)],
           }
         },
         finalize: {

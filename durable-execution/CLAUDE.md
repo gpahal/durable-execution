@@ -78,7 +78,7 @@ const parentTask = executor.parentTask({
   id: 'parent',
   runParent: (ctx, input) => ({
     output: parentOutput,
-    children: [new ChildTask(childTask, childInput)]
+    children: [childTask(childTask, childInput)]
   }),
   finalize: {
     id: 'finalize',

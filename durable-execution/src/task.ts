@@ -354,8 +354,8 @@ export type SleepingTaskOptions<TOutput = unknown> = Pick<CommonTaskOptions, 'id
  *           fileSize: 100,
  *         },
  *         children: [
- *           new ChildTask(extractFileTitle, { filePath: input.filePath }),
- *           new ChildTask(summarizeFile, { filePath: input.filePath }),
+ *           childTask(extractFileTitle, { filePath: input.filePath }),
+ *           childTask(summarizeFile, { filePath: input.filePath }),
  *         ],
  *       }
  *     },
@@ -763,22 +763,38 @@ export type CancelledTaskExecution = Omit<ReadyTaskExecution, 'status' | 'error'
  *
  * @category Task
  */
-export class ChildTask<TTask extends AnyTask = AnyTask> {
-  readonly task: TTask
-  readonly input: InferTaskInput<TTask>
-  readonly options?: TaskEnqueueOptions<AnyTask>
+export type ChildTask<TTask extends AnyTask = AnyTask> =
+  undefined extends InferTaskInput<TTask>
+    ? {
+        task: TTask
+        input?: InferTaskInput<TTask>
+        options?: TaskEnqueueOptions<AnyTask>
+      }
+    : {
+        task: TTask
+        input: InferTaskInput<TTask>
+        options?: TaskEnqueueOptions<AnyTask>
+      }
 
-  constructor(
-    ...rest: undefined extends InferTaskInput<TTask>
-      ? [task: TTask, input?: InferTaskInput<TTask>, options?: TaskEnqueueOptions<TTask>]
-      : [task: TTask, input: InferTaskInput<TTask>, options?: TaskEnqueueOptions<TTask>]
-  ) {
-    this.task = rest[0]
-    this.input = rest[1]!
-    this.options = (rest.length > 2 ? rest[2] : undefined) as
-      | TaskEnqueueOptions<AnyTask>
-      | undefined
-  }
+/**
+ * Create a type-safe child task. Usually used alongside the `parentTask` function. See
+ * {@link ParentTaskOptions} for more details.
+ *
+ * @param rest - The task, input and options.
+ * @returns A child task.
+ *
+ * @category Task
+ */
+export function childTask<TTask extends AnyTask = AnyTask>(
+  ...rest: undefined extends InferTaskInput<TTask>
+    ? [task: TTask, input?: InferTaskInput<TTask>, options?: TaskEnqueueOptions<TTask>]
+    : [task: TTask, input: InferTaskInput<TTask>, options?: TaskEnqueueOptions<TTask>]
+): ChildTask<TTask> {
+  return {
+    task: rest[0],
+    input: rest[1],
+    options: rest[2],
+  } as ChildTask<TTask>
 }
 
 /**

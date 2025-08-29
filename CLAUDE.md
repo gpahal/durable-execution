@@ -117,8 +117,8 @@ const workflowTask = executor.parentTask({
   runParent: (ctx, input) => ({
     output: `Processing ${input.name}`,
     children: [
-      new ChildTask(childTaskA, { name: input.name }),
-      new ChildTask(childTaskB, { name: input.name })
+      childTask(childTaskA, { name: input.name }),
+      childTask(childTaskB, { name: input.name })
     ]
   }),
   finalize: {
