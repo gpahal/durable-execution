@@ -179,6 +179,17 @@ class BatchRequester<T, R> {
           for (const request of requests) {
             request.resolve(undefined as R)
           }
+        } else if (results.length !== requests.length) {
+          const error = DurableExecutionError.nonRetryable(
+            `Batch processing returned ${results.length} results but expected ${requests.length}`,
+          )
+          this.logger.error(
+            `Error in batch requester ${this.processName}: result count mismatch`,
+            error,
+          )
+          for (const request of requests) {
+            request.reject(error)
+          }
         } else {
           for (const [i, request] of requests.entries()) {
             request.resolve(results[i]!)
@@ -204,8 +215,8 @@ class BatchRequester<T, R> {
 
         if (consecutiveErrors >= maxConsecutiveErrors) {
           backgroundProcessIntraBatchSleepMs = Math.min(
-            backgroundProcessIntraBatchSleepMs * 1.125,
-            backgroundProcessIntraBatchSleepMs * 2.5,
+            backgroundProcessIntraBatchSleepMs * 1.25,
+            originalBackgroundProcessIntraBatchSleepMs * 5,
           )
         }
       }
@@ -458,23 +469,15 @@ export class TaskExecutionsStorageInternal {
   }
 
   private addBackgroundProcessesPromise(promise: Promise<void>): void {
-    const wrappedPromise = async () => {
-      await promise
-    }
-
-    this.backgroundProcessesPromises.add(
-      wrappedPromise().finally(() => this.backgroundProcessesPromises.delete(promise)),
-    )
+    this.backgroundProcessesPromises.add(promise)
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    promise.finally(() => this.backgroundProcessesPromises.delete(promise))
   }
 
   private addBackgroundPromise(promise: Promise<void>): void {
-    const wrappedPromise = async () => {
-      await promise
-    }
-
-    this.backgroundPromises.add(
-      wrappedPromise().finally(() => this.backgroundPromises.delete(promise)),
-    )
+    this.backgroundPromises.add(promise)
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    promise.finally(() => this.backgroundPromises.delete(promise))
   }
 
   /**
@@ -677,6 +680,15 @@ export class TaskExecutionsStorageInternal {
     },
     execution?: TaskExecutionStorageValue,
   ): Promise<void> {
+    let finalUpdate = request.update
+    if (
+      request.update.status &&
+      FINISHED_TASK_EXECUTION_STATUSES.includes(request.update.status) &&
+      execution?.parent?.isFinalizeOfParent
+    ) {
+      finalUpdate = { ...request.update, closeStatus: 'ready' }
+    }
+
     if (
       !this.updateByIdBatchRequester ||
       this.backgroundProcessesPromises.size === 0 ||
@@ -685,24 +697,16 @@ export class TaskExecutionsStorageInternal {
       await this.updateManyById([
         {
           ...request,
-          update: getTaskExecutionStorageUpdate(now, request.update),
+          update: getTaskExecutionStorageUpdate(now, finalUpdate),
         },
       ])
       return
     }
 
-    if (
-      request.update.status &&
-      FINISHED_TASK_EXECUTION_STATUSES.includes(request.update.status) &&
-      execution?.parent?.isFinalizeOfParent
-    ) {
-      request.update.closeStatus = 'ready'
-    }
-
     await this.updateByIdBatchRequester.addRequest({
       executionId: request.executionId,
       filters: request.filters,
-      update: getTaskExecutionStorageUpdate(now, request.update),
+      update: getTaskExecutionStorageUpdate(now, finalUpdate),
     })
   }
 
@@ -730,12 +734,13 @@ export class TaskExecutionsStorageInternal {
       return await this.updateById(now, request, execution)
     }
 
+    let finalUpdate = request.update
     if (
       request.update.status &&
       FINISHED_TASK_EXECUTION_STATUSES.includes(request.update.status) &&
       execution?.parent?.isFinalizeOfParent
     ) {
-      request.update.closeStatus = 'ready'
+      finalUpdate = { ...request.update, closeStatus: 'ready' }
     }
 
     if (
@@ -747,7 +752,7 @@ export class TaskExecutionsStorageInternal {
       await this.updateManyByIdAndInsertChildrenIfUpdated([
         {
           ...request,
-          update: getTaskExecutionStorageUpdate(now, request.update),
+          update: getTaskExecutionStorageUpdate(now, finalUpdate),
         },
       ])
       return
@@ -755,7 +760,7 @@ export class TaskExecutionsStorageInternal {
 
     await this.updateByIdAndInsertChildrenIfUpdatedBatchRequester.addRequest({
       ...request,
-      update: getTaskExecutionStorageUpdate(now, request.update),
+      update: getTaskExecutionStorageUpdate(now, finalUpdate),
     })
   }
 

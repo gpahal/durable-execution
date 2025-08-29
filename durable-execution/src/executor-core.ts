@@ -335,13 +335,9 @@ export class DurableExecutorCore {
    * @param promise - The promise to add.
    */
   addBackgroundProcessesPromise(promise: Promise<void>): void {
-    const wrappedPromise = async () => {
-      await promise
-    }
-
-    this.backgroundProcessesPromises.add(
-      wrappedPromise().finally(() => this.backgroundPromises.delete(promise)),
-    )
+    this.backgroundProcessesPromises.add(promise)
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    promise.finally(() => this.backgroundProcessesPromises.delete(promise))
   }
 
   /**
@@ -350,13 +346,9 @@ export class DurableExecutorCore {
    * @param promise - The promise to add.
    */
   addBackgroundPromise(promise: Promise<void>): void {
-    const wrappedPromise = async () => {
-      await promise
-    }
-
-    this.backgroundPromises.add(
-      wrappedPromise().finally(() => this.backgroundPromises.delete(promise)),
-    )
+    this.backgroundPromises.add(promise)
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    promise.finally(() => this.backgroundPromises.delete(promise))
   }
 
   /**
