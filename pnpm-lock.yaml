@@ -13,14 +13,14 @@ catalogs:
       specifier: ^5.0.0
       version: 5.0.0
     '@gpahal/eslint-config':
-      specifier: ^0.0.115
-      version: 0.0.115
+      specifier: ^0.0.117
+      version: 0.0.117
     '@gpahal/prettier-config':
       specifier: ^0.0.32
       version: 0.0.32
     '@gpahal/std-node':
-      specifier: ^0.0.35
-      version: 0.0.35
+      specifier: ^0.0.36
+      version: 0.0.36
     '@gpahal/tsconfig':
       specifier: ^0.0.20
       version: 0.0.20
@@ -110,8 +110,8 @@ catalogs:
       version: 3.2.4
   prod:
     '@gpahal/std':
-      specifier: ^0.0.37
-      version: 0.0.37
+      specifier: ^0.0.38
+      version: 0.0.38
     '@standard-schema/spec':
       specifier: ^1.0.0
       version: 1.0.0
@@ -137,7 +137,7 @@ importers:
         version: 2.29.6(@types/node@24.3.0)
       '@gpahal/eslint-config':
         specifier: catalog:dev
-        version: 0.0.115(@typescript-eslint/utils@8.41.0(eslint@9.34.0)(typescript@5.9.2))(eslint@9.34.0)(typescript@5.9.2)
+        version: 0.0.117(@typescript-eslint/utils@8.41.0(eslint@9.34.0)(typescript@5.9.2))(eslint@9.34.0)(typescript@5.9.2)
       '@gpahal/prettier-config':
         specifier: catalog:dev
         version: 0.0.32(@ianvs/prettier-plugin-sort-imports@4.7.0(prettier@3.6.2))
@@ -194,7 +194,7 @@ importers:
     dependencies:
       '@gpahal/std':
         specifier: catalog:prod
-        version: 0.0.37
+        version: 0.0.38
       '@standard-schema/spec':
         specifier: catalog:prod
         version: 1.0.0
@@ -215,7 +215,7 @@ importers:
     dependencies:
       '@gpahal/std':
         specifier: catalog:prod
-        version: 0.0.37
+        version: 0.0.38
     devDependencies:
       '@orpc/client':
         specifier: catalog:dev
@@ -234,7 +234,7 @@ importers:
     dependencies:
       '@gpahal/std':
         specifier: catalog:prod
-        version: 0.0.37
+        version: 0.0.38
       zod:
         specifier: catalog:prod
         version: 4.1.5
@@ -244,7 +244,7 @@ importers:
         version: 5.0.0
       '@gpahal/std-node':
         specifier: catalog:dev
-        version: 0.0.35
+        version: 0.0.36
       convex:
         specifier: catalog:dev
         version: 1.26.2
@@ -271,10 +271,10 @@ importers:
     devDependencies:
       '@gpahal/std':
         specifier: catalog:prod
-        version: 0.0.37
+        version: 0.0.38
       '@gpahal/std-node':
         specifier: catalog:dev
-        version: 0.0.35
+        version: 0.0.36
       '@libsql/client':
         specifier: catalog:dev
         version: 0.15.14
@@ -313,14 +313,14 @@ importers:
     dependencies:
       '@gpahal/std':
         specifier: catalog:prod
-        version: 0.0.37
+        version: 0.0.38
       nanoid:
         specifier: catalog:prod
         version: 5.1.5
     devDependencies:
       '@gpahal/std-node':
         specifier: catalog:dev
-        version: 0.0.35
+        version: 0.0.36
       durable-execution:
         specifier: workspace:*
         version: link:../durable-execution
@@ -957,8 +957,8 @@ packages:
   '@gerrit0/mini-shiki@3.9.1':
     resolution: {integrity: sha512-quvtbDhNf528BkMHQQd8xGJMpmA5taDZuex/JDF8ETEjS2iypXzr1hnEUVh+lTUyffFJ0JCxysUsiuUoEGIz/Q==}
 
-  '@gpahal/eslint-config@0.0.115':
-    resolution: {integrity: sha512-K0tSiArndESYYpoW1jE6loDkJ9qBZ6JGw/vOrN63qNMRcfFW77YFBONCxqTbYmeKOe6yrfZ/XXnFKWc4BDvgrw==}
+  '@gpahal/eslint-config@0.0.117':
+    resolution: {integrity: sha512-DDH09zNm4uydi7TWkCABYObCFZBhw7D4YKxCrJ9YQsCjAe39pK2sxs8fFOFmAGwL5cBlhVRLo035ic+NxkIPzw==}
     peerDependencies:
       '@eslint-react/eslint-plugin': ^1.52
       '@next/eslint-plugin-next': ^15.5
@@ -992,11 +992,11 @@ packages:
       prettier-plugin-tailwindcss:
         optional: true
 
-  '@gpahal/std-node@0.0.35':
-    resolution: {integrity: sha512-ccYxGFcvZ/a4cFPAvhAxWNMdWi7cmYAxti+QiDBpF9Qb4MoRPqz0jZ4r6QpIRn6eFvctzqhO4yIf31zXF1rkVw==}
+  '@gpahal/std-node@0.0.36':
+    resolution: {integrity: sha512-ZRU9DV+6kAtYTWodqRSMlhUe6FvHb08fhr63GX/Cg982R0uuVLiwJsNSPk/7/Op1Z/5u7XGDaeX1Mmu+DBqsKw==}
 
-  '@gpahal/std@0.0.37':
-    resolution: {integrity: sha512-lGJ+o9KijXiaxzaVD0CnlraDYtIChKjzt99u8JdFDp/vlp16t7TlylyGjOQLLImUjmr4cdXtAnaieL2a1nZWcQ==}
+  '@gpahal/std@0.0.38':
+    resolution: {integrity: sha512-sq9XTf/wyqZYGgeNJcvbbQNlyWrfUkG16RIsGplEwZz750W0gyOoZldva4Kl3/i/pzRLkSvKAiRkkLrsRCElsA==}
 
   '@gpahal/tsconfig@0.0.20':
     resolution: {integrity: sha512-iLjP80LXaYsPOZbLOyKaGcqu4jwlH+FnlSeUYT4I4yDvZHQvbW1HqUouPIrM9pZ04WyQ6afAU/DTBM6esCTZaA==}
@@ -5125,11 +5125,11 @@ snapshots:
       '@shikijs/types': 3.9.1
       '@shikijs/vscode-textmate': 10.0.2
 
-  '@gpahal/eslint-config@0.0.115(@typescript-eslint/utils@8.41.0(eslint@9.34.0)(typescript@5.9.2))(eslint@9.34.0)(typescript@5.9.2)':
+  '@gpahal/eslint-config@0.0.117(@typescript-eslint/utils@8.41.0(eslint@9.34.0)(typescript@5.9.2))(eslint@9.34.0)(typescript@5.9.2)':
     dependencies:
       '@eslint/js': 9.34.0
       '@eslint/json': 0.13.2
-      '@gpahal/std': 0.0.37
+      '@gpahal/std': 0.0.38
       '@typescript-eslint/parser': 8.41.0(eslint@9.34.0)(typescript@5.9.2)
       eslint-config-flat-gitignore: 2.1.0(eslint@9.34.0)
       eslint-config-prettier: 10.1.8(eslint@9.34.0)
@@ -5157,12 +5157,12 @@ snapshots:
     dependencies:
       '@ianvs/prettier-plugin-sort-imports': 4.7.0(prettier@3.6.2)
 
-  '@gpahal/std-node@0.0.35':
+  '@gpahal/std-node@0.0.36':
     dependencies:
-      '@gpahal/std': 0.0.37
+      '@gpahal/std': 0.0.38
       why-is-node-running: 3.2.2
 
-  '@gpahal/std@0.0.37':
+  '@gpahal/std@0.0.38':
     dependencies:
       ts-custom-error: 3.3.1
 

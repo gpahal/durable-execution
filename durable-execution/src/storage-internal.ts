@@ -3,7 +3,7 @@ import z from 'zod'
 import { createCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
 import { getErrorMessage } from '@gpahal/std/errors'
 import { omitUndefinedValues } from '@gpahal/std/objects'
-import { sleep, sleepWithJitter } from '@gpahal/std/promises'
+import { sleep, sleepWithWakeup } from '@gpahal/std/promises'
 
 import { DurableExecutionCancelledError, DurableExecutionError } from './errors'
 import type { LoggerInternal } from './logger'
@@ -128,6 +128,8 @@ export function getTaskExecutionStorageUpdate(
   return omitUndefinedValues(update)
 }
 
+const BATCH_REQUESTER_MAX_CONSECUTIVE_ERRORS = 5
+
 /**
  * A type that can be used to batch requests to a storage implementation.
  */
@@ -156,6 +158,7 @@ class BatchRequester<T, R> {
   private readonly shutdownSignal: CancelSignal
   private readonly addBackgroundPromise: (promise: Promise<void>) => void
 
+  private wakeupBackgroundProcess: (() => void) | undefined
   private pendingRequests: Array<BatchRequest<T, R>>
 
   constructor(
@@ -184,6 +187,13 @@ class BatchRequester<T, R> {
     this.pendingRequests = []
   }
 
+  private async sleepWithWakeup(ms: number, jitterRatio = 0): Promise<void> {
+    const [promise, resolve] = sleepWithWakeup(ms, jitterRatio)
+    this.wakeupBackgroundProcess = resolve
+    await promise
+    this.wakeupBackgroundProcess = undefined
+  }
+
   shutdown(): void {
     for (const request of this.pendingRequests) {
       request.reject(DurableExecutionError.nonRetryable('Durable executor shutdown'))
@@ -193,7 +203,6 @@ class BatchRequester<T, R> {
 
   async runBackgroundProcess(): Promise<void> {
     let consecutiveErrors = 0
-    const maxConsecutiveErrors = 10
 
     const originalBackgroundProcessIntraBatchSleepMs = this.backgroundProcessIntraBatchSleepMs
     let backgroundProcessIntraBatchSleepMs = originalBackgroundProcessIntraBatchSleepMs
@@ -243,7 +252,7 @@ class BatchRequester<T, R> {
           error,
         )
 
-        if (consecutiveErrors >= maxConsecutiveErrors) {
+        if (consecutiveErrors >= BATCH_REQUESTER_MAX_CONSECUTIVE_ERRORS) {
           backgroundProcessIntraBatchSleepMs = Math.min(
             backgroundProcessIntraBatchSleepMs * 1.25,
             originalBackgroundProcessIntraBatchSleepMs * 5,
@@ -252,7 +261,7 @@ class BatchRequester<T, R> {
       }
     }
 
-    await sleepWithJitter(backgroundProcessIntraBatchSleepMs)
+    await this.sleepWithWakeup(backgroundProcessIntraBatchSleepMs, 0.25)
     let skippedBatchCount = 0
     while (true) {
       try {
@@ -267,13 +276,13 @@ class BatchRequester<T, R> {
             backgroundProcessIntraBatchSleepMs * 1.125,
             originalBackgroundProcessIntraBatchSleepMs * 2,
           )
-          await sleep(backgroundProcessIntraBatchSleepMs)
+          await this.sleepWithWakeup(backgroundProcessIntraBatchSleepMs)
           skippedBatchCount++
           continue
         } else {
           backgroundProcessIntraBatchSleepMs = originalBackgroundProcessIntraBatchSleepMs
           if (skippedBatchCount < 5 && requests.length < this.batchSize / 3) {
-            await sleep(originalBackgroundProcessIntraBatchSleepMs)
+            await this.sleepWithWakeup(backgroundProcessIntraBatchSleepMs)
             skippedBatchCount++
           } else {
             skippedBatchCount = 0
@@ -294,6 +303,9 @@ class BatchRequester<T, R> {
   addRequest(request: T): Promise<R> {
     const promise = new Promise<R>((resolve, reject) => {
       this.pendingRequests.push({ data: request, resolve, reject })
+      if (this.wakeupBackgroundProcess != null && this.pendingRequests.length >= this.batchSize) {
+        this.wakeupBackgroundProcess()
+      }
     })
     return promise
   }
@@ -623,7 +635,7 @@ export class TaskExecutionsStorageInternal {
         }
 
         this.logger.error(`Error while retrying ${fnName}`, error)
-        await sleepWithJitter(Math.min(25 * 2 ** (attempt - 1), 1000))
+        await sleep(Math.min(25 * 2 ** (attempt - 1), 1000), 0.25)
       }
     }
   }

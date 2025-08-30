@@ -1,7 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 import z from 'zod'
 
-import { sleepWithJitter } from '@gpahal/std/promises'
+import { sleep } from '@gpahal/std/promises'
 
 import { DurableExecutionCancelledError, DurableExecutionError } from './errors'
 import { DurableExecutorCore } from './executor-core'
@@ -24,6 +24,8 @@ import {
   type TaskOptions,
   type WakeupSleepingTaskExecutionOptions,
 } from './task'
+
+const BACKGROUND_PROCESS_MAX_CONSECUTIVE_ERRORS = 3
 
 export const zDurableExecutorOptions = z.object({
   backgroundProcessIntraBatchSleepMs: z
@@ -467,7 +469,6 @@ export class DurableExecutor {
     sleepMultiplier?: number,
   ): Promise<void> {
     let consecutiveErrors = 0
-    const maxConsecutiveErrors = 10
 
     const originalBackgroundProcessIntraBatchSleepMs =
       sleepMultiplier && sleepMultiplier > 0
@@ -479,7 +480,11 @@ export class DurableExecutor {
       try {
         const isDone = await singleBatchProcessFn()
 
-        consecutiveErrors = 0
+        if (consecutiveErrors > 0) {
+          consecutiveErrors = 0
+          backgroundProcessIntraBatchSleepMs = originalBackgroundProcessIntraBatchSleepMs
+        }
+
         backgroundProcessIntraBatchSleepMs = isDone
           ? Math.min(
               backgroundProcessIntraBatchSleepMs * 1.125,
@@ -498,7 +503,7 @@ export class DurableExecutor {
         consecutiveErrors++
         this.logger.error(`Error in ${processName}: consecutive_errors=${consecutiveErrors}`, error)
 
-        if (consecutiveErrors >= maxConsecutiveErrors) {
+        if (consecutiveErrors >= BACKGROUND_PROCESS_MAX_CONSECUTIVE_ERRORS) {
           backgroundProcessIntraBatchSleepMs = Math.min(
             backgroundProcessIntraBatchSleepMs * 1.25,
             originalBackgroundProcessIntraBatchSleepMs * 5,
@@ -508,10 +513,10 @@ export class DurableExecutor {
       }
     }
 
-    await sleepWithJitter(this.backgroundProcessIntraBatchSleepMs)
+    await sleep(this.backgroundProcessIntraBatchSleepMs, 0.25)
     while (!this.core.shutdownSignal.isCancelled()) {
       const isDone = await runBackgroundProcessSingleBatch()
-      await sleepWithJitter(isDone ? backgroundProcessIntraBatchSleepMs : 0)
+      await sleep(isDone ? backgroundProcessIntraBatchSleepMs : 0, 0.25)
     }
   }
 
