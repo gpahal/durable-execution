@@ -1,10 +1,20 @@
 {
   "$schema": "https://unpkg.com/@changesets/config@2.2.0/schema.json",
+  "changelog": false,
   "commit": false,
-  "updateInternalDependencies": "patch",
-  "linked": [],
   "access": "public",
   "baseBranch": "main",
-  "ignore": [],
-  "changelog": false
+  "privatePackages": {
+    "version": false,
+    "tag": false
+  },
+  "fixed": [
+    [
+      "durable-execution",
+      "durable-execution-orpc-utils",
+      "durable-execution-storage-test-utils",
+      "durable-execution-storage-drizzle",
+      "durable-execution-storage-convex"
+    ]
+  ]
 }
