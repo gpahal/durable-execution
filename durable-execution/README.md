@@ -648,17 +648,11 @@ const task = executor.sequentialTasks('seq', [taskA, taskB, taskC])
 // }
 ```
 
-### Sequential tasks (manually)
+#### Manually implementing sequential tasks
 
-```mermaid
-flowchart LR
-  taskA --> taskB
-  taskB --> taskC
-```
-
-The sequential tasks can also be created manually just by using the `parentTask` method. Although
-the `sequentialTasks` method is more convenient, it is useful to know how to create sequential
-tasks manually.
+Sequential tasks can also be implemented manually just by using the `parentTask` method. Use the
+dedicated `sequentialTasks` method in production as described above. This example is useful only to
+understand the flexibility of the `parentTask` method.
 
 The `finalize` task can itself be a parent task with parallel children. This property can be used
 to spawn parallel children from the task `runParent` function and then using the `finalize` task
@@ -1142,11 +1136,15 @@ const pollingTask = executor.pollingTask('polling', pollTask, 20, 100)
 // }
 ```
 
-### Polling task (manually)
+#### Manually implementing polling tasks
 
-Polling tasks are useful when you want to wait for a value to be available. The `sleepMsBeforeRun`
-option is used to wait for a certain amount of time before attempting to get the value again. The
-`finalize` task is used to combine the output of the polling task and children tasks.
+Polling tasks can also be implemented manually just by using the `parentTask` method. Use the
+dedicated `pollingTask` method in production as described above. This example is useful only to
+understand the flexibility of the `parentTask` method.
+
+The `sleepMsBeforeRun` option is used to wait for a certain amount of time before attempting to get
+the value again. The `finalize` task is used to combine the output of the polling task and children
+tasks.
 
 ```ts
 let value: number | undefined
@@ -1222,6 +1220,10 @@ for external signals. The task remains in a `running` state until explicitly wok
 `wakeupSleepingTaskExecution()` with a completion status and output. This pattern is ideal for
 integrating with payment providers, approval workflows, or any asynchronous external process.
 
+For most usecases, you should use a `parentTask` to setup any processing or background logic that
+would wake up the sleeping task and return a `sleepingTask` as a child that would be woken up
+externally using a webhook or event.
+
 ```ts
 // Specify the type of the output of the sleeping task
 const waitForWebhookTask = executor.sleepingTask<string>({
@@ -1233,9 +1235,8 @@ const waitForWebhookTask = executor.sleepingTask<string>({
 const parentTask = executor.parentTask({
   id: 'parent',
   timeoutMs: 1000,
-  runParent: () => {
-    // ... generate entity id and wait for webhook or event to wake up the sleeping task
-    const entityId = 'entity_id'
+  runParent: async () => {
+    const entityId = await callApiThatSendsWebhookOrEventLater()
     return {
       output: 'parent_output',
       children: [childTask(waitForWebhookTask, entityId)],
