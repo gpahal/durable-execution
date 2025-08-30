@@ -618,13 +618,16 @@ export type ReadyTaskExecution = {
 
   taskId: string
   executionId: string
+  sleepingTaskUniqueId?: string
   retryOptions: TaskRetryOptions
   sleepMsBeforeRun: number
   timeoutMs: number
-  status: 'ready'
+  areChildrenSequential: boolean
   input: unknown
+  status: 'ready'
   error?: DurableExecutionErrorStorageValue
   retryAttempts: number
+  startAt: Date
   createdAt: Date
   updatedAt: Date
 }
@@ -636,6 +639,7 @@ export type ReadyTaskExecution = {
  */
 export type RunningTaskExecution = Omit<ReadyTaskExecution, 'status'> & {
   status: 'running'
+  executorId: string
   startedAt: Date
   expiresAt: Date
 }
@@ -645,7 +649,7 @@ export type RunningTaskExecution = Omit<ReadyTaskExecution, 'status'> & {
  *
  * @category Task
  */
-export type FailedTaskExecution = Omit<RunningTaskExecution, 'status' | 'error'> & {
+export type FailedTaskExecution = Omit<RunningTaskExecution, 'executorId' | 'status' | 'error'> & {
   status: 'failed'
   error: DurableExecutionErrorStorageValue
   finishedAt: Date
@@ -656,7 +660,10 @@ export type FailedTaskExecution = Omit<RunningTaskExecution, 'status' | 'error'>
  *
  * @category Task
  */
-export type TimedOutTaskExecution = Omit<RunningTaskExecution, 'status' | 'error'> & {
+export type TimedOutTaskExecution = Omit<
+  RunningTaskExecution,
+  'executorId' | 'status' | 'error'
+> & {
   status: 'timed_out'
   error: DurableExecutionErrorStorageValue
   finishedAt: Date
@@ -667,8 +674,12 @@ export type TimedOutTaskExecution = Omit<RunningTaskExecution, 'status' | 'error
  *
  * @category Task
  */
-export type WaitingForChildrenTaskExecution = Omit<RunningTaskExecution, 'status' | 'error'> & {
+export type WaitingForChildrenTaskExecution = Omit<
+  RunningTaskExecution,
+  'executorId' | 'status' | 'error'
+> & {
   status: 'waiting_for_children'
+  waitingForChildrenStartedAt: Date
   children: Array<TaskExecutionSummary>
   activeChildrenCount: number
 }
@@ -683,6 +694,7 @@ export type WaitingForFinalizeTaskExecution = Omit<
   'status' | 'error'
 > & {
   status: 'waiting_for_finalize'
+  waitingForFinalizeStartedAt: Date
   finalize: TaskExecutionSummary
 }
 
@@ -708,15 +720,25 @@ export type FinalizeFailedTaskExecution = Omit<
  */
 export type CompletedTaskExecution<TOutput = unknown> = Omit<
   WaitingForChildrenTaskExecution,
-  'status' | 'output'
+  'status' | 'output' | 'waitingForChildrenStartedAt'
 > & {
   status: 'completed'
   output: TOutput
   finishedAt: Date
 
   /**
+   * The time the task execution waiting for children started. This is only present for tasks which
+   * have children tasks and whose run method completed successfully.
+   */
+  waitingForChildrenStartedAt?: Date
+  /**
+   * The time the task execution waiting for finalize started. This is only present for tasks which
+   * have a finalize task and whose run method completed successfully and children tasks finished.
+   */
+  waitingForFinalizeStartedAt?: Date
+  /**
    * The finalize task execution. This is only present for tasks which have a finalize task and
-   * whose run method completed successfully and children task finished.
+   * whose run method completed successfully and children tasks finished.
    */
   finalize?: TaskExecutionSummary
 }
@@ -734,6 +756,10 @@ export type CancelledTaskExecution = Omit<ReadyTaskExecution, 'status' | 'error'
   finishedAt: Date
 
   /**
+   * The id of the executor. This is only present for tasks which were cancelled while running.
+   */
+  executorId?: string
+  /**
    * The time the task execution started. This is only present for tasks which started running.
    */
   startedAt?: Date
@@ -741,6 +767,16 @@ export type CancelledTaskExecution = Omit<ReadyTaskExecution, 'status' | 'error'
    * The time the task execution expires. This is only present for tasks which started running.
    */
   expiresAt?: Date
+  /**
+   * The time the task execution waiting for children started. This is only present for tasks which
+   * have children tasks and whose run method completed successfully.
+   */
+  waitingForChildrenStartedAt?: Date
+  /**
+   * The time the task execution waiting for finalize started. This is only present for tasks which
+   * have a finalize task and whose run method completed successfully and children tasks finished.
+   */
+  waitingForFinalizeStartedAt?: Date
   /**
    * The children task executions that were running when the task was cancelled. This is only present for
    * tasks whose run method completed successfully.
@@ -753,7 +789,7 @@ export type CancelledTaskExecution = Omit<ReadyTaskExecution, 'status' | 'error'
   activeChildrenCount: number
   /**
    * The finalize task execution. This is only present for tasks which have a finalize task and
-   * whose run method completed successfully and children task finished.
+   * whose run method completed successfully and children tasks finished.
    */
   finalize?: TaskExecutionSummary
 }

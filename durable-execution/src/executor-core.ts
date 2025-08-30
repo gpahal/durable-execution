@@ -1272,6 +1272,8 @@ export class DurableExecutorCore {
                     update: {
                       status: 'finalize_failed',
                       error: finalizeError,
+                      waitingForChildrenStartedAt: now,
+                      waitingForFinalizeStartedAt: now,
                       children: [],
                     },
                   },
@@ -1288,6 +1290,8 @@ export class DurableExecutorCore {
                         finalizeOutput,
                         this.maxSerializedOutputDataSize,
                       ),
+                      waitingForChildrenStartedAt: now,
+                      waitingForFinalizeStartedAt: now,
                       children: [],
                     },
                   },
@@ -1313,6 +1317,7 @@ export class DurableExecutorCore {
                 filters: { status: 'running' },
                 update: {
                   status: 'waiting_for_finalize',
+                  waitingForChildrenStartedAt: now,
                   children: [],
                   finalize: {
                     taskId: finalizeTaskInternal.id,
@@ -1758,6 +1763,7 @@ export class DurableExecutorCore {
                 update: {
                   status: 'finalize_failed',
                   error: finalizeError,
+                  waitingForFinalizeStartedAt: now,
                   onChildrenFinishedProcessingStatus: 'processed',
                 },
               },
@@ -1774,6 +1780,7 @@ export class DurableExecutorCore {
                     finalizeOutput,
                     this.maxSerializedOutputDataSize,
                   ),
+                  waitingForFinalizeStartedAt: now,
                   onChildrenFinishedProcessingStatus: 'processed',
                 },
               },

@@ -30,8 +30,6 @@ export type TaskExecutionStorageUpdateInternal = Omit<
   | 'startedAt'
   | 'unsetStartedAt'
   | 'unsetExpiresAt'
-  | 'waitingForChildrenStartedAt'
-  | 'waitingForFinalizeStartedAt'
   | 'finishedAt'
   | 'unsetOnChildrenFinishedProcessingExpiresAt'
   | 'onChildrenFinishedProcessingFinishedAt'
@@ -46,8 +44,6 @@ export type TaskExecutionStorageUpdateInternal = Omit<
   startedAt?: never
   unsetStartedAt?: never
   unsetExpiresAt?: never
-  waitingForChildrenStartedAt?: never
-  waitingForFinalizeStartedAt?: never
   finishedAt?: never
   unsetOnChildrenFinishedProcessingExpiresAt?: never
   onChildrenFinishedProcessingFinishedAt?: never
@@ -69,8 +65,6 @@ export function getTaskExecutionStorageUpdate(
     startedAt: undefined,
     unsetStartedAt: undefined,
     unsetExpiresAt: undefined,
-    waitingForChildrenStartedAt: undefined,
-    waitingForFinalizeStartedAt: undefined,
     finishedAt: undefined,
     unsetOnChildrenFinishedProcessingExpiresAt: undefined,
     onChildrenFinishedProcessingFinishedAt: undefined,

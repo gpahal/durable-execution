@@ -11,6 +11,5 @@
   },
   "[mdx]": {
     "editor.defaultFormatter": "vscode.markdown-language-features"
-  },
-  "vitest.disableWorkspaceWarning": true
+  }
 }

@@ -441,6 +441,8 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
   expect(finishedExecution.output.taskB2Output).toBe('Hello from task B2, world!')
   expect(finishedExecution.output.taskB3Output).toBe('Hello from task B3, world!')
   expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+  expect(finishedExecution.waitingForChildrenStartedAt).toBeInstanceOf(Date)
+  expect(finishedExecution.waitingForFinalizeStartedAt).toBeInstanceOf(Date)
   expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
   expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
     finishedExecution.startedAt.getTime(),
@@ -545,6 +547,8 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     expect(childTaskOutput.output).toBe(i)
   }
   expect(concurrentParentTaskExecution.startedAt).toBeInstanceOf(Date)
+  expect(concurrentParentTaskExecution.waitingForChildrenStartedAt).toBeInstanceOf(Date)
+  expect(concurrentParentTaskExecution.waitingForFinalizeStartedAt).toBeUndefined()
 
   console.log('=> Waiting for polling task')
   const pollingTaskExecution = await pollingTaskHandle.waitAndGetFinishedExecution({
@@ -558,6 +562,8 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
   assert(pollingTaskExecution.output.isSuccess)
   expect(pollingTaskExecution.output.output).toBe(10)
   expect(pollingTaskExecution.startedAt).toBeInstanceOf(Date)
+  expect(pollingTaskExecution.waitingForChildrenStartedAt).toBeInstanceOf(Date)
+  expect(pollingTaskExecution.waitingForFinalizeStartedAt).toBeInstanceOf(Date)
   expect(pollingTaskExecution.finishedAt).toBeInstanceOf(Date)
   expect(pollingTaskExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
     pollingTaskExecution.startedAt.getTime(),
@@ -587,6 +593,8 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
   expect(sleepingTaskExecution.status).toBe('completed')
   assert(sleepingTaskExecution.status === 'completed')
   expect(sleepingTaskExecution.output).toBe('sleeping_task_output')
+  expect(sleepingTaskExecution.waitingForChildrenStartedAt).toBeUndefined()
+  expect(sleepingTaskExecution.waitingForFinalizeStartedAt).toBeUndefined()
 
   const parentTaskWithSleepingTaskFinishedExecution =
     await parentTaskWithSleepingTaskHandle.waitAndGetFinishedExecution({
