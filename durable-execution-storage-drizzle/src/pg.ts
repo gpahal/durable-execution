@@ -88,6 +88,8 @@ export function createPgTaskExecutionsTable(tableName = 'task_executions') {
       startAt: bigint('start_at', { mode: 'number' }).notNull(),
       startedAt: bigint('started_at', { mode: 'number' }),
       expiresAt: bigint('expires_at', { mode: 'number' }),
+      waitingForChildrenStartedAt: bigint('waiting_for_children_started_at', { mode: 'number' }),
+      waitingForFinalizeStartedAt: bigint('waiting_for_finalize_started_at', { mode: 'number' }),
       finishedAt: bigint('finished_at', { mode: 'number' }),
       children: json('children').$type<Array<TaskExecutionSummary>>(),
       activeChildrenCount: integer('active_children_count').notNull(),
@@ -120,7 +122,8 @@ export function createPgTaskExecutionsTable(tableName = 'task_executions') {
         table.updatedAt,
       ),
       index(`ix_${tableName}_close_status_updated_at`).on(table.closeStatus, table.updatedAt),
-      index(`ix_${tableName}_is_sleeping_task_expires_at`).on(
+      index(`ix_${tableName}_status_is_sleeping_task_expires_at`).on(
+        table.status,
         table.isSleepingTask,
         table.expiresAt,
       ),
@@ -445,12 +448,14 @@ class PgTaskExecutionsStorage<
     return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThan({
+  async updateByStatusAndIsSleepingTaskAndExpiresAtLessThan({
+    status,
     isSleepingTask,
     expiresAtLessThan,
     update,
     limit,
   }: {
+    status: TaskExecutionStatus
     isSleepingTask: boolean
     expiresAtLessThan: number
     update: TaskExecutionStorageUpdate
@@ -464,6 +469,7 @@ class PgTaskExecutionsStorage<
         .from(this.taskExecutionsTable)
         .where(
           and(
+            eq(this.taskExecutionsTable.status, status),
             eq(this.taskExecutionsTable.isSleepingTask, isSleepingTask),
             lt(this.taskExecutionsTable.expiresAt, expiresAtLessThan),
           ),

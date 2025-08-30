@@ -1104,6 +1104,54 @@ describe('simpleTask', () => {
     expect(finishedExecution.output.output).toBe('poll_output')
   })
 
+  it('should complete sequential sleeping task', async () => {
+    const task1 = executor.sleepingTask<string>({
+      id: 'seq_task',
+      timeoutMs: 1000,
+    })
+
+    const sequentialTask = executor.sequentialTasks('seq', [task1, task1, task1])
+
+    const handle = await executor.enqueueTask(sequentialTask, 'unique_id_1')
+    await sleep(500)
+    const finishedExecution1 = await executor.wakeupSleepingTaskExecution(task1, 'unique_id_1', {
+      status: 'completed',
+      output: 'unique_id_2',
+    })
+
+    expect(finishedExecution1.status).toBe('completed')
+    assert(finishedExecution1.status === 'completed')
+    expect(finishedExecution1.output).toBe('unique_id_2')
+
+    await sleep(500)
+    const finishedExecution2 = await executor.wakeupSleepingTaskExecution(task1, 'unique_id_2', {
+      status: 'completed',
+      output: 'unique_id_3',
+    })
+
+    expect(finishedExecution2.status).toBe('completed')
+    assert(finishedExecution2.status === 'completed')
+    expect(finishedExecution2.output).toBe('unique_id_3')
+
+    await sleep(500)
+    const finishedExecution3 = await executor.wakeupSleepingTaskExecution(task1, 'unique_id_3', {
+      status: 'completed',
+      output: 'final_output',
+    })
+
+    expect(finishedExecution3.status).toBe('completed')
+    assert(finishedExecution3.status === 'completed')
+    expect(finishedExecution3.output).toBe('final_output')
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.output).toBe('final_output')
+  })
+
   it('should complete polling task with sleepMsBeforeRun number', async () => {
     let executionCount = 0
     const pollTask = executor.task({

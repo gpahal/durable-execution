@@ -66,7 +66,7 @@ export const {
   updateByStatusAndStartAtLessThanAndReturn,
   updateByStatusAndOCFPStatusAndACCZeroAndReturn,
   updateByCloseStatusAndReturn,
-  updateByIsSleepingTaskAndExpiresAtLessThan,
+  updateByStatusAndIsSleepingTaskAndExpiresAtLessThan,
   updateByOCFPExpiresAt,
   updateByCloseExpiresAt,
   updateByExecutorIdAndNPCAndReturn,

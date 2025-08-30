@@ -25,7 +25,9 @@ describe('index', () => {
     const test1 = async () => {
       const startTime = Date.now()
       await expect(
-        runStorageBench('in memory', () => new InMemoryTaskExecutionsStorage()),
+        runStorageBench('in memory', () => new InMemoryTaskExecutionsStorage(), {
+          totalIterations: 1,
+        }),
       ).resolves.not.toThrow()
       return Date.now() - startTime
     }
@@ -36,6 +38,7 @@ describe('index', () => {
       await expect(
         runStorageBench('in memory', () => new InMemoryTaskExecutionsStorage(), {
           storageSlowdownMs: 5,
+          totalIterations: 1,
         }),
       ).resolves.not.toThrow()
       return Date.now() - startTime
@@ -43,6 +46,20 @@ describe('index', () => {
 
     const [duration1, duration2] = await Promise.all([test1(), test2()])
     expect(duration2).toBeGreaterThan(duration1)
+  })
+
+  it('should handle runStorageBench with invalid options', { timeout: 120_000 }, async () => {
+    await expect(
+      runStorageBench('in memory', () => new InMemoryTaskExecutionsStorage({}), {
+        executorsCount: 0,
+      }),
+    ).rejects.toThrow('Executors count must be at least 1')
+
+    await expect(
+      runStorageBench('in memory', () => new InMemoryTaskExecutionsStorage(), {
+        totalIterations: 0,
+      }),
+    ).rejects.toThrow('Total iterations must be at least 1')
   })
 
   it('should handle withTemporaryDirectory', async () => {

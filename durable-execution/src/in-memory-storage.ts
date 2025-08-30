@@ -186,9 +186,10 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
   private updateTaskExecutionsInternal(
     taskExecutions: Array<TaskExecutionStorageValue>,
     update: TaskExecutionStorageUpdate,
+    updateExpiresAtWithStartedAt?: number,
   ) {
     for (const taskExecution of taskExecutions) {
-      applyTaskExecutionStorageUpdate(taskExecution, update)
+      applyTaskExecutionStorageUpdate(taskExecution, update, updateExpiresAtWithStartedAt)
     }
   }
 
@@ -312,10 +313,11 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
         request.limit,
         (a, b) => a.startAt - b.startAt,
       )
-      this.updateTaskExecutionsInternal(taskExecutions, request.update)
-      for (const execution of taskExecutions) {
-        execution.expiresAt = request.updateExpiresAtWithStartedAt + execution.timeoutMs
-      }
+      this.updateTaskExecutionsInternal(
+        taskExecutions,
+        request.update,
+        request.updateExpiresAtWithStartedAt,
+      )
       return taskExecutions
     })
   }
@@ -355,7 +357,8 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     })
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThan(request: {
+  async updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(request: {
+    status: TaskExecutionStatus
     isSleepingTask: boolean
     expiresAtLessThan: number
     update: TaskExecutionStorageUpdate
@@ -364,6 +367,7 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
     return await this.withMutex(() => {
       const taskExecutions = this.getByFilterFnAndLimitInternal(
         (execution) =>
+          execution.status === request.status &&
           execution.isSleepingTask === request.isSleepingTask &&
           execution.expiresAt != null &&
           execution.expiresAt < request.expiresAtLessThan,

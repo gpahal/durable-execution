@@ -516,7 +516,7 @@ describe('TaskExecutionsStorageInternal', () => {
         updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn:
           vi.fn(() => []),
         updateByCloseStatusAndReturn: vi.fn(() => []),
-        updateByIsSleepingTaskAndExpiresAtLessThan: vi.fn(() => 0),
+        updateByStatusAndIsSleepingTaskAndExpiresAtLessThan: vi.fn(() => 0),
         updateByOnChildrenFinishedProcessingExpiresAtLessThan: vi.fn(() => 0),
         updateByCloseExpiresAtLessThan: vi.fn(() => 0),
         updateByExecutorIdAndNeedsPromiseCancellationAndReturn: vi.fn(() => []),
@@ -550,7 +550,7 @@ describe('TaskExecutionsStorageInternal', () => {
         updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn:
           vi.fn(() => []),
         updateByCloseStatusAndReturn: vi.fn(() => []),
-        updateByIsSleepingTaskAndExpiresAtLessThan: vi.fn(() => 0),
+        updateByStatusAndIsSleepingTaskAndExpiresAtLessThan: vi.fn(() => 0),
         updateByOnChildrenFinishedProcessingExpiresAtLessThan: vi.fn(() => 0),
         updateByCloseExpiresAtLessThan: vi.fn(() => 0),
         updateByExecutorIdAndNeedsPromiseCancellationAndReturn: vi.fn(() => []),
@@ -584,7 +584,7 @@ describe('TaskExecutionsStorageInternal', () => {
         updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn:
           vi.fn(() => []),
         updateByCloseStatusAndReturn: vi.fn(() => []),
-        updateByIsSleepingTaskAndExpiresAtLessThan: vi.fn(() => 0),
+        updateByStatusAndIsSleepingTaskAndExpiresAtLessThan: vi.fn(() => 0),
         updateByOnChildrenFinishedProcessingExpiresAtLessThan: vi.fn(() => 0),
         updateByCloseExpiresAtLessThan: vi.fn(() => 0),
         updateByExecutorIdAndNeedsPromiseCancellationAndReturn: vi.fn(() => []),
@@ -779,7 +779,7 @@ describe('TaskExecutionsStorageInternal', () => {
     })
   })
 
-  describe('updateByIsSleepingTaskAndExpiresAtLessThan', () => {
+  describe('updateByStatusAndIsSleepingTaskAndExpiresAtLessThan', () => {
     let now: number
 
     beforeEach(async () => {
@@ -788,12 +788,14 @@ describe('TaskExecutionsStorageInternal', () => {
       const executions = [
         createMockStorageValue({
           executionId: 'sleep-1',
+          status: 'running',
           isSleepingTask: true,
           sleepingTaskUniqueId: 'sleep-1',
           expiresAt: now - 1000,
         }),
         createMockStorageValue({
           executionId: 'sleep-2',
+          status: 'running',
           isSleepingTask: true,
           sleepingTaskUniqueId: 'sleep-2',
           expiresAt: now + 1000,
@@ -803,7 +805,8 @@ describe('TaskExecutionsStorageInternal', () => {
     })
 
     it('should update sleeping tasks by expiry time', async () => {
-      const count = await storageInternal.updateByIsSleepingTaskAndExpiresAtLessThan(now, {
+      const count = await storageInternal.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(now, {
+        status: 'running',
         isSleepingTask: true,
         expiresAtLessThan: now,
         update: { status: 'timed_out' },
@@ -884,7 +887,7 @@ describe('TaskExecutionsStorageInternal', () => {
         updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn:
           vi.fn(() => []),
         updateByCloseStatusAndReturn: vi.fn(() => []),
-        updateByIsSleepingTaskAndExpiresAtLessThan: vi.fn(() => 0),
+        updateByStatusAndIsSleepingTaskAndExpiresAtLessThan: vi.fn(() => 0),
         updateByOnChildrenFinishedProcessingExpiresAtLessThan: vi.fn(() => 0),
         updateByCloseExpiresAtLessThan: vi.fn(() => 0),
         updateByExecutorIdAndNeedsPromiseCancellationAndReturn: vi.fn(() => []),
@@ -920,7 +923,7 @@ describe('TaskExecutionsStorageInternal', () => {
         updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn:
           vi.fn(() => []),
         updateByCloseStatusAndReturn: vi.fn(() => []),
-        updateByIsSleepingTaskAndExpiresAtLessThan: vi.fn(() => 0),
+        updateByStatusAndIsSleepingTaskAndExpiresAtLessThan: vi.fn(() => 0),
         updateByOnChildrenFinishedProcessingExpiresAtLessThan: vi.fn(() => 0),
         updateByCloseExpiresAtLessThan: vi.fn(() => 0),
         updateByExecutorIdAndNeedsPromiseCancellationAndReturn: vi.fn(() => []),

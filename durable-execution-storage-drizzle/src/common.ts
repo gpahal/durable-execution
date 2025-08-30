@@ -39,6 +39,8 @@ export type TaskExecutionDBValue = {
   startAt: number
   startedAt?: number | null
   expiresAt?: number | null
+  waitingForChildrenStartedAt?: number | null
+  waitingForFinalizeStartedAt?: number | null
   finishedAt?: number | null
 
   children?: Array<TaskExecutionSummary> | null
@@ -68,22 +70,24 @@ export type TaskExecutionDBUpdate = {
   error?: DurableExecutionErrorStorageValue | null
   retryAttempts?: number
   startAt?: number
-  startedAt?: number
+  startedAt?: number | null
   expiresAt?: number | null
-  finishedAt?: number | null
+  waitingForChildrenStartedAt?: number
+  waitingForFinalizeStartedAt?: number
+  finishedAt?: number
 
   children?: Array<TaskExecutionSummary>
   activeChildrenCount?: number
   shouldDecrementParentActiveChildrenCount?: boolean
   onChildrenFinishedProcessingStatus?: TaskExecutionOnChildrenFinishedProcessingStatus
   onChildrenFinishedProcessingExpiresAt?: number | null
-  onChildrenFinishedProcessingFinishedAt?: number | null
+  onChildrenFinishedProcessingFinishedAt?: number
 
   finalize?: TaskExecutionSummary
 
   closeStatus?: TaskExecutionCloseStatus
   closeExpiresAt?: number | null
-  closedAt?: number | null
+  closedAt?: number
 
   needsPromiseCancellation?: boolean
 
@@ -120,6 +124,8 @@ export function taskExecutionStorageValueToDBValue(
     startAt: value.startAt,
     startedAt: value.startedAt,
     expiresAt: value.expiresAt,
+    waitingForChildrenStartedAt: value.waitingForChildrenStartedAt,
+    waitingForFinalizeStartedAt: value.waitingForFinalizeStartedAt,
     finishedAt: value.finishedAt,
     children: value.children,
     activeChildrenCount: value.activeChildrenCount,
@@ -207,8 +213,16 @@ export function taskExecutionDBValueToStorageValue(
     value.expiresAt = dbValue.expiresAt
   }
 
-  if (updateExpiresAtWithStartedAt) {
-    value.expiresAt = updateExpiresAtWithStartedAt + dbValue.timeoutMs
+  if (dbValue.waitingForChildrenStartedAt) {
+    value.waitingForChildrenStartedAt = dbValue.waitingForChildrenStartedAt
+  }
+
+  if (dbValue.waitingForFinalizeStartedAt) {
+    value.waitingForFinalizeStartedAt = dbValue.waitingForFinalizeStartedAt
+  }
+
+  if (dbValue.expiresAt) {
+    value.expiresAt = dbValue.expiresAt
   }
 
   if (dbValue.finishedAt) {
@@ -239,7 +253,9 @@ export function taskExecutionDBValueToStorageValue(
     value.closedAt = dbValue.closedAt
   }
 
-  return update ? applyTaskExecutionStorageUpdate(value, update) : value
+  return update
+    ? applyTaskExecutionStorageUpdate(value, update, updateExpiresAtWithStartedAt)
+    : value
 }
 
 export function taskExecutionStorageUpdateToDBUpdate(
@@ -297,12 +313,24 @@ export function taskExecutionStorageUpdateToDBUpdate(
     dbUpdate.startedAt = update.startedAt
   }
 
+  if (update.unsetStartedAt) {
+    dbUpdate.startedAt = null
+  }
+
   if (update.expiresAt != null) {
     dbUpdate.expiresAt = update.expiresAt
   }
 
   if (update.unsetExpiresAt) {
     dbUpdate.expiresAt = null
+  }
+
+  if (update.waitingForChildrenStartedAt != null) {
+    dbUpdate.waitingForChildrenStartedAt = update.waitingForChildrenStartedAt
+  }
+
+  if (update.waitingForFinalizeStartedAt != null) {
+    dbUpdate.waitingForFinalizeStartedAt = update.waitingForFinalizeStartedAt
   }
 
   if (update.finishedAt != null) {

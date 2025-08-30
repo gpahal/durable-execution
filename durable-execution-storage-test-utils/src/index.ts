@@ -655,7 +655,7 @@ async function runStorageOperationsTest(storage: TaskExecutionsStorage) {
   await storage.deleteAll()
   await testUpdateByCloseStatusAndReturn(storage)
   await storage.deleteAll()
-  await testUpdateByIsSleepingTaskAndExpiresAtLessThan(storage)
+  await testUpdateByStatusAndIsSleepingTaskAndExpiresAtLessThan(storage)
   await storage.deleteAll()
   await testUpdateByOnChildrenFinishedProcessingExpiresAtLessThan(storage)
   await storage.deleteAll()
@@ -1496,7 +1496,9 @@ async function testUpdateByCloseStatusAndReturn(storage: TaskExecutionsStorage) 
   expect(nonUpdatedExecution3?.closeStatus).toBe('closed')
 }
 
-async function testUpdateByIsSleepingTaskAndExpiresAtLessThan(storage: TaskExecutionsStorage) {
+async function testUpdateByStatusAndIsSleepingTaskAndExpiresAtLessThan(
+  storage: TaskExecutionsStorage,
+) {
   let now = Date.now()
   const past = now - 5000
   const future = now + 5000
@@ -1517,6 +1519,7 @@ async function testUpdateByIsSleepingTaskAndExpiresAtLessThan(storage: TaskExecu
   executions[2]!.expiresAt = now
   executions[3]!.status = 'completed'
   executions[3]!.isFinished = true
+  executions[4]!.status = 'running'
   executions[4]!.isSleepingTask = true
   executions[4]!.expiresAt = past
 
@@ -1528,7 +1531,8 @@ async function testUpdateByIsSleepingTaskAndExpiresAtLessThan(storage: TaskExecu
 
   await sleep(500)
   now = Date.now() + 1000
-  let updatedCount = await storage.updateByIsSleepingTaskAndExpiresAtLessThan({
+  let updatedCount = await storage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan({
+    status: 'running',
     isSleepingTask: false,
     expiresAtLessThan: now,
     update: {
@@ -1581,10 +1585,11 @@ async function testUpdateByIsSleepingTaskAndExpiresAtLessThan(storage: TaskExecu
   )[0]!
   expect(nonUpdatedExecution1?.status).toBe('running')
   expect(nonUpdatedExecution2?.status).toBe('completed')
-  expect(nonUpdatedExecution3?.status).toBe('ready')
+  expect(nonUpdatedExecution3?.status).toBe('running')
 
   now = Date.now() + 1000
-  updatedCount = await storage.updateByIsSleepingTaskAndExpiresAtLessThan({
+  updatedCount = await storage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan({
+    status: 'running',
     isSleepingTask: true,
     expiresAtLessThan: now,
     update: {
@@ -2274,7 +2279,7 @@ function createTaskExecutionStorageValue({
   now = now ?? Date.now()
   taskId = taskId ?? generateTaskId()
   executionId = executionId ?? generateTaskExecutionId()
-  isSleepingTask = isSleepingTask ?? false
+  isSleepingTask = sleepingTaskUniqueId != null
   retryOptions = retryOptions ?? { maxAttempts: 0 }
   sleepMsBeforeRun = sleepMsBeforeRun ?? 0
   timeoutMs = timeoutMs ?? 1000
@@ -2285,7 +2290,7 @@ function createTaskExecutionStorageValue({
     taskId,
     executionId,
     isSleepingTask,
-    sleepingTaskUniqueId: isSleepingTask ? (sleepingTaskUniqueId ?? '') : undefined,
+    sleepingTaskUniqueId,
     retryOptions,
     sleepMsBeforeRun,
     timeoutMs,
@@ -2391,14 +2396,15 @@ class TaskExecutionsStorageWrapper implements TaskExecutionsStorage {
     return this.storage.updateByCloseStatusAndReturn(request)
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThan(request: {
+  async updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(request: {
+    status: TaskExecutionStatus
     isSleepingTask: boolean
     expiresAtLessThan: number
     update: TaskExecutionStorageUpdate
     limit: number
   }): Promise<number> {
     await sleep(this.storageSlowdownMs)
-    return this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(request)
+    return this.storage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(request)
   }
 
   async updateByOnChildrenFinishedProcessingExpiresAtLessThan(request: {
@@ -2506,6 +2512,8 @@ class TaskExecutionsStorageWrapper implements TaskExecutionsStorage {
  * @param options.storageBatchingBackgroundProcessIntraBatchSleepMs - The sleep duration between
  *   batches of storage operations. Only applicable if storage batching is enabled. If not
  *   provided, defaults to 10ms.
+ * @param options.totalIterations - Number of iterations to run the benchmark for. If not provided,
+ *   defaults to 2.
  * @param options.childTasksCount - Number of child tasks to run in parallel
  * @param options.parentTasksCount - Number of parent tasks to run in parallel
  * @param options.sequentialTasksCount - Number of sequential tasks to run in parallel
@@ -2521,6 +2529,7 @@ export async function runStorageBench<TStorage extends TaskExecutionsStorage>(
     backgroundProcessesCount = 3,
     enableStorageBatching = false,
     storageBatchingBackgroundProcessIntraBatchSleepMs = 10,
+    totalIterations = 2,
     childTasksCount = 50,
     parentTasksCount = 100,
     sequentialTasksCount = 100,
@@ -2532,6 +2541,7 @@ export async function runStorageBench<TStorage extends TaskExecutionsStorage>(
     backgroundProcessesCount?: number
     enableStorageBatching?: boolean
     storageBatchingBackgroundProcessIntraBatchSleepMs?: number
+    totalIterations?: number
     childTasksCount?: number
     parentTasksCount?: number
     sequentialTasksCount?: number
@@ -2540,6 +2550,9 @@ export async function runStorageBench<TStorage extends TaskExecutionsStorage>(
 ) {
   if (executorsCount < 1) {
     throw new Error('Executors count must be at least 1')
+  }
+  if (totalIterations < 1) {
+    throw new Error('Total iterations must be at least 1')
   }
 
   console.log('\n========================================')
@@ -2591,7 +2604,7 @@ export async function runStorageBench<TStorage extends TaskExecutionsStorage>(
 
   try {
     const durations: Array<number> = []
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 1 + totalIterations; i++) {
       if (isShuttingDown) {
         break
       }

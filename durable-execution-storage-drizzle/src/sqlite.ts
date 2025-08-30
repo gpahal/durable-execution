@@ -94,6 +94,8 @@ export function createSQLiteTaskExecutionsTable(tableName = 'task_executions') {
       startAt: integer('start_at').notNull(),
       startedAt: integer('started_at'),
       expiresAt: integer('expires_at'),
+      waitingForChildrenStartedAt: integer('waiting_for_children_started_at'),
+      waitingForFinalizeStartedAt: integer('waiting_for_finalize_started_at'),
       finishedAt: integer('finished_at'),
       children: text('children', { mode: 'json' }).$type<Array<TaskExecutionSummary>>(),
       activeChildrenCount: integer('active_children_count').notNull(),
@@ -125,7 +127,8 @@ export function createSQLiteTaskExecutionsTable(tableName = 'task_executions') {
         table.updatedAt,
       ),
       index(`ix_${tableName}_close_status_updated_at`).on(table.closeStatus, table.updatedAt),
-      index(`ix_${tableName}_is_sleeping_task_expires_at`).on(
+      index(`ix_${tableName}_status_is_sleeping_task_expires_at`).on(
+        table.status,
         table.isSleepingTask,
         table.expiresAt,
       ),
@@ -474,12 +477,14 @@ class SQLiteTaskExecutionsStorageNonAtomic<
     return updatedRows.map((row) => taskExecutionDBValueToStorageValue(row, update))
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThan({
+  async updateByStatusAndIsSleepingTaskAndExpiresAtLessThan({
+    status,
     isSleepingTask,
     expiresAtLessThan,
     update,
     limit,
   }: {
+    status: TaskExecutionStatus
     isSleepingTask: boolean
     expiresAtLessThan: number
     update: TaskExecutionStorageUpdate
@@ -493,6 +498,7 @@ class SQLiteTaskExecutionsStorageNonAtomic<
         .from(this.taskExecutionsTable)
         .where(
           and(
+            eq(this.taskExecutionsTable.status, status),
             eq(this.taskExecutionsTable.isSleepingTask, isSleepingTask),
             lt(this.taskExecutionsTable.expiresAt, expiresAtLessThan),
           ),

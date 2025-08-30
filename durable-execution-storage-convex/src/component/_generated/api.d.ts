@@ -138,6 +138,8 @@ export type Mounts = {
           taskId: string;
           timeoutMs: number;
           updatedAt: number;
+          waitingForChildrenStartedAt?: number;
+          waitingForFinalizeStartedAt?: number;
         }>;
       },
       any
@@ -162,13 +164,13 @@ export type Mounts = {
       any,
       any
     >;
-    updateByIsSleepingTaskAndExpiresAtLessThan: FunctionReference<
+    updateByOCFPExpiresAt: FunctionReference<"mutation", "public", any, any>;
+    updateByStatusAndIsSleepingTaskAndExpiresAtLessThan: FunctionReference<
       "mutation",
       "public",
       any,
       any
     >;
-    updateByOCFPExpiresAt: FunctionReference<"mutation", "public", any, any>;
     updateByStatusAndOCFPStatusAndACCZeroAndReturn: FunctionReference<
       "mutation",
       "public",
@@ -243,7 +245,10 @@ export type Mounts = {
             unsetExpiresAt?: boolean;
             unsetOCFPExpiresAt?: boolean;
             unsetRunOutput?: boolean;
+            unsetStartedAt?: boolean;
             updatedAt: number;
+            waitingForChildrenStartedAt?: number;
+            waitingForFinalizeStartedAt?: number;
           };
         }>;
       },
@@ -315,6 +320,8 @@ export type Mounts = {
             taskId: string;
             timeoutMs: number;
             updatedAt: number;
+            waitingForChildrenStartedAt?: number;
+            waitingForFinalizeStartedAt?: number;
           }>;
           executionId: string;
           filters?: {
@@ -373,7 +380,10 @@ export type Mounts = {
             unsetExpiresAt?: boolean;
             unsetOCFPExpiresAt?: boolean;
             unsetRunOutput?: boolean;
+            unsetStartedAt?: boolean;
             updatedAt: number;
+            waitingForChildrenStartedAt?: number;
+            waitingForFinalizeStartedAt?: number;
           };
         }>;
       },
@@ -428,7 +438,10 @@ export type Mounts = {
             unsetExpiresAt?: boolean;
             unsetOCFPExpiresAt?: boolean;
             unsetRunOutput?: boolean;
+            unsetStartedAt?: boolean;
             updatedAt: number;
+            waitingForChildrenStartedAt?: number;
+            waitingForFinalizeStartedAt?: number;
           };
         }>;
       },

@@ -35,8 +35,11 @@ export const vTaskExecutionDBUpdateRequest = v.object({
   retryAttempts: v.optional(v.number()),
   startAt: v.optional(v.number()),
   startedAt: v.optional(v.number()),
+  unsetStartedAt: v.optional(v.boolean()),
   expiresAt: v.optional(v.number()),
   unsetExpiresAt: v.optional(v.boolean()),
+  waitingForChildrenStartedAt: v.optional(v.number()),
+  waitingForFinalizeStartedAt: v.optional(v.number()),
   finishedAt: v.optional(v.number()),
   children: v.optional(
     v.array(
@@ -77,6 +80,8 @@ export type TaskExecutionDBUpdate = {
   startAt?: number
   startedAt?: number
   expiresAt?: number
+  waitingForChildrenStartedAt?: number
+  waitingForFinalizeStartedAt?: number
   finishedAt?: number
 
   children?: Array<TaskExecutionSummary>
@@ -128,6 +133,8 @@ export function taskExecutionStorageValueToDBInsertValue(
     startAt: value.startAt,
     startedAt: value.startedAt,
     expiresAt: value.expiresAt,
+    waitingForChildrenStartedAt: value.waitingForChildrenStartedAt,
+    waitingForFinalizeStartedAt: value.waitingForFinalizeStartedAt,
     finishedAt: value.finishedAt,
     children: value.children,
     acc: value.activeChildrenCount,
@@ -153,18 +160,34 @@ export function taskExecutionDBValueToStorageValue(
     taskId: dbValue.taskId,
     executionId: dbValue.executionId,
     isSleepingTask: dbValue.isSleepingTask,
+    sleepingTaskUniqueId: dbValue.sleepingTaskUniqueId,
     retryOptions: dbValue.retryOptions,
     sleepMsBeforeRun: dbValue.sleepMsBeforeRun,
     timeoutMs: dbValue.timeoutMs,
     areChildrenSequential: dbValue.areChildrenSequential,
     input: dbValue.input,
+    executorId: dbValue.executorId,
     status: dbValue.status,
     isFinished: dbValue.isFinished,
+    runOutput: dbValue.runOutput,
+    output: dbValue.output,
+    error: dbValue.error,
     retryAttempts: dbValue.retryAttempts,
     startAt: dbValue.startAt,
+    startedAt: dbValue.startedAt,
+    expiresAt: dbValue.expiresAt,
+    waitingForChildrenStartedAt: dbValue.waitingForChildrenStartedAt,
+    waitingForFinalizeStartedAt: dbValue.waitingForFinalizeStartedAt,
+    finishedAt: dbValue.finishedAt,
+    children: dbValue.children,
     activeChildrenCount: dbValue.acc,
     onChildrenFinishedProcessingStatus: dbValue.ocfpStatus,
+    onChildrenFinishedProcessingExpiresAt: dbValue.ocfpExpiresAt,
+    onChildrenFinishedProcessingFinishedAt: dbValue.ocfpFinishedAt,
+    finalize: dbValue.finalize,
     closeStatus: dbValue.closeStatus,
+    closeExpiresAt: dbValue.closeExpiresAt,
+    closedAt: dbValue.closedAt,
     needsPromiseCancellation: dbValue.npc,
     createdAt: dbValue.createdAt,
     updatedAt: dbValue.updatedAt,
@@ -187,67 +210,9 @@ export function taskExecutionDBValueToStorageValue(
     }
   }
 
-  if (dbValue.executorId) {
-    value.executorId = dbValue.executorId
-  }
-
-  if (dbValue.sleepingTaskUniqueId != null) {
-    value.sleepingTaskUniqueId = dbValue.sleepingTaskUniqueId
-  }
-
-  if (dbValue.runOutput != null) {
-    value.runOutput = dbValue.runOutput
-  }
-
-  if (dbValue.output != null) {
-    value.output = dbValue.output
-  }
-
-  if (dbValue.error) {
-    value.error = dbValue.error
-  }
-
-  if (dbValue.startedAt) {
-    value.startedAt = dbValue.startedAt
-  }
-
-  if (dbValue.expiresAt) {
-    value.expiresAt = dbValue.expiresAt
-  }
-
-  if (updateExpiresAtWithStartedAt) {
-    value.expiresAt = updateExpiresAtWithStartedAt + dbValue.timeoutMs
-  }
-
-  if (dbValue.finishedAt) {
-    value.finishedAt = dbValue.finishedAt
-  }
-
-  if (dbValue.children) {
-    value.children = dbValue.children
-  }
-
-  if (dbValue.ocfpExpiresAt) {
-    value.onChildrenFinishedProcessingExpiresAt = dbValue.ocfpExpiresAt
-  }
-
-  if (dbValue.ocfpFinishedAt) {
-    value.onChildrenFinishedProcessingFinishedAt = dbValue.ocfpFinishedAt
-  }
-
-  if (dbValue.finalize) {
-    value.finalize = dbValue.finalize
-  }
-
-  if (dbValue.closeExpiresAt) {
-    value.closeExpiresAt = dbValue.closeExpiresAt
-  }
-
-  if (dbValue.closedAt) {
-    value.closedAt = dbValue.closedAt
-  }
-
-  return update ? applyTaskExecutionStorageUpdate(value, update) : value
+  return update
+    ? applyTaskExecutionStorageUpdate(value, update, updateExpiresAtWithStartedAt)
+    : value
 }
 
 export function taskExecutionStorageUpdateToDBUpdateRequest(
@@ -266,8 +231,11 @@ export function taskExecutionStorageUpdateToDBUpdateRequest(
     retryAttempts: update.retryAttempts,
     startAt: update.startAt,
     startedAt: update.startedAt,
+    unsetStartedAt: update.unsetStartedAt,
     expiresAt: update.expiresAt,
     unsetExpiresAt: update.unsetExpiresAt,
+    waitingForChildrenStartedAt: update.waitingForChildrenStartedAt,
+    waitingForFinalizeStartedAt: update.waitingForFinalizeStartedAt,
     finishedAt: update.finishedAt,
     children: update.children as Array<TaskExecutionSummary>,
     acc: update.activeChildrenCount,
@@ -340,12 +308,24 @@ export function taskExecutionStorageUpdateRequestToDBUpdate(
     dbUpdate.startedAt = update.startedAt
   }
 
+  if (update.unsetStartedAt) {
+    dbUpdate.startedAt = undefined
+  }
+
   if (update.expiresAt != null) {
     dbUpdate.expiresAt = update.expiresAt
   }
 
   if (update.unsetExpiresAt) {
     dbUpdate.expiresAt = undefined
+  }
+
+  if (update.waitingForChildrenStartedAt != null) {
+    dbUpdate.waitingForChildrenStartedAt = update.waitingForChildrenStartedAt
+  }
+
+  if (update.waitingForFinalizeStartedAt != null) {
+    dbUpdate.waitingForFinalizeStartedAt = update.waitingForFinalizeStartedAt
   }
 
   if (update.finishedAt != null) {

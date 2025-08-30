@@ -379,15 +379,17 @@ export const updateByCloseStatusAndReturn = mutation(
   },
 )
 
-export const updateByIsSleepingTaskAndExpiresAtLessThan = mutation(
+export const updateByStatusAndIsSleepingTaskAndExpiresAtLessThan = mutation(
   async (
     ctx,
     {
+      status,
       isSleepingTask,
       expiresAtLessThan,
       update,
       limit,
     }: {
+      status: TaskExecutionStatus
       isSleepingTask: boolean
       expiresAtLessThan: number
       update: TaskExecutionDBUpdateRequest
@@ -396,8 +398,9 @@ export const updateByIsSleepingTaskAndExpiresAtLessThan = mutation(
   ) => {
     const dbValues = await ctx.db
       .query('taskExecutions')
-      .withIndex('by_isSleepingTask_expiresAt', (q) =>
+      .withIndex('by_status_isSleepingTask_expiresAt', (q) =>
         q
+          .eq('status', status)
           .eq('isSleepingTask', isSleepingTask)
           .gte('expiresAt', 0)
           .lt('expiresAt', expiresAtLessThan),

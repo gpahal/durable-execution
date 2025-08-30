@@ -76,6 +76,8 @@ export const vTaskExecutionDBInsertValue = v.object({
   startAt: v.number(),
   startedAt: v.optional(v.number()),
   expiresAt: v.optional(v.number()),
+  waitingForChildrenStartedAt: v.optional(v.number()),
+  waitingForFinalizeStartedAt: v.optional(v.number()),
   finishedAt: v.optional(v.number()),
 
   children: v.optional(
@@ -122,7 +124,7 @@ export default defineSchema({
       'updatedAt',
     ])
     .index('by_shard_closeStatus_updatedAt', ['shard', 'closeStatus', 'updatedAt'])
-    .index('by_isSleepingTask_expiresAt', ['isSleepingTask', 'expiresAt'])
+    .index('by_status_isSleepingTask_expiresAt', ['status', 'isSleepingTask', 'expiresAt'])
     .index('by_ocfpExpiresAt', ['ocfpExpiresAt'])
     .index('by_closeExpiresAt', ['closeExpiresAt'])
     .index('by_shard_executorId_npc_updatedAt', ['shard', 'executorId', 'npc', 'updatedAt'])

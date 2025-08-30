@@ -155,6 +155,8 @@ export declare const components: {
             taskId: string;
             timeoutMs: number;
             updatedAt: number;
+            waitingForChildrenStartedAt?: number;
+            waitingForFinalizeStartedAt?: number;
           }>;
         },
         any
@@ -189,13 +191,13 @@ export declare const components: {
         any,
         any
       >;
-      updateByIsSleepingTaskAndExpiresAtLessThan: FunctionReference<
+      updateByOCFPExpiresAt: FunctionReference<
         "mutation",
         "internal",
         any,
         any
       >;
-      updateByOCFPExpiresAt: FunctionReference<
+      updateByStatusAndIsSleepingTaskAndExpiresAtLessThan: FunctionReference<
         "mutation",
         "internal",
         any,
@@ -275,7 +277,10 @@ export declare const components: {
               unsetExpiresAt?: boolean;
               unsetOCFPExpiresAt?: boolean;
               unsetRunOutput?: boolean;
+              unsetStartedAt?: boolean;
               updatedAt: number;
+              waitingForChildrenStartedAt?: number;
+              waitingForFinalizeStartedAt?: number;
             };
           }>;
         },
@@ -347,6 +352,8 @@ export declare const components: {
               taskId: string;
               timeoutMs: number;
               updatedAt: number;
+              waitingForChildrenStartedAt?: number;
+              waitingForFinalizeStartedAt?: number;
             }>;
             executionId: string;
             filters?: {
@@ -405,7 +412,10 @@ export declare const components: {
               unsetExpiresAt?: boolean;
               unsetOCFPExpiresAt?: boolean;
               unsetRunOutput?: boolean;
+              unsetStartedAt?: boolean;
               updatedAt: number;
+              waitingForChildrenStartedAt?: number;
+              waitingForFinalizeStartedAt?: number;
             };
           }>;
         },
@@ -460,7 +470,10 @@ export declare const components: {
               unsetExpiresAt?: boolean;
               unsetOCFPExpiresAt?: boolean;
               unsetRunOutput?: boolean;
+              unsetStartedAt?: boolean;
               updatedAt: number;
+              waitingForChildrenStartedAt?: number;
+              waitingForFinalizeStartedAt?: number;
             };
           }>;
         },

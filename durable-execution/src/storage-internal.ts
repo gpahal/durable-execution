@@ -27,20 +27,32 @@ export type TaskExecutionStorageUpdateInternal = Omit<
   | 'isFinished'
   | 'unsetRunOutput'
   | 'unsetError'
+  | 'startedAt'
+  | 'unsetStartedAt'
   | 'unsetExpiresAt'
+  | 'waitingForChildrenStartedAt'
+  | 'waitingForFinalizeStartedAt'
   | 'finishedAt'
   | 'unsetOnChildrenFinishedProcessingExpiresAt'
+  | 'onChildrenFinishedProcessingFinishedAt'
   | 'unsetCloseExpiresAt'
+  | 'closedAt'
   | 'updatedAt'
 > & {
   unsetExecutorId?: never
   isFinished?: never
   unsetRunOutput?: never
   unsetError?: never
+  startedAt?: never
+  unsetStartedAt?: never
   unsetExpiresAt?: never
+  waitingForChildrenStartedAt?: never
+  waitingForFinalizeStartedAt?: never
   finishedAt?: never
   unsetOnChildrenFinishedProcessingExpiresAt?: never
+  onChildrenFinishedProcessingFinishedAt?: never
   unsetCloseExpiresAt?: never
+  closedAt?: never
   updatedAt?: never
 }
 
@@ -54,10 +66,16 @@ export function getTaskExecutionStorageUpdate(
     isFinished: undefined,
     unsetRunOutput: undefined,
     unsetError: undefined,
+    startedAt: undefined,
+    unsetStartedAt: undefined,
     unsetExpiresAt: undefined,
+    waitingForChildrenStartedAt: undefined,
+    waitingForFinalizeStartedAt: undefined,
     finishedAt: undefined,
     unsetOnChildrenFinishedProcessingExpiresAt: undefined,
+    onChildrenFinishedProcessingFinishedAt: undefined,
     unsetCloseExpiresAt: undefined,
+    closedAt: undefined,
     updatedAt: now,
   }
   if (internalUpdate.status) {
@@ -68,6 +86,17 @@ export function getTaskExecutionStorageUpdate(
     }
     if (internalUpdate.status === 'ready') {
       update.unsetRunOutput = true
+      update.unsetStartedAt = true
+      update.unsetExpiresAt = true
+    }
+    if (internalUpdate.status === 'running') {
+      update.startedAt = now
+    }
+    if (internalUpdate.status === 'waiting_for_children') {
+      update.waitingForChildrenStartedAt = now
+    }
+    if (internalUpdate.status === 'waiting_for_finalize') {
+      update.waitingForFinalizeStartedAt = now
     }
     if (
       !ERRORED_TASK_EXECUTION_STATUSES.includes(internalUpdate.status) &&
@@ -86,14 +115,21 @@ export function getTaskExecutionStorageUpdate(
       update.unsetExpiresAt = true
     }
   }
-  if (
-    internalUpdate.onChildrenFinishedProcessingStatus &&
-    internalUpdate.onChildrenFinishedProcessingStatus !== 'processing'
-  ) {
-    update.unsetOnChildrenFinishedProcessingExpiresAt = true
+  if (internalUpdate.onChildrenFinishedProcessingStatus) {
+    if (internalUpdate.onChildrenFinishedProcessingStatus !== 'processing') {
+      update.unsetOnChildrenFinishedProcessingExpiresAt = true
+    }
+    if (internalUpdate.onChildrenFinishedProcessingStatus === 'processed') {
+      update.onChildrenFinishedProcessingFinishedAt = now
+    }
   }
-  if (internalUpdate.closeStatus && internalUpdate.closeStatus !== 'closing') {
-    update.unsetCloseExpiresAt = true
+  if (internalUpdate.closeStatus) {
+    if (internalUpdate.closeStatus !== 'closing') {
+      update.unsetCloseExpiresAt = true
+    }
+    if (internalUpdate.closeStatus === 'closed') {
+      update.closedAt = now
+    }
   }
   return omitUndefinedValues(update)
 }
@@ -842,9 +878,10 @@ export class TaskExecutionsStorageInternal {
     )
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThan(
+  async updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(
     now: number,
     request: {
+      status: TaskExecutionStatus
       isSleepingTask: boolean
       expiresAtLessThan: number
       update: TaskExecutionStorageUpdateInternal
@@ -853,9 +890,9 @@ export class TaskExecutionsStorageInternal {
     maxRetryAttempts?: number,
   ): Promise<number> {
     return await this.retry(
-      'updateByIsSleepingTaskAndExpiresAtLessThan',
+      'updateByStatusAndIsSleepingTaskAndExpiresAtLessThan',
       () =>
-        this.storage.updateByIsSleepingTaskAndExpiresAtLessThan({
+        this.storage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
         }),

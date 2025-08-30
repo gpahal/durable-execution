@@ -16,7 +16,6 @@ function createMockStorageValue(
     now,
     taskId: 'task-1',
     executionId: 'exec-1',
-    isSleepingTask: false,
     retryOptions: { maxAttempts: 3 },
     sleepMsBeforeRun: 0,
     timeoutMs: 30_000,
@@ -258,13 +257,15 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
       },
     ),
 
-    updateByIsSleepingTaskAndExpiresAtLessThan: vi.fn(
+    updateByStatusAndIsSleepingTaskAndExpiresAtLessThan: vi.fn(
       ({
+        status,
         isSleepingTask,
         expiresAtLessThan,
         update,
         limit,
       }: {
+        status: TaskExecutionStatus
         isSleepingTask: boolean
         expiresAtLessThan: number
         update: TaskExecutionStorageUpdate
@@ -276,6 +277,7 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
         )
         for (const execution of sortedExecutions) {
           if (
+            execution.status === status &&
             execution.isSleepingTask === isSleepingTask &&
             execution.expiresAt !== undefined &&
             execution.expiresAt < expiresAtLessThan &&
@@ -896,6 +898,7 @@ describe('TaskExecutionsStorageWithBatching', () => {
         createMockStorageValue({ executionId: 'exec-3', closeStatus: 'ready' }),
         createMockStorageValue({
           executionId: 'sleep-1',
+          status: 'running',
           isSleepingTask: true,
           expiresAt: now - 1000,
         }),
@@ -961,15 +964,17 @@ describe('TaskExecutionsStorageWithBatching', () => {
       expect(result[0]?.executionId).toBe('exec-3')
     })
 
-    it('should call updateByIsSleepingTaskAndExpiresAtLessThan', async () => {
-      const count = await batchingStorage.updateByIsSleepingTaskAndExpiresAtLessThan({
+    it('should call updateByStatusAndIsSleepingTaskAndExpiresAtLessThan', async () => {
+      const count = await batchingStorage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan({
+        status: 'running',
         isSleepingTask: true,
         expiresAtLessThan: now,
         update: { status: 'timed_out', updatedAt: now },
         limit: 10,
       })
 
-      expect(baseStorage.updateByIsSleepingTaskAndExpiresAtLessThan).toHaveBeenCalledWith({
+      expect(baseStorage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan).toHaveBeenCalledWith({
+        status: 'running',
         isSleepingTask: true,
         expiresAtLessThan: now,
         update: { status: 'timed_out', updatedAt: now },

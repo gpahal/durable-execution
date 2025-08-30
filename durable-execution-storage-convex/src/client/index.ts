@@ -87,7 +87,7 @@ export type TaskExecutionsStorageComponent = ComponentInternalApi<Mounts>
  *   updateByStatusAndStartAtLessThanAndReturn,
  *   updateByStatusAndOCFPStatusAndACCZeroAndReturn,
  *   updateByCloseStatusAndReturn,
- *   updateByIsSleepingTaskAndExpiresAtLessThan,
+ *   updateByStatusAndIsSleepingTaskAndExpiresAtLessThan,
  *   updateByOCFPExpiresAt,
  *   updateByCloseExpiresAt,
  *   updateByExecutorIdAndNPCAndReturn,
@@ -267,7 +267,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
       ) => {
         return await actionWithLock<Array<TaskExecutionDBValue>>(
           ctx,
-          `updateByStatusAndStartAtLessThanAndReturn_${args.args.shard}`,
+          `updateByStatusAndStartAtLessThanAndReturn_${args.args.shard}_${args.args.status}`,
           () => {
             return ctx.runMutation(
               component.lib.updateByStatusAndStartAtLessThanAndReturn,
@@ -294,7 +294,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
       ) => {
         return await actionWithLock<Array<TaskExecutionDBValue>>(
           ctx,
-          `updateByStatusAndOCFPStatusAndACCZeroAndReturn_${args.args.shard}`,
+          `updateByStatusAndOCFPStatusAndACCZeroAndReturn_${args.args.shard}_${args.args.status}_${args.args.ocfpStatus}`,
           () => {
             return ctx.runMutation(
               component.lib.updateByStatusAndOCFPStatusAndACCZeroAndReturn,
@@ -320,7 +320,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
       ) => {
         return await actionWithLock<Array<TaskExecutionDBValue>>(
           ctx,
-          `updateByCloseStatusAndReturn_${args.args.shard}`,
+          `updateByCloseStatusAndReturn_${args.args.shard}_${args.args.closeStatus}`,
           () => {
             return ctx.runMutation(component.lib.updateByCloseStatusAndReturn, verifyArgs(args))
           },
@@ -328,12 +328,13 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
         )
       },
     ),
-    updateByIsSleepingTaskAndExpiresAtLessThan: actionGeneric(
+    updateByStatusAndIsSleepingTaskAndExpiresAtLessThan: actionGeneric(
       async (
         ctx,
         args: {
           authSecret: string
           args: {
+            status: TaskExecutionStatus
             isSleepingTask: boolean
             expiresAtLessThan: number
             update: TaskExecutionDBUpdateRequest
@@ -343,10 +344,10 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
       ) => {
         return await actionWithLock<number>(
           ctx,
-          `updateByIsSleepingTaskAndExpiresAtLessThan_${args.args.isSleepingTask}`,
+          `updateByStatusAndIsSleepingTaskAndExpiresAtLessThan_${args.args.status}_${args.args.isSleepingTask}`,
           () => {
             return ctx.runMutation(
-              component.lib.updateByIsSleepingTaskAndExpiresAtLessThan,
+              component.lib.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan,
               verifyArgs(args),
             )
           },
@@ -414,7 +415,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
       ) => {
         return await actionWithLock<Array<TaskExecutionDBValue>>(
           ctx,
-          `updateByExecutorIdAndNPCAndReturn_${args.args.shard}`,
+          `updateByExecutorIdAndNPCAndReturn_${args.args.shard}_${args.args.executorId}_${args.args.npc}`,
           () => {
             return ctx.runMutation(
               component.lib.updateByExecutorIdAndNPCAndReturn,
@@ -483,7 +484,7 @@ export function convertDurableExecutionStorageComponentToPublicApiImpl(
       ) => {
         return await actionWithLock<number>(
           ctx,
-          `updateAndDecrementParentACCByIsFinishedAndCloseStatus_${args.args.shard}`,
+          `updateAndDecrementParentACCByIsFinishedAndCloseStatus_${args.args.shard}_${args.args.isFinished}_${args.args.closeStatus}`,
           () => {
             return ctx.runMutation(
               component.lib.updateAndDecrementParentACCByIsFinishedAndCloseStatus,
@@ -823,22 +824,25 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
     return dbValuesArr.flat().map((dbValue) => taskExecutionDBValueToStorageValue(dbValue, update))
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThan({
+  async updateByStatusAndIsSleepingTaskAndExpiresAtLessThan({
+    status,
     isSleepingTask,
     expiresAtLessThan,
     update,
     limit,
   }: {
+    status: TaskExecutionStatus
     isSleepingTask: boolean
     expiresAtLessThan: number
     update: TaskExecutionStorageUpdate
     limit: number
   }): Promise<number> {
     return await this.convexClient.action(
-      this.publicApi.updateByIsSleepingTaskAndExpiresAtLessThan,
+      this.publicApi.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan,
       {
         authSecret: this.authSecret,
         args: {
+          status,
           isSleepingTask,
           expiresAtLessThan,
           update: taskExecutionStorageUpdateToDBUpdateRequest(update),

@@ -771,25 +771,25 @@ export class DurableExecutorCore {
     return pollingTask
   }
 
-  private getSleepingTaskUniqueId(task: AnyTask, input: unknown): string {
+  private getSleepingTaskUniqueId(taskId: string, input: unknown): string {
     if (input == null) {
       throw DurableExecutionError.nonRetryable(
-        `A unique id string is required to enqueue a sleeping task ${task.id}. This unique id is used to wake up the sleeping task later`,
+        `A unique id string is required to enqueue a sleeping task ${taskId}. This unique id is used to wake up the sleeping task later`,
       )
     }
     if (!isString(input)) {
       throw DurableExecutionError.nonRetryable(
-        `Input must be a unique id string for sleeping task ${task.id}. This unique id is used to wake up the sleeping task later`,
+        `Input must be a unique id string for sleeping task ${taskId}. This unique id is used to wake up the sleeping task later`,
       )
     }
     if (input.length === 0) {
       throw DurableExecutionError.nonRetryable(
-        `A non-empty unique id string is required for sleeping task ${task.id}. This unique id is used to wake up the sleeping task later`,
+        `A non-empty unique id string is required for sleeping task ${taskId}. This unique id is used to wake up the sleeping task later`,
       )
     }
     if (input.length > 255) {
       throw DurableExecutionError.nonRetryable(
-        `The unique id string must be shorter than 256 characters for sleeping task ${task.id}`,
+        `The unique id string must be shorter than 256 characters for sleeping task ${taskId}`,
       )
     }
     return input
@@ -832,7 +832,7 @@ export class DurableExecutorCore {
     }
 
     const sleepingTaskUniqueId = task.isSleepingTask
-      ? this.getSleepingTaskUniqueId(task, input)
+      ? this.getSleepingTaskUniqueId(task.id, input)
       : undefined
     const executionId = generateTaskExecutionId()
     const validatedEnqueueOptions = validateEnqueueOptions(
@@ -853,7 +853,6 @@ export class DurableExecutorCore {
         now,
         taskId: task.id,
         executionId,
-        isSleepingTask: task.isSleepingTask,
         sleepingTaskUniqueId,
         retryOptions: finalEnqueueOptions.retryOptions,
         sleepMsBeforeRun: finalEnqueueOptions.sleepMsBeforeRun,
@@ -1144,7 +1143,6 @@ export class DurableExecutorCore {
       update: {
         executorId: this.id,
         status: 'running',
-        startedAt: now,
       },
       updateExpiresAtWithStartedAt: expiresAt,
       limit: batchLimit,
@@ -1337,7 +1335,6 @@ export class DurableExecutorCore {
                     },
                     taskId: finalizeTaskInternal.id,
                     executionId,
-                    isSleepingTask: false,
                     retryOptions: finalizeTaskInternal.retryOptions,
                     sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
                     timeoutMs: finalizeTaskInternal.timeoutMs,
@@ -1389,7 +1386,7 @@ export class DurableExecutorCore {
           if (!taskInternal.areChildrenSequential || index === 0) {
             const isChildSleepingTask = childTaskInternal.taskType === 'sleepingTask'
             const childSleepingTaskUniqueId = isChildSleepingTask
-              ? this.getSleepingTaskUniqueId(child.task, child.input)
+              ? this.getSleepingTaskUniqueId(child.task.id, child.input)
               : undefined
             const executionId = generateTaskExecutionId()
             const finalEnqueueOptions = overrideTaskEnqueueOptions(childTaskInternal, child.options)
@@ -1409,7 +1406,6 @@ export class DurableExecutorCore {
                 },
                 taskId: child.task.id,
                 executionId,
-                isSleepingTask: isChildSleepingTask,
                 sleepingTaskUniqueId: childSleepingTaskUniqueId,
                 retryOptions: finalEnqueueOptions.retryOptions,
                 sleepMsBeforeRun: finalEnqueueOptions.sleepMsBeforeRun,
@@ -1543,7 +1539,6 @@ export class DurableExecutorCore {
             status,
             error: convertDurableExecutionErrorToStorageValue(error),
             onChildrenFinishedProcessingStatus: 'processed',
-            onChildrenFinishedProcessingFinishedAt: now,
           },
         },
         execution,
@@ -1600,6 +1595,13 @@ export class DurableExecutorCore {
 
           const executionId = generateTaskExecutionId()
           firstDummyChild.executionId = executionId
+          const isChildSleepingTask = childTaskInternal.taskType === 'sleepingTask'
+          const childSleepingTaskUniqueId = isChildSleepingTask
+            ? this.getSleepingTaskUniqueId(
+                childTaskInternal.id,
+                this.serializer.deserialize(prevChildTaskExecution.output!),
+              )
+            : undefined
           const now = Date.now()
           await this.storage.updateByIdAndInsertChildrenIfUpdated(
             now,
@@ -1624,12 +1626,14 @@ export class DurableExecutorCore {
                   },
                   taskId: firstDummyChild.taskId,
                   executionId,
-                  isSleepingTask: childTaskInternal.taskType === 'sleepingTask',
+                  sleepingTaskUniqueId: childSleepingTaskUniqueId,
                   retryOptions: childTaskInternal.retryOptions,
                   sleepMsBeforeRun: childTaskInternal.sleepMsBeforeRun,
                   timeoutMs: childTaskInternal.timeoutMs,
                   areChildrenSequential: childTaskInternal.areChildrenSequential,
-                  input: prevChildTaskExecution.output!,
+                  input: isChildSleepingTask
+                    ? this.serializer.serialize(undefined, this.maxSerializedInputDataSize)
+                    : prevChildTaskExecution.output!,
                 }),
               ],
             },
@@ -1722,7 +1726,6 @@ export class DurableExecutorCore {
                     )
                   : execution.runOutput,
               onChildrenFinishedProcessingStatus: 'processed',
-              onChildrenFinishedProcessingFinishedAt: now,
             },
           },
           execution,
@@ -1756,7 +1759,6 @@ export class DurableExecutorCore {
                   status: 'finalize_failed',
                   error: finalizeError,
                   onChildrenFinishedProcessingStatus: 'processed',
-                  onChildrenFinishedProcessingFinishedAt: now,
                 },
               },
               execution,
@@ -1773,7 +1775,6 @@ export class DurableExecutorCore {
                     this.maxSerializedOutputDataSize,
                   ),
                   onChildrenFinishedProcessingStatus: 'processed',
-                  onChildrenFinishedProcessingFinishedAt: now,
                 },
               },
               execution,
@@ -1799,7 +1800,6 @@ export class DurableExecutorCore {
               executionId,
             },
             onChildrenFinishedProcessingStatus: 'processed',
-            onChildrenFinishedProcessingFinishedAt: now,
           },
           childrenTaskExecutionsToInsertIfAnyUpdated: [
             createTaskExecutionStorageValue({
@@ -1814,7 +1814,6 @@ export class DurableExecutorCore {
               },
               taskId: finalizeTaskInternal.id,
               executionId,
-              isSleepingTask: false,
               retryOptions: finalizeTaskInternal.retryOptions,
               sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
               timeoutMs: finalizeTaskInternal.timeoutMs,
@@ -1895,7 +1894,6 @@ export class DurableExecutorCore {
           filters: { isFinished: true },
           update: {
             closeStatus: 'closed',
-            closedAt: now,
           },
         },
         execution,
@@ -2027,45 +2025,53 @@ export class DurableExecutorCore {
    */
   async retryExpiredTaskExecutionsSingleBatch(): Promise<boolean> {
     let now = Date.now()
-    const updatedCount1 = await this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(now, {
-      isSleepingTask: false,
-      expiresAtLessThan: now,
-      update: {
-        status: 'ready',
-        error: convertDurableExecutionErrorToStorageValue(
-          DurableExecutionError.nonRetryable('Task execution expired'),
-        ),
-        startAt: now,
+    const updatedCount1 = await this.storage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(
+      now,
+      {
+        status: 'running',
+        isSleepingTask: false,
+        expiresAtLessThan: now,
+        update: {
+          status: 'ready',
+          error: convertDurableExecutionErrorToStorageValue(
+            DurableExecutionError.nonRetryable('Task execution expired'),
+          ),
+          startAt: now,
+        },
+        limit: this.retryExpiredTaskExecutionsBatchSize,
       },
-      limit: this.retryExpiredTaskExecutionsBatchSize,
-    })
+    )
 
     this.logger.debug(`Retrying ${updatedCount1} expired running task executions`)
 
     now = Date.now()
-    const updatedCount2 = await this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(now, {
-      isSleepingTask: true,
-      expiresAtLessThan: now,
-      update: {
-        status: 'timed_out',
-        error: convertDurableExecutionErrorToStorageValue(new DurableExecutionTimedOutError()),
-        startAt: now,
+    const updatedCount2 = await this.storage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(
+      now,
+      {
+        status: 'running',
+        isSleepingTask: true,
+        expiresAtLessThan: now,
+        update: {
+          status: 'timed_out',
+          error: convertDurableExecutionErrorToStorageValue(new DurableExecutionTimedOutError()),
+          startAt: now,
+        },
+        limit: this.retryExpiredTaskExecutionsBatchSize,
       },
-      limit: this.retryExpiredTaskExecutionsBatchSize,
-    })
+    )
 
     this.logger.debug(`Timing out ${updatedCount2} expired sleeping task executions`)
 
-    const updatedCount3 = await this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(now, {
-      isSleepingTask: true,
-      expiresAtLessThan: now,
-      update: {
-        status: 'timed_out',
-        error: convertDurableExecutionErrorToStorageValue(new DurableExecutionTimedOutError()),
-        startAt: now,
+    const updatedCount3 = await this.storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
+      now,
+      {
+        onChildrenFinishedProcessingExpiresAtLessThan: now,
+        update: {
+          onChildrenFinishedProcessingStatus: 'idle',
+        },
+        limit: this.retryExpiredTaskExecutionsBatchSize,
       },
-      limit: this.retryExpiredTaskExecutionsBatchSize,
-    })
+    )
 
     this.logger.debug(
       `Retrying ${updatedCount3} expired on children finished processing task executions`,

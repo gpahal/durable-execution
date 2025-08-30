@@ -36,7 +36,7 @@ import {
  * - index(status, startAt)
  * - index(status, onChildrenFinishedProcessingStatus, activeChildrenCount, updatedAt)
  * - index(closeStatus, updatedAt)
- * - index(isSleepingTask, expiresAt)
+ * - index(status, isSleepingTask, expiresAt)
  * - index(onChildrenFinishedProcessingExpiresAt)
  * - index(closeExpiresAt)
  * - index(executorId, needsPromiseCancellation, updatedAt)
@@ -199,13 +199,15 @@ export type TaskExecutionsStorage = {
    * task executions that were updated. The task executions are ordered by `expiresAt` ascending.
    *
    * @param request - The request to update the task executions.
+   * @param request.status - The status of the task executions to update.
    * @param request.isSleepingTask - The is sleeping task of the task executions to update.
    * @param request.expiresAtLessThan - The expires at less than of the task executions to update.
    * @param request.update - The update object.
    * @param request.limit - The maximum number of task executions to update.
    * @returns The number of task executions that were updated.
    */
-  updateByIsSleepingTaskAndExpiresAtLessThan: (request: {
+  updateByStatusAndIsSleepingTaskAndExpiresAtLessThan: (request: {
+    status: TaskExecutionStatus
     isSleepingTask: boolean
     expiresAtLessThan: number
     update: TaskExecutionStorageUpdate
@@ -436,6 +438,14 @@ export type TaskExecutionStorageValue = {
    */
   expiresAt?: number
   /**
+   * The time the task execution waiting for children starts.
+   */
+  waitingForChildrenStartedAt?: number
+  /**
+   * The time the task execution waiting for finalize starts.
+   */
+  waitingForFinalizeStartedAt?: number
+  /**
    * The time the task execution finished. Set on finish.
    */
   finishedAt?: number
@@ -529,7 +539,6 @@ export function createTaskExecutionStorageValue({
   parent,
   taskId,
   executionId,
-  isSleepingTask,
   sleepingTaskUniqueId,
   retryOptions,
   sleepMsBeforeRun,
@@ -542,7 +551,6 @@ export function createTaskExecutionStorageValue({
   parent?: ParentTaskExecutionSummary
   taskId: string
   executionId: string
-  isSleepingTask: boolean
   sleepingTaskUniqueId?: string
   retryOptions: TaskRetryOptions
   sleepMsBeforeRun: number
@@ -550,13 +558,14 @@ export function createTaskExecutionStorageValue({
   areChildrenSequential?: boolean
   input: string
 }): TaskExecutionStorageValue {
+  const isSleepingTask = sleepingTaskUniqueId != null
   const value: TaskExecutionStorageValue = {
     root,
     parent,
     taskId,
     executionId,
     isSleepingTask,
-    sleepingTaskUniqueId: isSleepingTask ? (sleepingTaskUniqueId ?? '') : undefined,
+    sleepingTaskUniqueId,
     retryOptions,
     sleepMsBeforeRun,
     timeoutMs,
@@ -605,20 +614,17 @@ export type TaskExecutionStorageUpdate = {
   error?: DurableExecutionErrorStorageValue
   retryAttempts?: number
   startAt?: number
-  startedAt?: number
   expiresAt?: number
 
   children?: ReadonlyArray<TaskExecutionSummary>
   activeChildrenCount?: number
   onChildrenFinishedProcessingStatus?: TaskExecutionOnChildrenFinishedProcessingStatus
   onChildrenFinishedProcessingExpiresAt?: number
-  onChildrenFinishedProcessingFinishedAt?: number
 
   finalize?: TaskExecutionSummary
 
   closeStatus?: TaskExecutionCloseStatus
   closeExpiresAt?: number
-  closedAt?: number
 
   needsPromiseCancellation?: boolean
 
@@ -626,10 +632,16 @@ export type TaskExecutionStorageUpdate = {
   isFinished?: boolean
   unsetRunOutput?: boolean
   unsetError?: boolean
+  startedAt?: number
+  unsetStartedAt?: boolean
   unsetExpiresAt?: boolean
+  waitingForChildrenStartedAt?: number
+  waitingForFinalizeStartedAt?: number
   finishedAt?: number
   unsetOnChildrenFinishedProcessingExpiresAt?: boolean
+  onChildrenFinishedProcessingFinishedAt?: number
   unsetCloseExpiresAt?: boolean
+  closedAt?: number
   updatedAt: number
 }
 
@@ -640,6 +652,8 @@ export type TaskExecutionStorageUpdate = {
  *
  * @param execution - The task execution storage value to update.
  * @param update - The update to apply.
+ * @param updateExpiresAtWithStartedAt - The expiresAt field will be set to the sum of the
+ *   startedAt field and the timeoutMs field.
  * @returns The updated task execution storage value.
  *
  * @category Storage
@@ -647,6 +661,7 @@ export type TaskExecutionStorageUpdate = {
 export function applyTaskExecutionStorageUpdate(
   execution: TaskExecutionStorageValue,
   update: TaskExecutionStorageUpdate,
+  updateExpiresAtWithStartedAt?: number,
 ): TaskExecutionStorageValue {
   for (const key in update) {
     switch (key) {
@@ -667,6 +682,13 @@ export function applyTaskExecutionStorageUpdate(
       case 'unsetError': {
         if (update.unsetError) {
           execution.error = undefined
+        }
+
+        break
+      }
+      case 'unsetStartedAt': {
+        if (update.unsetStartedAt) {
+          execution.startedAt = undefined
         }
 
         break
@@ -698,6 +720,10 @@ export function applyTaskExecutionStorageUpdate(
         execution[key] = update[key]
       }
     }
+  }
+
+  if (updateExpiresAtWithStartedAt) {
+    execution.expiresAt = updateExpiresAtWithStartedAt + execution.timeoutMs
   }
   return execution
 }
@@ -1009,14 +1035,15 @@ export class TaskExecutionsStorageWithMutex implements TaskExecutionsStorage {
     return await this.withMutex(() => this.storage.updateByCloseStatusAndReturn(request))
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThan(request: {
+  async updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(request: {
+    status: TaskExecutionStatus
     isSleepingTask: boolean
     expiresAtLessThan: number
     update: TaskExecutionStorageUpdate
     limit: number
   }): Promise<number> {
     return await this.withMutex(() =>
-      this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(request),
+      this.storage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(request),
     )
   }
 
@@ -1306,13 +1333,14 @@ export class TaskExecutionsStorageWithBatching implements TaskExecutionsStorage 
     return await this.storage.updateByCloseStatusAndReturn(request)
   }
 
-  async updateByIsSleepingTaskAndExpiresAtLessThan(request: {
+  async updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(request: {
+    status: TaskExecutionStatus
     isSleepingTask: boolean
     expiresAtLessThan: number
     update: TaskExecutionStorageUpdate
     limit: number
   }): Promise<number> {
-    return await this.storage.updateByIsSleepingTaskAndExpiresAtLessThan(request)
+    return await this.storage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(request)
   }
 
   async updateByOnChildrenFinishedProcessingExpiresAtLessThan(request: {
