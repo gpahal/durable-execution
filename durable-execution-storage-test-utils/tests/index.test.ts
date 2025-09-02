@@ -50,7 +50,7 @@ describe('index', () => {
 
   it('should handle runStorageBench with invalid options', { timeout: 120_000 }, async () => {
     await expect(
-      runStorageBench('in memory', () => new InMemoryTaskExecutionsStorage({}), {
+      runStorageBench('in memory', () => new InMemoryTaskExecutionsStorage(), {
         executorsCount: 0,
       }),
     ).rejects.toThrow('Executors count must be at least 1')

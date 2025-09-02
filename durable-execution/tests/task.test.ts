@@ -863,6 +863,72 @@ describe('simpleTask', () => {
     )
   })
 
+  it('should complete sequential tasks with input schema', async () => {
+    let executionCount = 0
+    const taskString = executor
+      .inputSchema(z.object({ name: z.string() }).transform((data) => data.name))
+      .task({
+        id: 'string',
+        timeoutMs: 1000,
+        run: (ctx, input) => {
+          executionCount++
+          return input
+        },
+      })
+    const taskNumber = executor.validateInput(Number).task({
+      id: 'number',
+      timeoutMs: 1000,
+      run: (ctx, input) => {
+        executionCount++
+        return input
+      },
+    })
+    const taskBoolean = executor.task({
+      id: 'boolean',
+      timeoutMs: 1000,
+      run: (ctx, input: number) => {
+        executionCount++
+        return input > 10 ? true : false
+      },
+    })
+
+    const task = executor.sequentialTasks('seq', [taskString, taskNumber, taskBoolean])
+
+    let handle = await executor.enqueueTask(task, { name: '10.5' })
+
+    let finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(executionCount).toBe(3)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('seq')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe(true)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+
+    handle = await executor.enqueueTask(task, { name: '9.5' })
+
+    finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(executionCount).toBe(6)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('seq')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe(false)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
   it('should fail with empty sequential tasks', () => {
     // @ts-expect-error - Testing invalid input
     expect(() => executor.sequentialTasks('seq', [])).toThrow('No tasks provided')
@@ -1091,6 +1157,39 @@ describe('simpleTask', () => {
 
     const pollingTask = executor.pollingTask('polling', pollTask, 10)
     const handle = await executor.enqueueTask(pollingTask)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(executionCount).toBe(3)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.output.isSuccess).toBe(true)
+    assert(finishedExecution.output.isSuccess)
+    expect(finishedExecution.output.output).toBe('poll_output')
+  })
+
+  it('should complete polling task with input schema', async () => {
+    let executionCount = 0
+    const pollTask = executor.inputSchema(z.object({ name: z.string() })).task({
+      id: 'poll',
+      timeoutMs: 1000,
+      run: (_, input) => {
+        executionCount++
+        return executionCount < 3
+          ? {
+              isDone: false,
+            }
+          : {
+              isDone: true,
+              output: input.name,
+            }
+      },
+    })
+
+    const pollingTask = executor.pollingTask('polling', pollTask, 10)
+    const handle = await executor.enqueueTask(pollingTask, { name: 'poll_output' })
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,

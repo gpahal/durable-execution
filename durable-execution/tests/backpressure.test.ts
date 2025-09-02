@@ -57,7 +57,7 @@ describe('backpressure', () => {
       expect(runningCount).toBe(3)
       expect(executor.getRunningTaskExecutionIds().size).toBe(3)
 
-      const stats = executor.getExecutorStats()
+      const stats = executor.getStats()
       expect(stats.currConcurrentTaskExecutions).toBe(3)
       expect(stats.maxConcurrentTaskExecutions).toBe(3)
       completedPromises.shift()!()
@@ -101,7 +101,7 @@ describe('backpressure', () => {
 
       await sleep(250)
 
-      const stats = executor.getExecutorStats()
+      const stats = executor.getStats()
       expect(stats.currConcurrentTaskExecutions).toBeLessThanOrEqual(3)
       expect(stats.maxTaskExecutionsPerBatch).toBe(2)
 
@@ -284,7 +284,7 @@ describe('backpressure', () => {
         run: () => 'result',
       })
 
-      const stats = executor.getExecutorStats()
+      const stats = executor.getStats()
 
       expect(stats).toEqual({
         expireLeewayMs: 60_000,
@@ -320,7 +320,7 @@ describe('backpressure', () => {
 
       await sleep(250)
 
-      let stats = executor.getExecutorStats()
+      let stats = executor.getStats()
       expect(stats.currConcurrentTaskExecutions).toBe(3)
 
       completionSignals.shift()!()
@@ -328,14 +328,14 @@ describe('backpressure', () => {
 
       await sleep(250)
 
-      stats = executor.getExecutorStats()
+      stats = executor.getStats()
       expect(stats.currConcurrentTaskExecutions).toBe(1)
 
       completionSignals.shift()!()
 
       await sleep(250)
 
-      stats = executor.getExecutorStats()
+      stats = executor.getStats()
       expect(stats.currConcurrentTaskExecutions).toBe(0)
     })
   })

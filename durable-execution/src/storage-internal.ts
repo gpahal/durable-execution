@@ -303,7 +303,10 @@ class BatchRequester<T, R> {
   addRequest(request: T): Promise<R> {
     const promise = new Promise<R>((resolve, reject) => {
       this.pendingRequests.push({ data: request, resolve, reject })
-      if (this.wakeupBackgroundProcess != null && this.pendingRequests.length >= this.batchSize) {
+      if (
+        this.wakeupBackgroundProcess != null &&
+        this.pendingRequests.length >= 0.75 * this.batchSize
+      ) {
         this.wakeupBackgroundProcess()
       }
     })
@@ -313,7 +316,7 @@ class BatchRequester<T, R> {
 
 export const zStorageMaxRetryAttempts = z
   .number()
-  .min(1)
+  .min(0)
   .max(10)
   .nullish()
   .transform((val) => val ?? 1)
@@ -341,14 +344,23 @@ export class TaskExecutionsStorageInternal {
   private readonly logger: LoggerInternal
   private readonly storage: TaskExecutionsStorage
   private readonly enableBatching: boolean
+  private readonly enableStats: boolean
   private readonly baseBackgroundProcessIntraBatchSleepMs: number
   private readonly maxRetryAttempts: number
   private readonly shutdownSignal: CancelSignal
   private readonly cancelShutdownSignal: () => void
   private backgroundProcessesPromises: Set<Promise<void>>
   private backgroundPromises: Set<Promise<void>>
-  readonly timingStats: Map<string, { count: number; meanMs: number }>
-  readonly perSecondStorageCallCounts: Map<number, number>
+
+  private readonly callsDurationsStats: Map<string, { callsCount: number; meanDurationMs: number }>
+  private readonly perSecondCallsCountsStats: {
+    totalSeconds: number
+    totalCallsCount: number
+    meanCallsCount: number
+    maxCallsCount: number
+    recentPerSecondCallsCounts: Map<number, number>
+  }
+
   private readonly insertManyBatchRequester:
     | BatchRequester<ReadonlyArray<TaskExecutionStorageValue>, void>
     | undefined
@@ -401,13 +413,15 @@ export class TaskExecutionsStorageInternal {
     logger: LoggerInternal,
     storage: TaskExecutionsStorage,
     enableBatching: boolean,
-    baseBackgroundProcessIntraBatchSleepMs?: number,
+    enableStats: boolean,
+    baseBackgroundProcessIntraBatchSleepMs: number,
     maxRetryAttempts?: number,
   ) {
     this.logger = logger
     this.storage = storage
     this.enableBatching = enableBatching
-    this.baseBackgroundProcessIntraBatchSleepMs = baseBackgroundProcessIntraBatchSleepMs ?? 10
+    this.enableStats = enableStats
+    this.baseBackgroundProcessIntraBatchSleepMs = baseBackgroundProcessIntraBatchSleepMs
     this.maxRetryAttempts = validateStorageMaxRetryAttempts(maxRetryAttempts)
 
     const [cancelSignal, cancel] = createCancelSignal()
@@ -416,8 +430,14 @@ export class TaskExecutionsStorageInternal {
 
     this.backgroundProcessesPromises = new Set()
     this.backgroundPromises = new Set()
-    this.timingStats = new Map()
-    this.perSecondStorageCallCounts = new Map()
+    this.callsDurationsStats = new Map()
+    this.perSecondCallsCountsStats = {
+      totalSeconds: 0,
+      totalCallsCount: 0,
+      meanCallsCount: 0,
+      maxCallsCount: 0,
+      recentPerSecondCallsCounts: new Map(),
+    }
 
     if (this.enableBatching) {
       const addBackgroundPromise = (promise: Promise<void>) => {
@@ -522,81 +542,87 @@ export class TaskExecutionsStorageInternal {
     promise.finally(() => this.backgroundPromises.delete(promise))
   }
 
+  private getMergedRecentPerSecondCallsCountsStats(now: number) {
+    const currSecond = Math.floor(now / 1000)
+    const filteredEntries = [
+      ...this.perSecondCallsCountsStats.recentPerSecondCallsCounts.entries(),
+    ].filter(([key]) => {
+      return key < currSecond
+    })
+    if (filteredEntries.length === 0) {
+      return {
+        totalSeconds: this.perSecondCallsCountsStats.totalSeconds,
+        totalCallsCount: this.perSecondCallsCountsStats.totalCallsCount,
+        meanCallsCount: this.perSecondCallsCountsStats.meanCallsCount,
+        maxCallsCount: this.perSecondCallsCountsStats.maxCallsCount,
+        recentPerSecondCallsCounts: new Map(
+          this.perSecondCallsCountsStats.recentPerSecondCallsCounts,
+        ),
+      }
+    }
+
+    const totalValue = filteredEntries.reduce((acc, [, value]) => acc + value, 0)
+    const maxValue = Math.max(...filteredEntries.map(([, value]) => value))
+    const prevTotalSeconds = this.perSecondCallsCountsStats.totalSeconds
+    const meanCallsCount =
+      (this.perSecondCallsCountsStats.meanCallsCount * prevTotalSeconds + totalValue) /
+      (prevTotalSeconds + filteredEntries.length)
+    return {
+      totalSeconds: prevTotalSeconds + filteredEntries.length,
+      totalCallsCount: this.perSecondCallsCountsStats.totalCallsCount + totalValue,
+      meanCallsCount,
+      maxCallsCount: Math.max(this.perSecondCallsCountsStats.maxCallsCount, maxValue),
+      recentPerSecondCallsCounts: new Map(
+        [...this.perSecondCallsCountsStats.recentPerSecondCallsCounts.entries()].filter(
+          ([key]) => key >= currSecond,
+        ),
+      ),
+    }
+  }
+
+  private mergeRecentPerSecondCallsCountsStats(now: number) {
+    const mergedRecentPerSecondCallsCountsStats = this.getMergedRecentPerSecondCallsCountsStats(now)
+    this.perSecondCallsCountsStats.totalSeconds = mergedRecentPerSecondCallsCountsStats.totalSeconds
+    this.perSecondCallsCountsStats.totalCallsCount =
+      mergedRecentPerSecondCallsCountsStats.totalCallsCount
+    this.perSecondCallsCountsStats.meanCallsCount =
+      mergedRecentPerSecondCallsCountsStats.meanCallsCount
+    this.perSecondCallsCountsStats.maxCallsCount =
+      mergedRecentPerSecondCallsCountsStats.maxCallsCount
+    this.perSecondCallsCountsStats.recentPerSecondCallsCounts =
+      mergedRecentPerSecondCallsCountsStats.recentPerSecondCallsCounts
+  }
+
   /**
-   * Run a function with timing stats.
+   * Run a function with stats.
    *
-   * @param key - The key to use for the timing stats.
+   * @param key - The key to use for the stats.
    * @param fn - The function to run.
    * @returns The result of the function.
    */
-  private async withTimingStats<T>(key: string, fn: () => T | Promise<T>): Promise<T> {
+  private async withStats<T>(key: string, fn: () => T | Promise<T>): Promise<T> {
+    const now = Date.now()
     const start = performance.now()
     const result = await fn()
     const durationMs = performance.now() - start
 
-    if (!this.timingStats.has(key)) {
-      this.timingStats.set(key, { count: 0, meanMs: 0 })
+    if (!this.callsDurationsStats.has(key)) {
+      this.callsDurationsStats.set(key, { callsCount: 0, meanDurationMs: 0 })
     }
-    const timingStat = this.timingStats.get(key)!
-    timingStat.count++
-    timingStat.meanMs = (timingStat.meanMs * (timingStat.count - 1) + durationMs) / timingStat.count
+    const callsDurationsStat = this.callsDurationsStats.get(key)!
+    const prevCallsCount = callsDurationsStat.callsCount
+    const prevMeanDurationMs = callsDurationsStat.meanDurationMs
+    callsDurationsStat.callsCount++
+    callsDurationsStat.meanDurationMs =
+      (prevMeanDurationMs * prevCallsCount + durationMs) / (prevCallsCount + 1)
+
+    const currSecond = Math.floor(now / 1000)
+    this.perSecondCallsCountsStats.recentPerSecondCallsCounts.set(
+      currSecond,
+      (this.perSecondCallsCountsStats.recentPerSecondCallsCounts.get(currSecond) ?? 0) + 1,
+    )
+    this.mergeRecentPerSecondCallsCountsStats(currSecond)
     return result
-  }
-
-  private addStorageCalls(count = 1): void {
-    const second = Math.floor(Date.now() / 1000)
-    this.perSecondStorageCallCounts.set(
-      second,
-      (this.perSecondStorageCallCounts.get(second) ?? 0) + count,
-    )
-  }
-
-  startBackgroundProcesses(): void {
-    this.throwIfShutdown()
-
-    if (!this.enableBatching) {
-      return
-    }
-
-    this.logger.info('Starting storage background processes')
-    this.addBackgroundProcessesPromise(
-      this.startBackgroundProcessesInternal().catch((error) => {
-        console.error('Storage background processes exited with error', error)
-      }),
-    )
-    this.logger.info('Started storage background processes')
-  }
-
-  private async startBackgroundProcessesInternal(): Promise<void> {
-    await Promise.all(
-      this.batchRequesters.map((batchRequester) => batchRequester.runBackgroundProcess()),
-    )
-  }
-
-  async shutdown(): Promise<void> {
-    const startTime = Date.now()
-    this.logger.debug('Shutting down storage')
-    if (!this.shutdownSignal.isCancelled()) {
-      this.cancelShutdownSignal()
-    }
-    this.logger.debug('Storage cancelled')
-
-    if (this.backgroundProcessesPromises.size > 0 || this.backgroundPromises.size > 0) {
-      this.logger.debug('Stopping storage background processes and promises')
-      await Promise.all(this.backgroundProcessesPromises)
-      this.backgroundProcessesPromises.clear()
-      await Promise.all(this.backgroundPromises)
-      this.backgroundPromises.clear()
-    }
-    this.logger.debug('Storage background processes and promises stopped')
-
-    this.logger.debug('Stopping batch requesters')
-    for (const batchRequester of this.batchRequesters) {
-      batchRequester.shutdown()
-    }
-    this.logger.debug('Batch requesters stopped')
-    const durationMs = Date.now() - startTime
-    this.logger.debug(`Storage shut down in ${(durationMs / 1000).toFixed(2)}s`)
   }
 
   private getResolvedMaxRetryAttempts(maxRetryAttempts?: number): number {
@@ -613,14 +639,12 @@ export class TaskExecutionsStorageInternal {
   ): Promise<T> {
     const resolvedMaxRetryAttempts = this.getResolvedMaxRetryAttempts(maxRetryAttempts)
     if (resolvedMaxRetryAttempts <= 0) {
-      this.addStorageCalls()
-      return await this.withTimingStats(fnName, fn)
+      return await (this.enableStats ? this.withStats(fnName, fn) : fn())
     }
 
     for (let attempt = 0; ; attempt++) {
       try {
-        this.addStorageCalls()
-        return await this.withTimingStats(fnName, fn)
+        return await (this.enableStats ? this.withStats(fnName, fn) : fn())
       } catch (error) {
         const durableExecutionError =
           error instanceof DurableExecutionError
@@ -1051,5 +1075,79 @@ export class TaskExecutionsStorageInternal {
         }),
       maxRetryAttempts,
     )
+  }
+
+  getCallsDurationsStats(): Map<string, { callsCount: number; meanDurationMs: number }> {
+    return new Map(
+      [...this.callsDurationsStats.entries()].map(([key, value]) => [
+        key,
+        { callsCount: value.callsCount, meanDurationMs: value.meanDurationMs },
+      ]),
+    )
+  }
+
+  getPerSecondCallsCountsStats(): {
+    totalSeconds: number
+    totalCallsCount: number
+    meanCallsCount: number
+    maxCallsCount: number
+  } {
+    const perSecondCallsCountsStats = this.getMergedRecentPerSecondCallsCountsStats(
+      Date.now() + 5000,
+    )
+    return {
+      totalSeconds: perSecondCallsCountsStats.totalSeconds,
+      totalCallsCount: perSecondCallsCountsStats.totalCallsCount,
+      meanCallsCount: perSecondCallsCountsStats.meanCallsCount,
+      maxCallsCount: perSecondCallsCountsStats.maxCallsCount,
+    }
+  }
+
+  private async startBackgroundProcessesInternal(): Promise<void> {
+    await Promise.all(
+      this.batchRequesters.map((batchRequester) => batchRequester.runBackgroundProcess()),
+    )
+  }
+
+  startBackgroundProcesses(): void {
+    this.throwIfShutdown()
+
+    if (!this.enableBatching) {
+      return
+    }
+
+    this.logger.debug('Starting storage background processes')
+    this.addBackgroundProcessesPromise(
+      this.startBackgroundProcessesInternal().catch((error) => {
+        console.error('Storage background processes exited with error', error)
+      }),
+    )
+    this.logger.debug('Started storage background processes')
+  }
+
+  async shutdown(): Promise<void> {
+    const startTime = Date.now()
+    this.logger.debug('Shutting down storage')
+    if (!this.shutdownSignal.isCancelled()) {
+      this.cancelShutdownSignal()
+    }
+    this.logger.debug('Storage cancelled')
+
+    if (this.backgroundProcessesPromises.size > 0 || this.backgroundPromises.size > 0) {
+      this.logger.debug('Stopping storage background processes and promises')
+      await Promise.all(this.backgroundProcessesPromises)
+      this.backgroundProcessesPromises.clear()
+      await Promise.all(this.backgroundPromises)
+      this.backgroundPromises.clear()
+    }
+    this.logger.debug('Stopped storage background processes and promises')
+
+    this.logger.debug('Stopping batch requesters')
+    for (const batchRequester of this.batchRequesters) {
+      batchRequester.shutdown()
+    }
+    this.logger.debug('Batch requesters stopped')
+    const durationMs = Date.now() - startTime
+    this.logger.debug(`Storage shut down in ${(durationMs / 1000).toFixed(2)}s`)
   }
 }

@@ -2637,6 +2637,7 @@ export async function runStorageBench<TStorage extends TaskExecutionsStorage>(
           new DurableExecutor(finalStorages[idx]!, {
             logLevel: 'error',
             enableStorageBatching,
+            enableStorageStats: true,
             storageBatchingBackgroundProcessIntraBatchSleepMs,
           }),
       )
@@ -2759,64 +2760,43 @@ export async function runStorageBench<TStorage extends TaskExecutionsStorage>(
         )
         const endTime = performance.now()
 
-        const finalTimingStats: Record<string, { count: number; meanMs: number }> = {}
-        const finalPerSecondCallCounts = new Map<number, number>()
-        for (const executor of executors) {
-          const timingStats = executor.getStorageTimingStats()
-          for (const [key, value] of Object.entries(timingStats)) {
-            if (!finalTimingStats[key]) {
-              finalTimingStats[key] = { count: 0, meanMs: 0 }
+        const finalCallsDurationsStats = new Map<
+          string,
+          { callsCount: number; meanDurationMs: number }
+        >()
+        for (const [i, executor] of executors.entries()) {
+          const callsDurationsStats = executor.getStorageCallsDurationsStats()
+          for (const [key, value] of callsDurationsStats.entries()) {
+            if (!finalCallsDurationsStats.has(key)) {
+              finalCallsDurationsStats.set(key, { callsCount: 0, meanDurationMs: 0 })
             }
-            const prevCount = finalTimingStats[key].count
-            const prevMeanMs = finalTimingStats[key].meanMs
-            finalTimingStats[key].count = prevCount + value.count
-            finalTimingStats[key].meanMs =
-              (prevMeanMs * prevCount + value.meanMs * value.count) / (prevCount + value.count)
+            const finalCallsDurationsStatsValue = finalCallsDurationsStats.get(key)!
+            const prevCallsCount = finalCallsDurationsStatsValue.callsCount
+            const prevMeanDurationMs = finalCallsDurationsStatsValue.meanDurationMs
+            finalCallsDurationsStatsValue.callsCount = prevCallsCount + value.callsCount
+            finalCallsDurationsStatsValue.meanDurationMs =
+              (prevMeanDurationMs * prevCallsCount + value.meanDurationMs * value.callsCount) /
+              (prevCallsCount + value.callsCount)
           }
 
-          const perSecondCallCountStats = executor.getStoragePerSecondCallCounts()
-          for (const [key, value] of perSecondCallCountStats.entries()) {
-            if (value === 0) {
-              continue
-            }
-            finalPerSecondCallCounts.set(key, (finalPerSecondCallCounts.get(key) || 0) + value)
-          }
-        }
-
-        const timingStatsArr = Object.entries(finalTimingStats).map(([key, value]) => ({
-          key,
-          count: value.count,
-          meanMs: value.meanMs,
-        }))
-        timingStatsArr.sort((a, b) => b.count - a.count)
-        console.log(`=> Timing stats for ${name} storage:`)
-        for (const timingStat of timingStatsArr) {
+          const perSecondCallsCountsStats = executor.getStoragePerSecondCallsCountsStats()
           console.log(
-            `  ${timingStat.key}:\n    [${timingStat.count}] ${timingStat.meanMs.toFixed(2)}ms`,
+            `=> Per second call counts stats for ${name} storage for executor ${i + 1}:\n      total: ${perSecondCallsCountsStats.totalCallsCount}\n       mean: ${perSecondCallsCountsStats.meanCallsCount}\n        max: ${perSecondCallsCountsStats.maxCallsCount}`,
           )
         }
 
-        const perSecondCallCounts = [...finalPerSecondCallCounts.values()].sort()
-        let perSecondCallCountsStats = {
-          total: 0,
-          mean: 0,
-          median: 0,
-          min: 0,
-          max: 0,
+        const timingStatsArr = [...finalCallsDurationsStats.entries()].map(([key, value]) => ({
+          key,
+          callsCount: value.callsCount,
+          meanDurationMs: value.meanDurationMs,
+        }))
+        timingStatsArr.sort((a, b) => b.callsCount - a.callsCount)
+        console.log(`=> Timing stats for ${name} storage:`)
+        for (const timingStat of timingStatsArr) {
+          console.log(
+            `  ${timingStat.key}:\n    [${timingStat.callsCount}] ${timingStat.meanDurationMs.toFixed(2)}ms`,
+          )
         }
-        if (perSecondCallCounts.length > 0) {
-          const total = perSecondCallCounts.reduce((acc, curr) => acc + curr, 0)
-          perSecondCallCountsStats = {
-            total,
-            mean: total / perSecondCallCounts.length,
-            median: perSecondCallCounts[Math.floor(perSecondCallCounts.length / 2)]!,
-            min: perSecondCallCounts[0]!,
-            max: perSecondCallCounts.at(-1)!,
-          }
-        }
-        console.log(
-          `=> Per second call counts stats for ${name} storage:\n       total: ${perSecondCallCountsStats.total}\n        mean: ${perSecondCallCountsStats.mean.toFixed(2)}\n      median: ${perSecondCallCountsStats.median.toFixed(2)}\n         min: ${perSecondCallCountsStats.min.toFixed(2)}\n         max: ${perSecondCallCountsStats.max.toFixed(2)}`,
-        )
 
         console.log(
           `=> Completed ${iterationName} for ${name} storage: ${(endTime - startTime).toFixed(2)}ms`,

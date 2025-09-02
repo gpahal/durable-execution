@@ -25,7 +25,7 @@ Task executions follow this lifecycle (see `TaskExecutionStatus`):
 
 ### Storage Layer
 
-Implemented via [storage.ts](mdc:durable-execution/src/storage.ts) interface:
+Implemented via `storage.ts` interface:
 
 - `TaskExecutionsStorage` - Core persistence interface
 - `TaskExecutionStorageValue` - Serializable execution state
@@ -34,7 +34,7 @@ Implemented via [storage.ts](mdc:durable-execution/src/storage.ts) interface:
 
 ### Executor Engine
 
-The [DurableExecutor](mdc:durable-execution/src/executor.ts) orchestrates:
+The `DurableExecutor` (`src/executor.ts`) orchestrates:
 
 ```ts
 import { DurableExecutor } from 'durable-execution'
@@ -64,7 +64,7 @@ await executor.shutdown()
 
 ```ts
 const emailTask = executor
-  .inputSchema(z.object({ to: z.string(), subject: z.string() }))
+  .inputSchema(Schema.standardSchemaV1(Schema.Struct({ to: Schema.String, subject: Schema.String })))
   .task({
     id: 'sendEmail',
     retryOptions: {
@@ -170,7 +170,7 @@ const pollTask = executor.task<{},{ isDone: boolean; output?: number }>({
   run: () => ({ isDone: Math.random() > 0.8, output: 42 }),
 })
 
-// maxAttempts=20, fixed sleep=100ms between attempts
+// maxAttempts=20, sleepMs=100ms between attempts
 const pollingTask = executor.pollingTask('polling', pollTask, 20, 100)
 
 const pollingHandle = await executor.enqueueTask(pollingTask)
@@ -221,7 +221,7 @@ const executor = new DurableExecutor(storage, { serializer })
 
 ### Testing
 
-- Use [durable-execution-storage-test-utils](mdc:durable-execution-storage-test-utils/) for storage validation
+- Use `durable-execution-storage-test-utils` for storage validation
 - Test with realistic concurrency scenarios (250+ tasks)
 - Verify parent-child task relationships and finalization
 - Test retry mechanisms and timeout handling
@@ -230,7 +230,7 @@ const executor = new DurableExecutor(storage, { serializer })
 
 ### In-Memory Storage
 
-Default implementation in [in-memory-storage.ts](mdc:durable-execution/src/in-memory-storage.ts):
+Default implementation in `in-memory-storage.ts`:
 
 ```ts
 import { InMemoryTaskExecutionsStorage } from 'durable-execution'
@@ -247,7 +247,7 @@ const executor = new DurableExecutor(storage)
 
 **Production Storage Options**:
 
-- **[durable-execution-storage-drizzle](mdc:durable-execution-storage-drizzle/)**: PostgreSQL, MySQL, SQLite support with optimized indexes and transactions
+- **durable-execution-storage-drizzle**: PostgreSQL, MySQL, SQLite support with optimized indexes and transactions
 
 ## Integration Points
 

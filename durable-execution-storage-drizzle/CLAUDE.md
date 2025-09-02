@@ -15,7 +15,7 @@ pnpm test              # Run all tests
 pnpm test-coverage     # Run tests with coverage report
 
 # Type checking and linting
-pnpm type-check        # TypeScript type checking + typedoc validation
+pnpm type-check        # TypeScript type checking + TypeDoc validation
 pnpm lint              # Run ESLint
 pnpm lint-fix          # Auto-fix linting issues
 

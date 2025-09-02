@@ -12,6 +12,7 @@ import {
 
 describe('validateStorageMaxRetryAttempts', () => {
   it('should handle valid max retry attempts', () => {
+    expect(validateStorageMaxRetryAttempts(0)).toBe(0)
     expect(validateStorageMaxRetryAttempts(1)).toBe(1)
     expect(validateStorageMaxRetryAttempts(10)).toBe(10)
   })
@@ -22,7 +23,7 @@ describe('validateStorageMaxRetryAttempts', () => {
   })
 
   it('should handle invalid max retry attempts', () => {
-    expect(() => validateStorageMaxRetryAttempts(0)).toThrow('Invalid storage max retry attempts')
+    expect(() => validateStorageMaxRetryAttempts(-1)).toThrow('Invalid storage max retry attempts')
     expect(() => validateStorageMaxRetryAttempts(11)).toThrow('Invalid storage max retry attempts')
   })
 })

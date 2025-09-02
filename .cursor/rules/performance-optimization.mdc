@@ -10,7 +10,7 @@ description: Performance optimization patterns and monitoring for durable execut
 const executor = new DurableExecutor(storage, {
   maxConcurrentTaskExecutions: 100,           // Parallelism cap
   maxTaskExecutionsPerBatch: 25,              // Batch size per storage scan
-  backgroundProcessIntraBatchSleepMs: 250,    // Backoff between batches
+  backgroundProcessIntraBatchSleepMs: 500,    // Backoff between batches
   expireLeewayMs: 150_000,                    // Expiry recovery window
   storageMaxRetryAttempts: 3,                 // Storage retry wrapper
 })

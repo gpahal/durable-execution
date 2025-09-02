@@ -63,6 +63,7 @@ function convertTaskOptionsOptionsInternal(
 
 function convertSleepingTaskOptionsOptionsInternal(
   taskOptions: SleepingTaskOptions<unknown>,
+  validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
 ): TaskOptionsInternal {
   return {
     taskType: 'sleepingTask',
@@ -70,7 +71,7 @@ function convertSleepingTaskOptionsOptionsInternal(
     retryOptions: undefined,
     sleepMsBeforeRun: undefined,
     timeoutMs: taskOptions.timeoutMs,
-    validateInputFn: undefined,
+    validateInputFn,
     areChildrenSequential: false,
     runParent: () => {
       throw DurableExecutionError.any('Sleeping tasks cannot be run', false, true)
@@ -298,13 +299,17 @@ export class TaskInternal {
     )
   }
 
-  static fromSleepingTaskOptions<TOutput>(
+  static fromSleepingTaskOptions<TInput, TOutput>(
     taskInternalsMap: Map<string, TaskInternal>,
     taskOptions: SleepingTaskOptions<TOutput>,
+    validateInputFn?: (id: string, input: TInput) => string | Promise<string>,
   ): TaskInternal {
     return TaskInternal.fromTaskOptionsInternal(
       taskInternalsMap,
-      convertSleepingTaskOptionsOptionsInternal(taskOptions),
+      convertSleepingTaskOptionsOptionsInternal(
+        taskOptions,
+        validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
+      ),
     )
   }
 
@@ -342,7 +347,6 @@ export class TaskInternal {
     if (this.validateInputFn) {
       input = await this.validateInputFn(this.id, input)
     }
-
     const [timeoutCancelSignal, clearTimeout] = createTimeoutCancelSignal(timeoutMs)
     const result = await createCancellablePromiseCustom(
       createCancellablePromiseCustom(

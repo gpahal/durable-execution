@@ -1,10 +1,7 @@
 import superjson from 'superjson'
-import z from 'zod'
 
 import { createMutex, type Mutex } from '@gpahal/std/promises'
 
-import { DurableExecutionError } from './errors'
-import { LoggerInternal, zLogger, zLogLevel, type Logger, type LogLevel } from './logger'
 import {
   applyTaskExecutionStorageUpdate,
   type TaskExecutionCloseStatus,
@@ -15,11 +12,6 @@ import {
   type TaskExecutionStorageValue,
 } from './storage'
 import type { TaskExecutionStatus } from './task'
-
-const zInMemoryTaskExecutionsStorageOptions = z.object({
-  logger: zLogger.nullish(),
-  logLevel: zLogLevel.nullish(),
-})
 
 /**
  * In-memory implementation of TaskExecutionsStorage for development and testing.
@@ -33,31 +25,14 @@ const zInMemoryTaskExecutionsStorageOptions = z.object({
  * @category Storage
  */
 export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
-  private logger: LoggerInternal
   private taskExecutionsMap: Map<string, TaskExecutionStorageValue>
   private sleepingTaskExecutionsMap: Map<string, string>
   private mutex: Mutex
 
   /**
    * Create an in-memory task executions storage.
-   *
-   * @param options - The options for the in-memory task executions storage.
-   * @param options.logger - The logger to use for the in-memory task executions storage. If not provided, a
-   *   default logger will be used.
-   * @param options.logLevel - The log level to use for the in-memory task executions storage. If not provided,
-   *   the default log level will be used.
    */
-  constructor(options: { logger?: Logger; logLevel?: LogLevel } = {}) {
-    const parsedOptions = zInMemoryTaskExecutionsStorageOptions.safeParse(options)
-    if (!parsedOptions.success) {
-      throw DurableExecutionError.nonRetryable(
-        `Invalid options: ${z.prettifyError(parsedOptions.error)}`,
-      )
-    }
-
-    const { logger, logLevel } = parsedOptions.data
-
-    this.logger = new LoggerInternal(logger, logLevel)
+  constructor() {
     this.taskExecutionsMap = new Map()
     this.sleepingTaskExecutionsMap = new Map()
     this.mutex = createMutex()
@@ -100,15 +75,15 @@ export class InMemoryTaskExecutionsStorage implements TaskExecutionsStorage {
   }
 
   async logAllTaskExecutions(): Promise<void> {
-    this.logger.info('------\n\nAll task executions:')
+    console.log('------\n\nAll task executions:')
     await this.withMutex(() => {
       for (const execution of this.taskExecutionsMap.values()) {
-        this.logger.info(
+        console.log(
           `Task execution: ${execution.executionId}\nJSON: ${JSON.stringify(execution, null, 2)}\n\n`,
         )
       }
     })
-    this.logger.info('------')
+    console.log('------')
   }
 
   private insertTaskExecutionsInternal(executions: ReadonlyArray<TaskExecutionStorageValue>): void {

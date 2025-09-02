@@ -136,45 +136,6 @@ describe('InMemoryTaskExecutionsStorage', () => {
     }
   })
 
-  it('should handle logAllTaskExecutions', async () => {
-    let infoStr = ''
-    const logger = {
-      debug: () => {
-        // Do nothing
-      },
-      info: (message: string) => {
-        infoStr += message
-      },
-      error: () => {
-        // Do nothing
-      },
-    }
-
-    const newStorage = new InMemoryTaskExecutionsStorage({ logger })
-
-    await executor.shutdown()
-    executor = new DurableExecutor(newStorage, {
-      logLevel: 'error',
-      backgroundProcessIntraBatchSleepMs: 50,
-    })
-    executor.startBackgroundProcesses()
-
-    const testTask = executor.task({
-      id: 'test',
-      timeoutMs: 10_000,
-      run: () => 'result',
-    })
-
-    const handle = await executor.enqueueTask(testTask)
-    const finishedExecution = await handle.waitAndGetFinishedExecution({
-      pollingIntervalMs: 100,
-    })
-
-    await newStorage.logAllTaskExecutions()
-    expect(infoStr).toContain(finishedExecution.taskId)
-    expect(infoStr).toContain(finishedExecution.executionId)
-  })
-
   it('should handle deleteById for sleeping task', async () => {
     const sleepingTask = executor.sleepingTask<string>({
       id: 'sleepingTask',

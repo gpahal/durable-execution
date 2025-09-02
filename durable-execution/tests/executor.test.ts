@@ -21,6 +21,7 @@ describe('executor', () => {
     executor = new DurableExecutor(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
+      enableStorageStats: true,
     })
     executor.startBackgroundProcesses()
   })
@@ -719,19 +720,19 @@ describe('executor', () => {
     await executor.enqueueTask(testTask)
     await sleep(500)
 
-    const stats = executor.getStorageTimingStats()
+    const stats = executor.getStorageCallsDurationsStats()
     expect(stats).toBeDefined()
     expect(typeof stats).toBe('object')
 
-    const statKeys = Object.keys(stats)
+    const statKeys = [...stats.keys()]
     expect(statKeys.length).toBeGreaterThan(0)
 
     for (const key of statKeys) {
-      expect(stats[key]).toBeDefined()
-      expect(typeof stats[key]!.count).toBe('number')
-      expect(typeof stats[key]!.meanMs).toBe('number')
-      expect(stats[key]!.count).toBeGreaterThan(0)
-      expect(stats[key]!.meanMs).toBeGreaterThanOrEqual(0)
+      expect(stats.get(key)).toBeDefined()
+      expect(typeof stats.get(key)!.callsCount).toBe('number')
+      expect(typeof stats.get(key)!.meanDurationMs).toBe('number')
+      expect(stats.get(key)!.callsCount).toBeGreaterThan(0)
+      expect(stats.get(key)!.meanDurationMs).toBeGreaterThanOrEqual(0)
     }
   })
 
@@ -745,24 +746,21 @@ describe('executor', () => {
     await executor.enqueueTask(testTask)
     await sleep(500)
 
-    const callCounts = executor.getStoragePerSecondCallCounts()
-    expect(callCounts).toBeDefined()
-    expect(callCounts instanceof Map).toBe(true)
+    const perSecondCallsCountsStats = executor.getStoragePerSecondCallsCountsStats()
+    expect(perSecondCallsCountsStats).toBeDefined()
+    expect(typeof perSecondCallsCountsStats.totalSeconds).toBe('number')
+    expect(typeof perSecondCallsCountsStats.totalCallsCount).toBe('number')
+    expect(typeof perSecondCallsCountsStats.meanCallsCount).toBe('number')
+    expect(typeof perSecondCallsCountsStats.maxCallsCount).toBe('number')
 
-    expect(callCounts.size).toBeGreaterThan(0)
-
-    for (const [timestamp, count] of callCounts.entries()) {
-      expect(typeof timestamp).toBe('number')
-      expect(typeof count).toBe('number')
-      expect(count).toBeGreaterThan(0)
-    }
+    expect(perSecondCallsCountsStats.totalCallsCount).toBeGreaterThan(0)
   })
 })
 
 class TestDurableExecutor extends DurableExecutor {
   testRunBackgroundProcess(
     processName: string,
-    singleBatchProcessFn: () => Promise<boolean>,
+    singleBatchProcessFn: () => Promise<{ hasMore: boolean }>,
     sleepMultiplier?: number,
   ): Promise<void> {
     return this.runBackgroundProcess(processName, singleBatchProcessFn, sleepMultiplier)
@@ -789,7 +787,7 @@ describe('runBackgroundProcess', () => {
 
   it('should handle shutdown signal', async () => {
     const promise = executor.testRunBackgroundProcess('test', () => {
-      return Promise.resolve(false)
+      return Promise.resolve({ hasMore: true })
     })
 
     await sleep(500)
@@ -802,7 +800,7 @@ describe('runBackgroundProcess', () => {
     const startTimes: Array<number> = []
     const promise = executor.testRunBackgroundProcess('test', () => {
       startTimes.push(Date.now())
-      return Promise.resolve(true)
+      return Promise.resolve({ hasMore: false })
     })
 
     await sleep(500)
@@ -834,7 +832,7 @@ describe('runBackgroundProcess', () => {
         throw new Error(`Consecutive error ${errorCount}`)
       }
 
-      return Promise.resolve(true)
+      return Promise.resolve({ hasMore: false })
     })
 
     await sleep(1500)
@@ -855,7 +853,7 @@ describe('runBackgroundProcess', () => {
       if (errorCount <= 3) {
         throw new Error(`Background process error ${errorCount}`)
       }
-      return Promise.resolve(true)
+      return Promise.resolve({ hasMore: false })
     })
 
     await sleep(400)
@@ -873,7 +871,7 @@ describe('runBackgroundProcess', () => {
       if (errorCount <= 10) {
         throw new Error(`Consecutive error ${errorCount}`)
       }
-      return true
+      return { hasMore: false }
     })
 
     await sleep(500)
@@ -906,13 +904,13 @@ describe('runBackgroundProcess', () => {
       logger: mockLogger,
     })
 
-    let callCount = 0
+    let executionCount = 0
     const promise = testExecutor.testRunBackgroundProcess('test', () => {
-      callCount++
-      if (callCount === 1) {
+      executionCount++
+      if (executionCount === 1) {
         throw new Error('Simulated error in background process loop')
       }
-      return Promise.resolve(true)
+      return Promise.resolve({ hasMore: false })
     })
 
     await sleep(200)

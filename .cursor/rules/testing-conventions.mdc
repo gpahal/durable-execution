@@ -15,10 +15,12 @@ globs: *.test.ts,*.test.tsx,tests/**
 
 ```text
 tests/
-├── unit/              # Unit tests for individual components
-├── integration/       # Integration tests with real dependencies
-├── examples.test.ts   # Example usage patterns and documentation
-└── *.test.ts         # Test files co-located by feature
+├── examples.test.ts       # Example usage patterns and documentation
+├── executor.test.ts       # Core executor functionality tests
+├── storage.test.ts        # Storage interface tests
+├── parent-task.test.ts    # Parent-child task orchestration
+├── concurrent-scenarios.test.ts  # Race conditions and high concurrency
+└── *.test.ts             # Other test files organized by feature
 ```
 
 ## Testing Patterns
@@ -62,7 +64,7 @@ expect(done.status).toBe('completed')
 
 // Polling task: completes when inner poll returns isDone
 const pollBody = executor.task({ id: 'pollBody', timeoutMs: 1000, run: () => ({ isDone: true, output: 1 }) })
-const polling = executor.pollingTask('polling', pollBody, 3, 50)
+const polling = executor.pollingTask('polling', pollBody, 3, 50) // 3 attempts, 50ms between attempts
 const pollingResult = await (await executor.enqueueTask(polling)).waitAndGetFinishedExecution()
 expect(pollingResult.status).toBe('completed')
 ```
@@ -122,7 +124,6 @@ Create reusable task definitions for testing:
 const createTestTask = <TInput, TOutput>(id: string, overrides?: Partial<Task<TInput, TOutput>>) => ({
   id,
   retryOptions: { maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0, delayMultiplier: 1 },
-  sleepMsBeforeRun: 0,
   timeoutMs: 1000,
   ...overrides
 })
@@ -158,7 +159,8 @@ expect(execution.output).toEqual(expectedOutput)
 expect(execution.error).toBeUndefined()
 
 // Storage assertions
-const storedExecution = await storage.getById(execution.executionId, {})
+const storedExecutions = await storage.getManyById([{ executionId: execution.executionId }])
+const storedExecution = storedExecutions[0]
 expect(storedExecution).toBeDefined()
 expect(storedExecution).toMatchObject(expectedStorageValue)
 ```

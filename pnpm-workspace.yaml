@@ -22,15 +22,15 @@ catalogs:
   dev:
     '@changesets/cli': ^2.29.6
     '@edge-runtime/vm': ^5.0.0
-    '@gpahal/eslint-config': ^0.0.117
+    '@gpahal/eslint-config': ^0.0.119
     '@gpahal/prettier-config': ^0.0.32
     '@gpahal/std-node': ^0.0.36
     '@gpahal/tsconfig': ^0.0.20
     '@ianvs/prettier-plugin-sort-imports': ^4.7.0
     '@libsql/client': ^0.15.14
-    '@orpc/client': ^1.8.5
-    '@orpc/contract': ^1.8.5
-    '@orpc/server': ^1.8.5
+    '@orpc/client': ^1.8.6
+    '@orpc/contract': ^1.8.6
+    '@orpc/server': ^1.8.6
     '@testcontainers/mysql': ^11.5.1
     '@testcontainers/postgresql': ^11.5.1
     '@types/node': ^24.3.0
@@ -40,7 +40,7 @@ catalogs:
     drizzle-kit: ^0.31.4
     drizzle-orm: ^0.44.5
     eslint: ^9.34.0
-    mysql2: ^3.14.3
+    mysql2: ^3.14.4
     npm-run-all2: ^8.0.4
     pg: ^8.16.3
     premove: ^4.0.0
@@ -50,7 +50,7 @@ catalogs:
     tsup: ^8.5.0
     tsx: ^4.20.5
     turbo: ^2.5.6
-    typedoc: ^0.28.11
+    typedoc: ^0.28.12
     typedoc-plugin-mermaid: ^1.12.0
     typescript: ^5.9.2
     vitest: ^3.2.4
