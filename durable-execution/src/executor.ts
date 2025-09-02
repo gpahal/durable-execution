@@ -40,6 +40,7 @@ import {
   childTask,
   FINISHED_TASK_EXECUTION_STATUSES,
   type AnyTask,
+  type ChildTask,
   type DefaultParentTaskOutput,
   type FinishedChildTaskExecution,
   type FinishedTaskExecution,
@@ -436,10 +437,18 @@ export class DurableExecutor {
   /**
    * Throw an error if the durable executor is shutdown.
    */
-  throwIfShutdown(): void {
+  private throwIfShutdown(): void {
     if (this.shutdownSignal.isCancelled()) {
       throw DurableExecutionError.nonRetryable('Durable executor shutdown')
     }
+  }
+
+  private serializeInputInternal<T>(input: T): string {
+    return this.serializer.serialize(input, this.maxSerializedInputDataSize)
+  }
+
+  private serializeOutputInternal<T>(output: T): string {
+    return this.serializer.serialize(output, this.maxSerializedOutputDataSize)
   }
 
   private taskInternal<TRunInput = undefined, TInput = TRunInput, TOutput = unknown>(
@@ -1121,10 +1130,7 @@ export class DurableExecutor {
         sleepMsBeforeRun: finalEnqueueOptions.sleepMsBeforeRun,
         timeoutMs: finalEnqueueOptions.timeoutMs,
         areChildrenSequential: task.areChildrenSequential,
-        input: this.serializer.serialize(
-          task.isSleepingTask ? undefined : input,
-          this.maxSerializedInputDataSize,
-        ),
+        input: this.serializeInputInternal(task.isSleepingTask ? undefined : input),
       }),
     ])
 
@@ -1204,7 +1210,7 @@ export class DurableExecutor {
       status: options.status,
     }
     if (options.status === 'completed') {
-      update.output = this.serializer.serialize(options.output)
+      update.output = this.serializeOutputInternal(options.output)
     } else if (options.status === 'failed') {
       update.error = convertDurableExecutionErrorToStorageValue(
         DurableExecutionError.nonRetryable(getErrorMessage(options.error)),
@@ -1434,267 +1440,274 @@ export class DurableExecutor {
         execution.timeoutMs,
         cancelSignal,
       )
-      const runOutput = result.output
-      const childrenTasks = result.children
 
-      if (childrenTasks.length > this.maxChildrenPerTaskExecution) {
-        throw DurableExecutionError.nonRetryable(
-          `Parent task ${taskInternal.id} cannot spawn more than ${this.maxChildrenPerTaskExecution} children tasks. Attempted: ${childrenTasks.length}`,
-        )
-      }
+      await this.onRunTaskExecutionWithContextResult(execution, taskInternal, result)
+    } catch (error) {
+      await this.onRunTaskExecutionWithContextError(execution, error)
+    }
+  }
 
-      const now = Date.now()
-      if (childrenTasks.length === 0) {
-        if (taskInternal.finalize) {
-          if (isFunction(taskInternal.finalize)) {
-            let finalizeOutput: unknown
-            let finalizeError: DurableExecutionErrorStorageValue | undefined
-            try {
-              finalizeOutput = await taskInternal.finalize({
-                output: runOutput,
-                children: [],
-              })
-            } catch (error) {
-              finalizeError = convertDurableExecutionErrorToStorageValue(
-                DurableExecutionError.nonRetryable(getErrorMessage(error)),
-              )
-            }
+  private async onRunTaskExecutionWithContextResult(
+    execution: TaskExecutionStorageValue,
+    taskInternal: TaskInternal,
+    result: {
+      output: unknown
+      children: ReadonlyArray<ChildTask>
+    },
+  ): Promise<void> {
+    const runOutput = result.output
+    const childrenTasks = result.children
 
-            await (finalizeError
-              ? this.storage.updateById(
-                  now,
-                  {
-                    executionId: execution.executionId,
-                    filters: { status: 'running' },
-                    update: {
-                      status: 'finalize_failed',
-                      error: finalizeError,
-                      waitingForFinalizeStartedAt: now,
-                      children: [],
-                    },
-                  },
-                  execution,
-                )
-              : this.storage.updateById(
-                  now,
-                  {
-                    executionId: execution.executionId,
-                    filters: { status: 'running' },
-                    update: {
-                      status: 'completed',
-                      output: this.serializer.serialize(
-                        finalizeOutput,
-                        this.maxSerializedOutputDataSize,
-                      ),
-                      waitingForFinalizeStartedAt: now,
-                      children: [],
-                    },
-                  },
-                  execution,
-                ))
-          } else {
-            const finalizeTaskInternal = taskInternal.finalize as TaskInternal
-            if (finalizeTaskInternal.taskType === 'sleepingTask') {
-              throw DurableExecutionError.nonRetryable(
-                `Finalize task ${finalizeTaskInternal.id} cannot be a sleeping task`,
-              )
-            }
+    if (childrenTasks.length > this.maxChildrenPerTaskExecution) {
+      throw DurableExecutionError.nonRetryable(
+        `Parent task ${taskInternal.id} cannot spawn more than ${this.maxChildrenPerTaskExecution} children tasks. Attempted: ${childrenTasks.length}`,
+      )
+    }
 
-            const finalizeTaskInput = {
+    const now = Date.now()
+    if (childrenTasks.length === 0) {
+      if (taskInternal.finalize) {
+        if (isFunction(taskInternal.finalize)) {
+          let finalizeOutput: unknown
+          let finalizeError: DurableExecutionErrorStorageValue | undefined
+          try {
+            finalizeOutput = await taskInternal.finalize({
               output: runOutput,
               children: [],
-            }
-            const executionId = generateTaskExecutionId()
-            await this.storage.updateByIdAndInsertChildrenIfUpdated(
-              now,
-              {
-                executionId: execution.executionId,
-                filters: { status: 'running' },
-                update: {
-                  status: 'waiting_for_finalize',
-                  waitingForChildrenStartedAt: now,
-                  children: [],
-                  finalize: {
-                    taskId: finalizeTaskInternal.id,
-                    executionId,
-                  },
-                },
-                childrenTaskExecutionsToInsertIfAnyUpdated: [
-                  createTaskExecutionStorageValue({
-                    now,
-                    root: execution.root ?? {
-                      taskId: execution.taskId,
-                      executionId: execution.executionId,
-                    },
-                    parent: {
-                      taskId: execution.taskId,
-                      executionId: execution.executionId,
-                      indexInParentChildren: 0,
-                      isOnlyChildOfParent: false,
-                      isFinalizeOfParent: true,
-                    },
-                    taskId: finalizeTaskInternal.id,
-                    executionId,
-                    retryOptions: finalizeTaskInternal.retryOptions,
-                    sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
-                    timeoutMs: finalizeTaskInternal.timeoutMs,
-                    areChildrenSequential: finalizeTaskInternal.areChildrenSequential,
-                    input: this.serializer.serialize(
-                      finalizeTaskInput,
-                      this.maxSerializedInputDataSize,
-                    ),
-                  }),
-                ],
-              },
-              execution,
+            })
+          } catch (error) {
+            finalizeError = convertDurableExecutionErrorToStorageValue(
+              DurableExecutionError.nonRetryable(getErrorMessage(error)),
             )
           }
-        } else {
-          const output =
-            taskInternal.taskType === 'parentTask'
-              ? this.serializer.serialize(
-                  {
-                    output: runOutput,
+
+          await (finalizeError
+            ? this.storage.updateById(
+                now,
+                {
+                  executionId: execution.executionId,
+                  filters: { status: 'running' },
+                  update: {
+                    status: 'finalize_failed',
+                    error: finalizeError,
+                    waitingForFinalizeStartedAt: now,
                     children: [],
                   },
-                  this.maxSerializedOutputDataSize,
-                )
-              : this.serializer.serialize(runOutput, this.maxSerializedOutputDataSize)
-          await this.storage.updateById(
+                },
+                execution,
+              )
+            : this.storage.updateById(
+                now,
+                {
+                  executionId: execution.executionId,
+                  filters: { status: 'running' },
+                  update: {
+                    status: 'completed',
+                    output: this.serializeOutputInternal(finalizeOutput),
+                    waitingForFinalizeStartedAt: now,
+                    children: [],
+                  },
+                },
+                execution,
+              ))
+        } else {
+          const finalizeTaskInternal = taskInternal.finalize as TaskInternal
+          if (finalizeTaskInternal.taskType === 'sleepingTask') {
+            throw DurableExecutionError.nonRetryable(
+              `Finalize task ${finalizeTaskInternal.id} cannot be a sleeping task`,
+            )
+          }
+
+          const finalizeTaskInput = {
+            output: runOutput,
+            children: [],
+          }
+          const executionId = generateTaskExecutionId()
+          await this.storage.updateByIdAndInsertChildrenIfUpdated(
             now,
             {
               executionId: execution.executionId,
               filters: { status: 'running' },
               update: {
-                status: 'completed',
-                output,
+                status: 'waiting_for_finalize',
+                waitingForChildrenStartedAt: now,
                 children: [],
+                finalize: {
+                  taskId: finalizeTaskInternal.id,
+                  executionId,
+                },
               },
+              childrenTaskExecutionsToInsertIfAnyUpdated: [
+                createTaskExecutionStorageValue({
+                  now,
+                  root: execution.root ?? {
+                    taskId: execution.taskId,
+                    executionId: execution.executionId,
+                  },
+                  parent: {
+                    taskId: execution.taskId,
+                    executionId: execution.executionId,
+                    indexInParentChildren: 0,
+                    isOnlyChildOfParent: false,
+                    isFinalizeOfParent: true,
+                  },
+                  taskId: finalizeTaskInternal.id,
+                  executionId,
+                  retryOptions: finalizeTaskInternal.retryOptions,
+                  sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
+                  timeoutMs: finalizeTaskInternal.timeoutMs,
+                  areChildrenSequential: finalizeTaskInternal.areChildrenSequential,
+                  input: this.serializeInputInternal(finalizeTaskInput),
+                }),
+              ],
             },
             execution,
           )
         }
       } else {
-        const childrenStorageValues: Array<TaskExecutionStorageValue> = []
-        const children: Array<TaskExecutionSummary> = []
-        for (const [index, child] of childrenTasks.entries()) {
-          const childTaskInternal = this.taskInternalsMap.get(child.task.id)
-          if (!childTaskInternal) {
-            throw new DurableExecutionNotFoundError(`Child task ${child.task.id} not found`)
-          }
-
-          if (!taskInternal.areChildrenSequential || index === 0) {
-            const isChildSleepingTask = childTaskInternal.taskType === 'sleepingTask'
-            const childSleepingTaskUniqueId = isChildSleepingTask
-              ? this.getSleepingTaskUniqueIdInternal(child.task.id, child.input)
-              : undefined
-            const executionId = generateTaskExecutionId()
-            const finalEnqueueOptions = overrideTaskEnqueueOptions(childTaskInternal, child.options)
-            childrenStorageValues.push(
-              createTaskExecutionStorageValue({
-                now,
-                root: execution.root ?? {
-                  taskId: execution.taskId,
-                  executionId: execution.executionId,
-                },
-                parent: {
-                  taskId: execution.taskId,
-                  executionId: execution.executionId,
-                  indexInParentChildren: index,
-                  isOnlyChildOfParent: childrenTasks.length === 1,
-                  isFinalizeOfParent: false,
-                },
-                taskId: child.task.id,
-                executionId,
-                sleepingTaskUniqueId: childSleepingTaskUniqueId,
-                retryOptions: finalEnqueueOptions.retryOptions,
-                sleepMsBeforeRun: finalEnqueueOptions.sleepMsBeforeRun,
-                timeoutMs: finalEnqueueOptions.timeoutMs,
-                areChildrenSequential: childTaskInternal.areChildrenSequential,
-                input: this.serializer.serialize(
-                  isChildSleepingTask ? undefined : child.input,
-                  this.maxSerializedInputDataSize,
-                ),
-              }),
-            )
-            children.push({
-              taskId: child.task.id,
-              executionId,
-            })
-          } else {
-            children.push({
-              taskId: child.task.id,
-              executionId: 'dummy',
-            })
-          }
-        }
-
-        await this.storage.updateByIdAndInsertChildrenIfUpdated(
+        const output =
+          taskInternal.taskType === 'parentTask'
+            ? this.serializeOutputInternal({
+                output: runOutput,
+                children: [],
+              })
+            : this.serializeOutputInternal(runOutput)
+        await this.storage.updateById(
           now,
           {
             executionId: execution.executionId,
             filters: { status: 'running' },
             update: {
-              status: 'waiting_for_children',
-              runOutput: this.serializer.serialize(runOutput, this.maxSerializedOutputDataSize),
-              children: children,
-              activeChildrenCount: childrenStorageValues.length,
+              status: 'completed',
+              output,
+              children: [],
             },
-            childrenTaskExecutionsToInsertIfAnyUpdated: childrenStorageValues,
           },
           execution,
         )
       }
-    } catch (error) {
-      const durableExecutionError =
-        error instanceof DurableExecutionError
-          ? error
-          : DurableExecutionError.retryable(getErrorMessage(error))
+    } else {
+      const childrenStorageValues: Array<TaskExecutionStorageValue> = []
+      const children: Array<TaskExecutionSummary> = []
+      for (const [index, child] of childrenTasks.entries()) {
+        const childTaskInternal = this.taskInternalsMap.get(child.task.id)
+        if (!childTaskInternal) {
+          throw new DurableExecutionNotFoundError(`Child task ${child.task.id} not found`)
+        }
 
-      const now = Date.now()
-      let update: TaskExecutionStorageUpdateInternal
-
-      // Check if the error is retryable and the retry attempts are less than the maximum retry
-      // attempts. If so, update the execution status to ready.
-      if (
-        durableExecutionError.isRetryable &&
-        execution.retryAttempts < execution.retryOptions.maxAttempts
-      ) {
-        const baseDelayMs = execution.retryOptions.baseDelayMs ?? 0
-        const delayMultiplier = execution.retryOptions.delayMultiplier ?? 1
-        const maxDelayMs = execution.retryOptions.maxDelayMs
-        let delayMs = baseDelayMs
-        if (execution.retryAttempts > 0 && delayMs > 0) {
-          delayMs *= Math.pow(delayMultiplier, execution.retryAttempts)
-        }
-        if (maxDelayMs != null) {
-          delayMs = Math.min(delayMs, maxDelayMs)
-        }
-        update = {
-          status: 'ready',
-          error: convertDurableExecutionErrorToStorageValue(durableExecutionError),
-          retryAttempts: execution.retryAttempts + 1,
-          startAt: now + delayMs,
-        }
-      } else {
-        const status =
-          error instanceof DurableExecutionTimedOutError
-            ? 'timed_out'
-            : error instanceof DurableExecutionCancelledError
-              ? 'cancelled'
-              : 'failed'
-        update = {
-          status,
-          error: convertDurableExecutionErrorToStorageValue(durableExecutionError),
+        if (!taskInternal.areChildrenSequential || index === 0) {
+          const isChildSleepingTask = childTaskInternal.taskType === 'sleepingTask'
+          const childSleepingTaskUniqueId = isChildSleepingTask
+            ? this.getSleepingTaskUniqueIdInternal(child.task.id, child.input)
+            : undefined
+          const executionId = generateTaskExecutionId()
+          const finalEnqueueOptions = overrideTaskEnqueueOptions(childTaskInternal, child.options)
+          childrenStorageValues.push(
+            createTaskExecutionStorageValue({
+              now,
+              root: execution.root ?? {
+                taskId: execution.taskId,
+                executionId: execution.executionId,
+              },
+              parent: {
+                taskId: execution.taskId,
+                executionId: execution.executionId,
+                indexInParentChildren: index,
+                isOnlyChildOfParent: childrenTasks.length === 1,
+                isFinalizeOfParent: false,
+              },
+              taskId: child.task.id,
+              executionId,
+              sleepingTaskUniqueId: childSleepingTaskUniqueId,
+              retryOptions: finalEnqueueOptions.retryOptions,
+              sleepMsBeforeRun: finalEnqueueOptions.sleepMsBeforeRun,
+              timeoutMs: finalEnqueueOptions.timeoutMs,
+              areChildrenSequential: childTaskInternal.areChildrenSequential,
+              input: this.serializeInputInternal(isChildSleepingTask ? undefined : child.input),
+            }),
+          )
+          children.push({
+            taskId: child.task.id,
+            executionId,
+          })
+        } else {
+          children.push({
+            taskId: child.task.id,
+            executionId: 'dummy',
+          })
         }
       }
 
-      await this.storage.updateById(
+      await this.storage.updateByIdAndInsertChildrenIfUpdated(
         now,
-        { executionId: execution.executionId, filters: { status: 'running' }, update },
+        {
+          executionId: execution.executionId,
+          filters: { status: 'running' },
+          update: {
+            status: 'waiting_for_children',
+            runOutput: this.serializeOutputInternal(runOutput),
+            children: children,
+            activeChildrenCount: childrenStorageValues.length,
+          },
+          childrenTaskExecutionsToInsertIfAnyUpdated: childrenStorageValues,
+        },
         execution,
       )
     }
+  }
+
+  private async onRunTaskExecutionWithContextError(
+    execution: TaskExecutionStorageValue,
+    error: unknown,
+  ): Promise<void> {
+    const durableExecutionError =
+      error instanceof DurableExecutionError
+        ? error
+        : DurableExecutionError.retryable(getErrorMessage(error))
+
+    const now = Date.now()
+    let update: TaskExecutionStorageUpdateInternal
+
+    // Check if the error is retryable and the retry attempts are less than the maximum retry
+    // attempts. If so, update the execution status to ready.
+    if (
+      durableExecutionError.isRetryable &&
+      execution.retryAttempts < execution.retryOptions.maxAttempts
+    ) {
+      const baseDelayMs = execution.retryOptions.baseDelayMs ?? 0
+      const delayMultiplier = execution.retryOptions.delayMultiplier ?? 1
+      const maxDelayMs = execution.retryOptions.maxDelayMs
+      let delayMs = baseDelayMs
+      if (execution.retryAttempts > 0 && delayMs > 0) {
+        delayMs *= Math.pow(delayMultiplier, execution.retryAttempts)
+      }
+      if (maxDelayMs != null) {
+        delayMs = Math.min(delayMs, maxDelayMs)
+      }
+      update = {
+        status: 'ready',
+        error: convertDurableExecutionErrorToStorageValue(durableExecutionError),
+        retryAttempts: execution.retryAttempts + 1,
+        startAt: now + delayMs,
+      }
+    } else {
+      const status =
+        error instanceof DurableExecutionTimedOutError
+          ? 'timed_out'
+          : error instanceof DurableExecutionCancelledError
+            ? 'cancelled'
+            : 'failed'
+      update = {
+        status,
+        error: convertDurableExecutionErrorToStorageValue(durableExecutionError),
+      }
+    }
+
+    await this.storage.updateById(
+      now,
+      { executionId: execution.executionId, filters: { status: 'running' }, update },
+      execution,
+    )
   }
 
   /**
@@ -1745,298 +1758,279 @@ export class DurableExecutor {
       )
     }
 
-    const processExecution = async (execution: TaskExecutionStorageValue): Promise<void> => {
-      const taskInternal = this.taskInternalsMap.get(execution.taskId)
-      if (!taskInternal) {
-        await markExecutionAsFailed(
+    for (const execution of executions) {
+      this.backgroundPromisePool.addPromise(
+        this.processOnChildrenFinishedTaskExecutionsSingleExecution(
           execution,
-          new DurableExecutionNotFoundError(`Task ${execution.taskId} not found`),
-        )
-        return
-      }
+          markExecutionAsFailed,
+        ),
+      )
+    }
+    return { hasMore: executions.length > 0 }
+  }
 
-      if (taskInternal.areChildrenSequential) {
-        const firstDummyChildIdx = (execution.children || []).findIndex(
-          (child) => child.executionId === 'dummy',
-        )
-        if (firstDummyChildIdx === 0) {
+  private async processOnChildrenFinishedTaskExecutionsSingleExecution(
+    execution: TaskExecutionStorageValue,
+    markExecutionAsFailed: (
+      execution: TaskExecutionStorageValue,
+      error: DurableExecutionError,
+      status?: 'failed' | 'finalize_failed',
+    ) => Promise<void>,
+  ): Promise<void> {
+    const taskInternal = this.taskInternalsMap.get(execution.taskId)
+    if (!taskInternal) {
+      await markExecutionAsFailed(
+        execution,
+        new DurableExecutionNotFoundError(`Task ${execution.taskId} not found`),
+      )
+      return
+    }
+
+    if (taskInternal.areChildrenSequential) {
+      await this.processOnChildrenFinishedTaskExecutionsSingleSequentialExecution(
+        execution,
+        markExecutionAsFailed,
+      )
+      return
+    }
+
+    let finalizeFn: ((input: DefaultParentTaskOutput) => Promise<unknown>) | undefined
+    let finalizeTaskInternal: TaskInternal | undefined
+    if (taskInternal.finalize) {
+      if (isFunction(taskInternal.finalize)) {
+        finalizeFn = taskInternal.finalize as (input: DefaultParentTaskOutput) => Promise<unknown>
+      } else {
+        finalizeTaskInternal = taskInternal.finalize as TaskInternal
+        if (finalizeTaskInternal?.taskType === 'sleepingTask') {
           await markExecutionAsFailed(
             execution,
-            DurableExecutionError.any(
-              `Sequential tasks ${execution.taskId} is in an invalid state`,
+            new DurableExecutionNotFoundError(
+              `Finalize task ${finalizeTaskInternal.id} cannot be a sleeping task`,
             ),
           )
           return
         }
+      }
+    }
 
-        if (firstDummyChildIdx > 0) {
-          const firstDummyChild = execution.children![firstDummyChildIdx]!
-          const childTaskInternal = this.taskInternalsMap.get(firstDummyChild.taskId)
-          if (!childTaskInternal) {
-            await markExecutionAsFailed(
-              execution,
-              new DurableExecutionNotFoundError(`Child task ${firstDummyChild.taskId} not found`),
-            )
-            return
-          }
+    let childrenTaskExecutionsForFinalize: Array<FinishedChildTaskExecution> = []
+    if (execution.children) {
+      let childrenTaskExecutions = await this.storage.getByParentExecutionId(execution.executionId)
+      const childrenTaskExecutionsMap = new Map(
+        childrenTaskExecutions.map((child) => [child.executionId, child]),
+      )
+      childrenTaskExecutions = execution.children
+        .map((child) => childrenTaskExecutionsMap.get(child.executionId))
+        .filter(Boolean) as Array<TaskExecutionStorageValue>
+      if (childrenTaskExecutions.length !== execution.children.length) {
+        await markExecutionAsFailed(
+          execution,
+          new DurableExecutionNotFoundError(
+            `Some children task executions not found: ${execution.children.length - childrenTaskExecutions.length}/${execution.children.length} not found`,
+          ),
+        )
+        return
+      }
 
-          const prevChildTaskExecution = await this.storage.getById({
-            executionId: execution.children![firstDummyChildIdx - 1]!.executionId,
-          })
-          if (!prevChildTaskExecution) {
-            await markExecutionAsFailed(
-              execution,
-              new DurableExecutionNotFoundError(
-                `Task at index ${firstDummyChildIdx - 1} not found`,
-              ),
-            )
-            return
-          }
-          if (prevChildTaskExecution.status !== 'completed') {
-            await markExecutionAsFailed(
-              execution,
-              DurableExecutionError.nonRetryable(
-                `Task at index ${firstDummyChildIdx - 1} failed: ${prevChildTaskExecution.error?.message || 'Unknown error'}`,
-              ),
-              'finalize_failed',
-            )
-            return
-          }
+      childrenTaskExecutionsForFinalize = childrenTaskExecutions.map(
+        (child) =>
+          ({
+            taskId: child.taskId,
+            executionId: child.executionId,
+            status: child.status,
+            output:
+              child.status === 'completed' && child.output
+                ? this.serializer.deserialize(child.output)
+                : undefined,
+            error:
+              child.status !== 'completed'
+                ? child.error ||
+                  convertDurableExecutionErrorToStorageValue(
+                    DurableExecutionError.nonRetryable(`Unknown error`),
+                  )
+                : undefined,
+          }) as FinishedChildTaskExecution,
+      )
+    }
 
-          const executionId = generateTaskExecutionId()
-          firstDummyChild.executionId = executionId
-          const isChildSleepingTask = childTaskInternal.taskType === 'sleepingTask'
-          const childSleepingTaskUniqueId = isChildSleepingTask
-            ? this.getSleepingTaskUniqueIdInternal(
-                childTaskInternal.id,
-                this.serializer.deserialize(prevChildTaskExecution.output!),
-              )
-            : undefined
-          const now = Date.now()
-          await this.storage.updateByIdAndInsertChildrenIfUpdated(
+    if (!finalizeFn && !finalizeTaskInternal) {
+      const now = Date.now()
+      await this.storage.updateById(
+        now,
+        {
+          executionId: execution.executionId,
+          filters: { status: 'waiting_for_children' },
+          update: {
+            status: 'completed',
+            output:
+              taskInternal.taskType === 'parentTask'
+                ? this.serializeOutputInternal({
+                    output: execution.runOutput
+                      ? this.serializer.deserialize(execution.runOutput)
+                      : undefined,
+                    children: childrenTaskExecutionsForFinalize,
+                  })
+                : execution.runOutput,
+            onChildrenFinishedProcessingStatus: 'processed',
+          },
+        },
+        execution,
+      )
+      return
+    }
+
+    const finalizeTaskInput = {
+      output: execution.runOutput ? this.serializer.deserialize(execution.runOutput) : undefined,
+      children: childrenTaskExecutionsForFinalize,
+    }
+    if (finalizeFn) {
+      let finalizeOutput: unknown
+      let finalizeError: DurableExecutionErrorStorageValue | undefined
+      try {
+        finalizeOutput = await finalizeFn(finalizeTaskInput)
+      } catch (error) {
+        finalizeError = convertDurableExecutionErrorToStorageValue(
+          DurableExecutionError.nonRetryable(getErrorMessage(error)),
+        )
+      }
+
+      const now = Date.now()
+      await (finalizeError
+        ? this.storage.updateById(
             now,
             {
               executionId: execution.executionId,
               filters: { status: 'waiting_for_children' },
               update: {
-                children: execution.children!,
-                activeChildrenCount: 1,
-                onChildrenFinishedProcessingStatus: 'idle',
+                status: 'finalize_failed',
+                error: finalizeError,
+                waitingForFinalizeStartedAt: now,
+                onChildrenFinishedProcessingStatus: 'processed',
               },
-              childrenTaskExecutionsToInsertIfAnyUpdated: [
-                createTaskExecutionStorageValue({
-                  now,
-                  root: execution.root,
-                  parent: {
-                    taskId: execution.taskId,
-                    executionId: execution.executionId,
-                    indexInParentChildren: firstDummyChildIdx,
-                    isOnlyChildOfParent: false,
-                    isFinalizeOfParent: false,
-                  },
-                  taskId: firstDummyChild.taskId,
-                  executionId,
-                  sleepingTaskUniqueId: childSleepingTaskUniqueId,
-                  retryOptions: childTaskInternal.retryOptions,
-                  sleepMsBeforeRun: childTaskInternal.sleepMsBeforeRun,
-                  timeoutMs: childTaskInternal.timeoutMs,
-                  areChildrenSequential: childTaskInternal.areChildrenSequential,
-                  input: isChildSleepingTask
-                    ? this.serializer.serialize(undefined, this.maxSerializedInputDataSize)
-                    : prevChildTaskExecution.output!,
-                }),
-              ],
             },
             execution,
           )
-        } else {
-          const prevChildTaskExecution = await this.storage.getById({
-            executionId: execution.children![execution.children!.length - 1]!.executionId,
-          })
-          if (!prevChildTaskExecution) {
-            await markExecutionAsFailed(
-              execution,
-              new DurableExecutionNotFoundError(
-                `Task at index ${execution.children!.length - 1} not found`,
-              ),
-            )
-            return
-          }
-          if (prevChildTaskExecution.status === 'completed') {
-            const now = Date.now()
-            await this.storage.updateById(
-              now,
-              {
-                executionId: execution.executionId,
-                filters: { status: 'waiting_for_children' },
-                update: {
-                  status: 'completed',
-                  output: prevChildTaskExecution.output,
-                  onChildrenFinishedProcessingStatus: 'processed',
-                },
+        : this.storage.updateById(
+            now,
+            {
+              executionId: execution.executionId,
+              filters: { status: 'waiting_for_children' },
+              update: {
+                status: 'completed',
+                output: this.serializeOutputInternal(finalizeOutput),
+                waitingForFinalizeStartedAt: now,
+                onChildrenFinishedProcessingStatus: 'processed',
               },
-              execution,
-            )
-          } else {
-            await markExecutionAsFailed(
-              execution,
-              DurableExecutionError.nonRetryable(
-                `Task at index ${firstDummyChildIdx - 1} failed: ${prevChildTaskExecution.error?.message || 'Unknown error'}`,
-              ),
-              'finalize_failed',
-            )
-          }
-        }
-
-        return
-      }
-
-      let finalizeFn: ((input: DefaultParentTaskOutput) => Promise<unknown>) | undefined
-      let finalizeTaskInternal: TaskInternal | undefined
-      if (taskInternal.finalize) {
-        if (isFunction(taskInternal.finalize)) {
-          finalizeFn = taskInternal.finalize as (input: DefaultParentTaskOutput) => Promise<unknown>
-        } else {
-          finalizeTaskInternal = taskInternal.finalize as TaskInternal
-          if (finalizeTaskInternal?.taskType === 'sleepingTask') {
-            await markExecutionAsFailed(
-              execution,
-              new DurableExecutionNotFoundError(
-                `Finalize task ${finalizeTaskInternal.id} cannot be a sleeping task`,
-              ),
-            )
-            return
-          }
-        }
-      }
-
-      let childrenTaskExecutionsForFinalize: Array<FinishedChildTaskExecution> = []
-      if (execution.children) {
-        let childrenTaskExecutions = await this.storage.getByParentExecutionId(
-          execution.executionId,
-        )
-        const childrenTaskExecutionsMap = new Map(
-          childrenTaskExecutions.map((child) => [child.executionId, child]),
-        )
-        childrenTaskExecutions = execution.children
-          .map((child) => childrenTaskExecutionsMap.get(child.executionId))
-          .filter(Boolean) as Array<TaskExecutionStorageValue>
-        if (childrenTaskExecutions.length !== execution.children.length) {
-          await markExecutionAsFailed(
-            execution,
-            new DurableExecutionNotFoundError(
-              `Some children task executions not found: ${execution.children.length - childrenTaskExecutions.length}/${execution.children.length} not found`,
-            ),
-          )
-          return
-        }
-
-        childrenTaskExecutionsForFinalize = childrenTaskExecutions.map(
-          (child) =>
-            ({
-              taskId: child.taskId,
-              executionId: child.executionId,
-              status: child.status,
-              output:
-                child.status === 'completed' && child.output
-                  ? this.serializer.deserialize(child.output)
-                  : undefined,
-              error:
-                child.status !== 'completed'
-                  ? child.error ||
-                    convertDurableExecutionErrorToStorageValue(
-                      DurableExecutionError.nonRetryable(`Unknown error`),
-                    )
-                  : undefined,
-            }) as FinishedChildTaskExecution,
-        )
-      }
-
-      if (!finalizeFn && !finalizeTaskInternal) {
-        const now = Date.now()
-        await this.storage.updateById(
-          now,
-          {
-            executionId: execution.executionId,
-            filters: { status: 'waiting_for_children' },
-            update: {
-              status: 'completed',
-              output:
-                taskInternal.taskType === 'parentTask'
-                  ? this.serializer.serialize(
-                      {
-                        output: execution.runOutput
-                          ? this.serializer.deserialize(execution.runOutput)
-                          : undefined,
-                        children: childrenTaskExecutionsForFinalize,
-                      },
-                      this.maxSerializedOutputDataSize,
-                    )
-                  : execution.runOutput,
-              onChildrenFinishedProcessingStatus: 'processed',
             },
+            execution,
+          ))
+      return
+    }
+
+    if (!finalizeTaskInternal) {
+      return
+    }
+
+    const executionId = generateTaskExecutionId()
+    const now = Date.now()
+    await this.storage.updateByIdAndInsertChildrenIfUpdated(
+      now,
+      {
+        executionId: execution.executionId,
+        filters: { status: 'waiting_for_children' },
+        update: {
+          status: 'waiting_for_finalize',
+          finalize: {
+            taskId: finalizeTaskInternal.id,
+            executionId,
           },
+          onChildrenFinishedProcessingStatus: 'processed',
+        },
+        childrenTaskExecutionsToInsertIfAnyUpdated: [
+          createTaskExecutionStorageValue({
+            now,
+            root: execution.root,
+            parent: {
+              taskId: execution.taskId,
+              executionId: execution.executionId,
+              indexInParentChildren: 0,
+              isOnlyChildOfParent: false,
+              isFinalizeOfParent: true,
+            },
+            taskId: finalizeTaskInternal.id,
+            executionId,
+            retryOptions: finalizeTaskInternal.retryOptions,
+            sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
+            timeoutMs: finalizeTaskInternal.timeoutMs,
+            areChildrenSequential: finalizeTaskInternal.areChildrenSequential,
+            input: this.serializeInputInternal(finalizeTaskInput),
+          }),
+        ],
+      },
+      execution,
+    )
+  }
+
+  private async processOnChildrenFinishedTaskExecutionsSingleSequentialExecution(
+    execution: TaskExecutionStorageValue,
+    markExecutionAsFailed: (
+      execution: TaskExecutionStorageValue,
+      error: DurableExecutionError,
+      status?: 'failed' | 'finalize_failed',
+    ) => Promise<void>,
+  ): Promise<void> {
+    const firstDummyChildIdx = (execution.children || []).findIndex(
+      (child) => child.executionId === 'dummy',
+    )
+    if (firstDummyChildIdx === 0) {
+      await markExecutionAsFailed(
+        execution,
+        DurableExecutionError.any(`Sequential tasks ${execution.taskId} is in an invalid state`),
+      )
+      return
+    }
+
+    if (firstDummyChildIdx > 0) {
+      const firstDummyChild = execution.children![firstDummyChildIdx]!
+      const childTaskInternal = this.taskInternalsMap.get(firstDummyChild.taskId)
+      if (!childTaskInternal) {
+        await markExecutionAsFailed(
           execution,
+          new DurableExecutionNotFoundError(`Child task ${firstDummyChild.taskId} not found`),
         )
         return
       }
 
-      const finalizeTaskInput = {
-        output: execution.runOutput ? this.serializer.deserialize(execution.runOutput) : undefined,
-        children: childrenTaskExecutionsForFinalize,
-      }
-      if (finalizeFn) {
-        let finalizeOutput: unknown
-        let finalizeError: DurableExecutionErrorStorageValue | undefined
-        try {
-          finalizeOutput = await finalizeFn(finalizeTaskInput)
-        } catch (error) {
-          finalizeError = convertDurableExecutionErrorToStorageValue(
-            DurableExecutionError.nonRetryable(getErrorMessage(error)),
-          )
-        }
-
-        const now = Date.now()
-        await (finalizeError
-          ? this.storage.updateById(
-              now,
-              {
-                executionId: execution.executionId,
-                filters: { status: 'waiting_for_children' },
-                update: {
-                  status: 'finalize_failed',
-                  error: finalizeError,
-                  waitingForFinalizeStartedAt: now,
-                  onChildrenFinishedProcessingStatus: 'processed',
-                },
-              },
-              execution,
-            )
-          : this.storage.updateById(
-              now,
-              {
-                executionId: execution.executionId,
-                filters: { status: 'waiting_for_children' },
-                update: {
-                  status: 'completed',
-                  output: this.serializer.serialize(
-                    finalizeOutput,
-                    this.maxSerializedOutputDataSize,
-                  ),
-                  waitingForFinalizeStartedAt: now,
-                  onChildrenFinishedProcessingStatus: 'processed',
-                },
-              },
-              execution,
-            ))
+      const prevChildTaskExecution = await this.storage.getById({
+        executionId: execution.children![firstDummyChildIdx - 1]!.executionId,
+      })
+      if (!prevChildTaskExecution) {
+        await markExecutionAsFailed(
+          execution,
+          new DurableExecutionNotFoundError(`Task at index ${firstDummyChildIdx - 1} not found`),
+        )
         return
       }
-
-      if (!finalizeTaskInternal) {
+      if (prevChildTaskExecution.status !== 'completed') {
+        await markExecutionAsFailed(
+          execution,
+          DurableExecutionError.nonRetryable(
+            `Task at index ${firstDummyChildIdx - 1} failed: ${prevChildTaskExecution.error?.message || 'Unknown error'}`,
+          ),
+          'finalize_failed',
+        )
         return
       }
 
       const executionId = generateTaskExecutionId()
+      firstDummyChild.executionId = executionId
+      const isChildSleepingTask = childTaskInternal.taskType === 'sleepingTask'
+      const childSleepingTaskUniqueId = isChildSleepingTask
+        ? this.getSleepingTaskUniqueIdInternal(
+            childTaskInternal.id,
+            this.serializer.deserialize(prevChildTaskExecution.output!),
+          )
+        : undefined
       const now = Date.now()
       await this.storage.updateByIdAndInsertChildrenIfUpdated(
         now,
@@ -2044,12 +2038,9 @@ export class DurableExecutor {
           executionId: execution.executionId,
           filters: { status: 'waiting_for_children' },
           update: {
-            status: 'waiting_for_finalize',
-            finalize: {
-              taskId: finalizeTaskInternal.id,
-              executionId,
-            },
-            onChildrenFinishedProcessingStatus: 'processed',
+            children: execution.children!,
+            activeChildrenCount: 1,
+            onChildrenFinishedProcessingStatus: 'idle',
           },
           childrenTaskExecutionsToInsertIfAnyUpdated: [
             createTaskExecutionStorageValue({
@@ -2058,28 +2049,63 @@ export class DurableExecutor {
               parent: {
                 taskId: execution.taskId,
                 executionId: execution.executionId,
-                indexInParentChildren: 0,
+                indexInParentChildren: firstDummyChildIdx,
                 isOnlyChildOfParent: false,
-                isFinalizeOfParent: true,
+                isFinalizeOfParent: false,
               },
-              taskId: finalizeTaskInternal.id,
+              taskId: firstDummyChild.taskId,
               executionId,
-              retryOptions: finalizeTaskInternal.retryOptions,
-              sleepMsBeforeRun: finalizeTaskInternal.sleepMsBeforeRun,
-              timeoutMs: finalizeTaskInternal.timeoutMs,
-              areChildrenSequential: finalizeTaskInternal.areChildrenSequential,
-              input: this.serializer.serialize(finalizeTaskInput, this.maxSerializedInputDataSize),
+              sleepingTaskUniqueId: childSleepingTaskUniqueId,
+              retryOptions: childTaskInternal.retryOptions,
+              sleepMsBeforeRun: childTaskInternal.sleepMsBeforeRun,
+              timeoutMs: childTaskInternal.timeoutMs,
+              areChildrenSequential: childTaskInternal.areChildrenSequential,
+              input: isChildSleepingTask
+                ? this.serializeInputInternal(undefined)
+                : prevChildTaskExecution.output!,
             }),
           ],
         },
         execution,
       )
+    } else {
+      const prevChildTaskExecution = await this.storage.getById({
+        executionId: execution.children![execution.children!.length - 1]!.executionId,
+      })
+      if (!prevChildTaskExecution) {
+        await markExecutionAsFailed(
+          execution,
+          new DurableExecutionNotFoundError(
+            `Task at index ${execution.children!.length - 1} not found`,
+          ),
+        )
+        return
+      }
+      if (prevChildTaskExecution.status === 'completed') {
+        const now = Date.now()
+        await this.storage.updateById(
+          now,
+          {
+            executionId: execution.executionId,
+            filters: { status: 'waiting_for_children' },
+            update: {
+              status: 'completed',
+              output: prevChildTaskExecution.output,
+              onChildrenFinishedProcessingStatus: 'processed',
+            },
+          },
+          execution,
+        )
+      } else {
+        await markExecutionAsFailed(
+          execution,
+          DurableExecutionError.nonRetryable(
+            `Task at index ${firstDummyChildIdx - 1} failed: ${prevChildTaskExecution.error?.message || 'Unknown error'}`,
+          ),
+          'finalize_failed',
+        )
+      }
     }
-
-    for (const execution of executions) {
-      this.backgroundPromisePool.addPromise(processExecution(execution))
-    }
-    return { hasMore: executions.length > 0 }
   }
 
   private async markFinishedTaskExecutionsAsCloseStatusReadySingleBatch(): Promise<{
@@ -2120,32 +2146,36 @@ export class DurableExecutor {
       return { hasMore: false }
     }
 
-    const processExecution = async (execution: TaskExecutionStorageValue): Promise<void> => {
-      execution.closeStatus = 'closing'
-      let now = Date.now()
-      await Promise.all([
-        this.closeFinishedTaskExecutionParent(execution),
-        this.closeFinishedTaskExecutionChildren(execution),
-      ])
-
-      now = Date.now()
-      await this.storage.updateById(
-        now,
-        {
-          executionId: execution.executionId,
-          filters: { isFinished: true },
-          update: {
-            closeStatus: 'closed',
-          },
-        },
-        execution,
+    for (const execution of executions) {
+      this.backgroundPromisePool.addPromise(
+        this.closeFinishedTaskExecutionsSingleExecution(execution),
       )
     }
-
-    for (const execution of executions) {
-      this.backgroundPromisePool.addPromise(processExecution(execution))
-    }
     return { hasMore: executions.length > 0 }
+  }
+
+  private async closeFinishedTaskExecutionsSingleExecution(
+    execution: TaskExecutionStorageValue,
+  ): Promise<void> {
+    execution.closeStatus = 'closing'
+    let now = Date.now()
+    await Promise.all([
+      this.closeFinishedTaskExecutionParent(execution),
+      this.closeFinishedTaskExecutionChildren(execution),
+    ])
+
+    now = Date.now()
+    await this.storage.updateById(
+      now,
+      {
+        executionId: execution.executionId,
+        filters: { isFinished: true },
+        update: {
+          closeStatus: 'closed',
+        },
+      },
+      execution,
+    )
   }
 
   private async closeFinishedTaskExecutionParent(

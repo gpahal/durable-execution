@@ -671,7 +671,7 @@ export class TaskExecutionsStorageInternal {
         }
 
         this.logger.error(`Error while retrying ${fnName}`, error)
-        await sleep(Math.min(25 * 2 ** (attempt - 1), 1000), { jitterRatio: 0.25 })
+        await sleep(Math.min(25 * 2 ** attempt, 1000), { jitterRatio: 0.25 })
       }
     }
   }
@@ -1102,10 +1102,11 @@ export class TaskExecutionsStorageInternal {
   start(): void {
     this.throwIfShutdown()
 
-    if (!this.enableBatching) {
+    if (!this.enableBatching || this.isStarted) {
       return
     }
 
+    this.isStarted = true
     this.logger.debug('Starting storage background processes')
 
     this.backgroundProcessesPromisePool.addPromises(
