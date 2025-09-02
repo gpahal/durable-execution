@@ -17,8 +17,8 @@ describe('concurrentScenarios', () => {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor1.startBackgroundProcesses()
-    executor2.startBackgroundProcesses()
+    executor1.start()
+    executor2.start()
   })
 
   afterEach(async () => {

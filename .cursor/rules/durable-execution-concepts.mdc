@@ -41,8 +41,8 @@ import { DurableExecutor } from 'durable-execution'
 
 const executor = new DurableExecutor(storage)
 
-// Start background processes
-executor.startBackgroundProcesses()
+// Start durable executor
+executor.start()
 
 // Enqueue tasks
 const handle = await executor.enqueueTask(myTask, input)

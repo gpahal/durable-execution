@@ -33,12 +33,12 @@ import type { DurableExecutionErrorStorageValue } from './errors'
  */
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export type Task<TInput, TOutput, TIsSleepingTask extends boolean = boolean> = {
-  id: string
-  isSleepingTask: TIsSleepingTask
-  retryOptions: TaskRetryOptions
-  sleepMsBeforeRun: number
-  timeoutMs: number
-  areChildrenSequential: boolean
+  readonly id: string
+  readonly isSleepingTask: TIsSleepingTask
+  readonly retryOptions: TaskRetryOptions
+  readonly sleepMsBeforeRun: number
+  readonly timeoutMs: number
+  readonly areChildrenSequential: boolean
 }
 
 /**

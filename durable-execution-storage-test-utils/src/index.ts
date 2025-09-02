@@ -86,7 +86,7 @@ export async function runStorageTest(
     enableStorageBatching,
     storageBatchingBackgroundProcessIntraBatchSleepMs,
   })
-  executor.startBackgroundProcesses()
+  executor.start()
 
   try {
     try {
@@ -2743,7 +2743,7 @@ export async function runStorageBench<TStorage extends TaskExecutionsStorage>(
 
       for (const executor of executors) {
         for (let i = 0; i < backgroundProcessesCount; i++) {
-          executor.startBackgroundProcesses()
+          executor.start()
         }
       }
 

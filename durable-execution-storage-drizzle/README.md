@@ -70,8 +70,8 @@ async function main() {
   console.log(result.output) // "Hello, World!"
 }
 
-// Start the durable executor background processes
-executor.startBackgroundProcesses()
+// Start the durable executor
+executor.start()
 
 // Run main
 await main()
@@ -122,8 +122,8 @@ async function main() {
   console.log(result.output) // "Hello, World!"
 }
 
-// Start the durable executor background processes
-executor.startBackgroundProcesses()
+// Start the durable executor
+executor.start()
 
 // Run main
 await main()
@@ -170,8 +170,8 @@ async function main() {
   console.log(result.output) // "Hello, World!"
 }
 
-// Start the durable executor background processes
-executor.startBackgroundProcesses()
+// Start the durable executor
+executor.start()
 
 // Run main
 await main()

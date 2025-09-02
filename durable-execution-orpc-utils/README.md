@@ -80,7 +80,7 @@ export const tasks = { sendEmail, waitForWebhook }
 export const tasksRouter = createTasksRouter(os, executor, tasks)
 
 // Start server
-executor.startBackgroundProcesses()
+executor.start()
 // ... mount tasksRouter with your oRPC server
 ```
 

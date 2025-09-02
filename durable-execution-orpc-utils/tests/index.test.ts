@@ -31,7 +31,7 @@ describe('server', () => {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.startBackgroundProcesses()
+    executor.start()
   })
 
   afterEach(async () => {
@@ -553,7 +553,7 @@ describe('convertProcedureClientToTask', () => {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.startBackgroundProcesses()
+    executor.start()
   })
 
   afterEach(async () => {

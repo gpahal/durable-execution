@@ -8,7 +8,7 @@ description: Debugging and troubleshooting guide for durable execution
 
 ### Task stuck in 'ready'
 
-- Ensure `executor.startBackgroundProcesses()` was called
+- Ensure `executor.start()` was called
 - Verify storage connectivity and credentials
 - Confirm the task was registered on the same `DurableExecutor` before enqueue
 

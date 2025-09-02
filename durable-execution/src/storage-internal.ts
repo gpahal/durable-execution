@@ -7,6 +7,7 @@ import { sleep, sleepWithWakeup } from '@gpahal/std/promises'
 
 import { DurableExecutionCancelledError, DurableExecutionError } from './errors'
 import type { LoggerInternal } from './logger'
+import { PromisePool } from './promise-pool'
 import {
   type TaskExecutionCloseStatus,
   type TaskExecutionOnChildrenFinishedProcessingStatus,
@@ -177,7 +178,7 @@ class BatchRequester<T, R> {
     | void
     | Promise<ReadonlyArray<R> | null | undefined | void>
   private readonly shutdownSignal: CancelSignal
-  private readonly addBackgroundPromise: (promise: Promise<void>) => void
+  private readonly backgroundPromisePool: PromisePool
 
   private wakeupBackgroundProcess: (() => void) | undefined
   private pendingRequests: Array<BatchRequest<T, R>>
@@ -196,7 +197,7 @@ class BatchRequester<T, R> {
       | void
       | Promise<ReadonlyArray<R> | null | undefined | void>,
     shutdownSignal: CancelSignal,
-    addBackgroundPromise: (promise: Promise<void>) => void,
+    backgroundPromisePool: PromisePool,
   ) {
     this.logger = logger
     this.processName = processName
@@ -204,7 +205,7 @@ class BatchRequester<T, R> {
     this.backgroundProcessIntraBatchSleepMs = backgroundProcessIntraBatchSleepMs
     this.singleRequestsBatchProcessFn = singleRequestsBatchProcessFn
     this.shutdownSignal = shutdownSignal
-    this.addBackgroundPromise = addBackgroundPromise
+    this.backgroundPromisePool = backgroundPromisePool
     this.pendingRequests = []
   }
 
@@ -311,7 +312,7 @@ class BatchRequester<T, R> {
         }
 
         for (let i = 0; i < requests.length; i += this.batchSize) {
-          this.addBackgroundPromise(
+          this.backgroundPromisePool.addPromise(
             runBackgroundProcessSingleBatch(requests.slice(i, i + this.batchSize)),
           )
         }
@@ -368,10 +369,11 @@ export class TaskExecutionsStorageInternal {
   private readonly enableStats: boolean
   private readonly baseBackgroundProcessIntraBatchSleepMs: number
   private readonly maxRetryAttempts: number
+  private isStarted: boolean
   private readonly shutdownSignal: CancelSignal
   private readonly cancelShutdownSignal: () => void
-  private backgroundProcessesPromises: Set<Promise<void>>
-  private backgroundPromises: Set<Promise<void>>
+  private readonly backgroundProcessesPromisePool: PromisePool
+  private readonly backgroundPromisePool: PromisePool
 
   private readonly callsDurationsStats: Map<string, { callsCount: number; meanDurationMs: number }>
   private readonly perSecondCallsCountsStats: {
@@ -444,13 +446,14 @@ export class TaskExecutionsStorageInternal {
     this.enableStats = enableStats
     this.baseBackgroundProcessIntraBatchSleepMs = baseBackgroundProcessIntraBatchSleepMs
     this.maxRetryAttempts = validateStorageMaxRetryAttempts(maxRetryAttempts)
+    this.isStarted = false
 
     const [cancelSignal, cancel] = createCancelSignal()
     this.shutdownSignal = cancelSignal
     this.cancelShutdownSignal = cancel
 
-    this.backgroundProcessesPromises = new Set()
-    this.backgroundPromises = new Set()
+    this.backgroundProcessesPromisePool = new PromisePool()
+    this.backgroundPromisePool = new PromisePool()
     this.callsDurationsStats = new Map()
     this.perSecondCallsCountsStats = {
       totalSeconds: 0,
@@ -461,10 +464,6 @@ export class TaskExecutionsStorageInternal {
     }
 
     if (this.enableBatching) {
-      const addBackgroundPromise = (promise: Promise<void>) => {
-        this.addBackgroundPromise(promise)
-      }
-
       this.insertManyBatchRequester = new BatchRequester(
         logger,
         'insertMany',
@@ -472,7 +471,7 @@ export class TaskExecutionsStorageInternal {
         this.baseBackgroundProcessIntraBatchSleepMs * 2,
         (requests) => this.insertManyBatched(requests),
         this.shutdownSignal,
-        addBackgroundPromise,
+        this.backgroundPromisePool,
       )
       this.getByIdBatchRequester = new BatchRequester(
         logger,
@@ -481,7 +480,7 @@ export class TaskExecutionsStorageInternal {
         this.baseBackgroundProcessIntraBatchSleepMs * 2,
         (requests) => this.getManyById(requests),
         this.shutdownSignal,
-        addBackgroundPromise,
+        this.backgroundPromisePool,
       )
       this.getBySleepingTaskUniqueIdBatchRequester = new BatchRequester(
         logger,
@@ -490,7 +489,7 @@ export class TaskExecutionsStorageInternal {
         this.baseBackgroundProcessIntraBatchSleepMs * 2,
         (requests) => this.getManyBySleepingTaskUniqueId(requests),
         this.shutdownSignal,
-        addBackgroundPromise,
+        this.backgroundPromisePool,
       )
       this.updateByIdBatchRequester = new BatchRequester(
         logger,
@@ -499,7 +498,7 @@ export class TaskExecutionsStorageInternal {
         this.baseBackgroundProcessIntraBatchSleepMs,
         (requests) => this.updateManyById(requests),
         this.shutdownSignal,
-        addBackgroundPromise,
+        this.backgroundPromisePool,
       )
       this.updateByIdAndInsertChildrenIfUpdatedBatchRequester = new BatchRequester(
         logger,
@@ -508,7 +507,7 @@ export class TaskExecutionsStorageInternal {
         this.baseBackgroundProcessIntraBatchSleepMs,
         (requests) => this.updateManyByIdAndInsertChildrenIfUpdated(requests),
         this.shutdownSignal,
-        addBackgroundPromise,
+        this.backgroundPromisePool,
       )
       this.getByParentExecutionIdBatchRequester = new BatchRequester(
         logger,
@@ -517,7 +516,7 @@ export class TaskExecutionsStorageInternal {
         this.baseBackgroundProcessIntraBatchSleepMs,
         (requests) => this.getManyByParentExecutionId(requests),
         this.shutdownSignal,
-        addBackgroundPromise,
+        this.backgroundPromisePool,
       )
       this.updateByParentExecutionIdAndIsFinishedBatchRequester = new BatchRequester(
         logger,
@@ -526,7 +525,7 @@ export class TaskExecutionsStorageInternal {
         this.baseBackgroundProcessIntraBatchSleepMs * 2,
         (requests) => this.updateManyByParentExecutionIdAndIsFinished(requests),
         this.shutdownSignal,
-        addBackgroundPromise,
+        this.backgroundPromisePool,
       )
       this.batchRequesters = [
         this.insertManyBatchRequester as BatchRequester<unknown, unknown>,
@@ -551,16 +550,8 @@ export class TaskExecutionsStorageInternal {
     }
   }
 
-  private addBackgroundProcessesPromise(promise: Promise<void>): void {
-    this.backgroundProcessesPromises.add(promise)
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    promise.finally(() => this.backgroundProcessesPromises.delete(promise))
-  }
-
-  private addBackgroundPromise(promise: Promise<void>): void {
-    this.backgroundPromises.add(promise)
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    promise.finally(() => this.backgroundPromises.delete(promise))
+  private checkIfBackgroundProcessesRunning(): boolean {
+    return this.isStarted && !this.shutdownSignal.isCancelled()
   }
 
   private getMergedRecentPerSecondCallsCountsStats(now: number) {
@@ -680,7 +671,7 @@ export class TaskExecutionsStorageInternal {
         }
 
         this.logger.error(`Error while retrying ${fnName}`, error)
-        await sleep(Math.min(25 * 2 ** (attempt - 1), 1000), 0.25)
+        await sleep(Math.min(25 * 2 ** (attempt - 1), 1000), { jitterRatio: 0.25 })
       }
     }
   }
@@ -692,8 +683,7 @@ export class TaskExecutionsStorageInternal {
 
     if (
       !this.insertManyBatchRequester ||
-      this.backgroundProcessesPromises.size === 0 ||
-      this.shutdownSignal.isCancelled() ||
+      !this.checkIfBackgroundProcessesRunning() ||
       executions.length >= 3
     ) {
       await this.insertManyBatched([executions])
@@ -712,11 +702,7 @@ export class TaskExecutionsStorageInternal {
     executionId: string
     filters?: TaskExecutionStorageGetByIdFilters
   }): Promise<TaskExecutionStorageValue | undefined> {
-    if (
-      !this.getByIdBatchRequester ||
-      this.backgroundProcessesPromises.size === 0 ||
-      this.shutdownSignal.isCancelled()
-    ) {
+    if (!this.getByIdBatchRequester || !this.checkIfBackgroundProcessesRunning()) {
       const storageValues = await this.getManyById([request])
       return storageValues[0]
     }
@@ -738,8 +724,7 @@ export class TaskExecutionsStorageInternal {
   }): Promise<TaskExecutionStorageValue | undefined> {
     if (
       !this.getBySleepingTaskUniqueIdBatchRequester ||
-      this.backgroundProcessesPromises.size === 0 ||
-      this.shutdownSignal.isCancelled()
+      !this.checkIfBackgroundProcessesRunning()
     ) {
       const storageValues = await this.getManyBySleepingTaskUniqueId([request])
       return storageValues[0]
@@ -776,11 +761,7 @@ export class TaskExecutionsStorageInternal {
       finalUpdate = { ...request.update, closeStatus: 'ready' }
     }
 
-    if (
-      !this.updateByIdBatchRequester ||
-      this.backgroundProcessesPromises.size === 0 ||
-      this.shutdownSignal.isCancelled()
-    ) {
+    if (!this.updateByIdBatchRequester || !this.checkIfBackgroundProcessesRunning()) {
       await this.updateManyById([
         {
           ...request,
@@ -832,8 +813,7 @@ export class TaskExecutionsStorageInternal {
 
     if (
       !this.updateByIdAndInsertChildrenIfUpdatedBatchRequester ||
-      this.backgroundProcessesPromises.size === 0 ||
-      this.shutdownSignal.isCancelled() ||
+      !this.checkIfBackgroundProcessesRunning() ||
       request.childrenTaskExecutionsToInsertIfAnyUpdated.length >= 3
     ) {
       await this.updateManyByIdAndInsertChildrenIfUpdated([
@@ -1015,11 +995,7 @@ export class TaskExecutionsStorageInternal {
   async getByParentExecutionId(
     parentExecutionId: string,
   ): Promise<Array<TaskExecutionStorageValue>> {
-    if (
-      !this.getByParentExecutionIdBatchRequester ||
-      this.backgroundProcessesPromises.size === 0 ||
-      this.shutdownSignal.isCancelled()
-    ) {
+    if (!this.getByParentExecutionIdBatchRequester || !this.checkIfBackgroundProcessesRunning()) {
       const storageValues = await this.getManyByParentExecutionId([{ parentExecutionId }])
       return storageValues && storageValues.length > 0 ? storageValues[0]! : []
     }
@@ -1047,8 +1023,7 @@ export class TaskExecutionsStorageInternal {
   ): Promise<void> {
     if (
       !this.updateByParentExecutionIdAndIsFinishedBatchRequester ||
-      this.backgroundProcessesPromises.size === 0 ||
-      this.shutdownSignal.isCancelled()
+      !this.checkIfBackgroundProcessesRunning()
     ) {
       await this.updateManyByParentExecutionIdAndIsFinished([
         {
@@ -1124,13 +1099,7 @@ export class TaskExecutionsStorageInternal {
     }
   }
 
-  private async startBackgroundProcessesInternal(): Promise<void> {
-    await Promise.all(
-      this.batchRequesters.map((batchRequester) => batchRequester.runBackgroundProcess()),
-    )
-  }
-
-  startBackgroundProcesses(): void {
+  start(): void {
     this.throwIfShutdown()
 
     if (!this.enableBatching) {
@@ -1138,11 +1107,11 @@ export class TaskExecutionsStorageInternal {
     }
 
     this.logger.debug('Starting storage background processes')
-    this.addBackgroundProcessesPromise(
-      this.startBackgroundProcessesInternal().catch((error) => {
-        console.error('Storage background processes exited with error', error)
-      }),
+
+    this.backgroundProcessesPromisePool.addPromises(
+      this.batchRequesters.map((batchRequester) => batchRequester.runBackgroundProcess()),
     )
+
     this.logger.debug('Started storage background processes')
   }
 
@@ -1154,12 +1123,10 @@ export class TaskExecutionsStorageInternal {
     }
     this.logger.debug('Storage cancelled')
 
-    if (this.backgroundProcessesPromises.size > 0 || this.backgroundPromises.size > 0) {
+    if (this.backgroundProcessesPromisePool.size > 0 || this.backgroundPromisePool.size > 0) {
       this.logger.debug('Stopping storage background processes and promises')
-      await Promise.all(this.backgroundProcessesPromises)
-      this.backgroundProcessesPromises.clear()
-      await Promise.all(this.backgroundPromises)
-      this.backgroundPromises.clear()
+      await this.backgroundProcessesPromisePool.allSettled()
+      await this.backgroundPromisePool.allSettled()
     }
     this.logger.debug('Stopped storage background processes and promises')
 

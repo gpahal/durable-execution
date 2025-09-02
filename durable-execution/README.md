@@ -91,8 +91,8 @@ async function app() {
   // ... use the durable executor to enqueue functions and workflows
 }
 
-// Start the durable executor background processes
-executor.startBackgroundProcesses()
+// Start the durable executor
+executor.start()
 
 // Run the app
 await app()

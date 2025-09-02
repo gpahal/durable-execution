@@ -44,7 +44,7 @@ describe('executorCrash', () => {
     })
 
     console.log('Starting executor')
-    executor.startBackgroundProcesses()
+    executor.start()
     try {
       for (let i = 0; i < 10; i++) {
         const runningTaskExecutionIds = executor.getRunningTaskExecutionIds()

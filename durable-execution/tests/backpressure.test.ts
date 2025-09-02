@@ -15,7 +15,7 @@ describe('backpressure', () => {
         maxConcurrentTaskExecutions: 3,
         maxTaskExecutionsPerBatch: 2,
       })
-      executor.startBackgroundProcesses()
+      executor.start()
     })
 
     afterEach(async () => {
@@ -128,7 +128,7 @@ describe('backpressure', () => {
         maxConcurrentTaskExecutions: 2,
         maxTaskExecutionsPerBatch: 5,
       })
-      executor.startBackgroundProcesses()
+      executor.start()
     })
 
     afterEach(async () => {
@@ -200,7 +200,7 @@ describe('backpressure', () => {
         maxConcurrentTaskExecutions: 5,
         maxTaskExecutionsPerBatch: 3,
       })
-      executor.startBackgroundProcesses()
+      executor.start()
     })
 
     afterEach(async () => {
@@ -270,7 +270,7 @@ describe('backpressure', () => {
         maxConcurrentTaskExecutions: 4,
         maxTaskExecutionsPerBatch: 2,
       })
-      executor.startBackgroundProcesses()
+      executor.start()
     })
 
     afterEach(async () => {

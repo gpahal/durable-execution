@@ -2,22 +2,6 @@ import type { StandardSchemaV1 } from '@standard-schema/spec'
 import { getDotPath } from '@standard-schema/utils'
 import { customAlphabet } from 'nanoid'
 
-import { createCancellablePromise, type CancelSignal } from '@gpahal/std/cancel'
-
-import { DurableExecutionCancelledError } from './errors'
-
-export async function createCancellablePromiseCustom<T>(
-  promise: Promise<T>,
-  signal?: CancelSignal,
-  error?: Error,
-): Promise<T> {
-  return await createCancellablePromise(
-    promise,
-    signal,
-    error ?? new DurableExecutionCancelledError(),
-  )
-}
-
 const _ALPHABET = '0123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz'
 
 /**

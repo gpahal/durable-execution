@@ -14,7 +14,7 @@ describe('InMemoryTaskExecutionsStorage', () => {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.startBackgroundProcesses()
+    executor.start()
   })
 
   afterEach(async () => {

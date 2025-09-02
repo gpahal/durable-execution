@@ -1,9 +1,18 @@
 import { z } from 'zod'
 
-import { createTimeoutCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
+import {
+  combineCancelSignals,
+  createCancellablePromise,
+  createTimeoutCancelSignal,
+  type CancelSignal,
+} from '@gpahal/std/cancel'
 import { isFunction } from '@gpahal/std/functions'
 
-import { DurableExecutionError, DurableExecutionTimedOutError } from './errors'
+import {
+  DurableExecutionCancelledError,
+  DurableExecutionError,
+  DurableExecutionTimedOutError,
+} from './errors'
 import {
   isFinalizeTaskOptionsParentTaskOptions,
   isFinalizeTaskOptionsTaskOptions,
@@ -18,7 +27,7 @@ import {
   type TaskRetryOptions,
   type TaskRunContext,
 } from './task'
-import { createCancellablePromiseCustom, generateId } from './utils'
+import { generateId } from './utils'
 
 export type TaskOptionsInternal = {
   taskType: 'task' | 'sleepingTask' | 'parentTask'
@@ -336,7 +345,7 @@ export class TaskInternal {
   }
 
   async runParentWithTimeoutAndCancellation(
-    ctx: TaskRunContext,
+    ctx: Omit<TaskRunContext, 'cancelSignal'>,
     input: unknown,
     timeoutMs: number,
     cancelSignal: CancelSignal,
@@ -348,15 +357,15 @@ export class TaskInternal {
       input = await this.validateInputFn(this.id, input)
     }
     const [timeoutCancelSignal, clearTimeout] = createTimeoutCancelSignal(timeoutMs)
-    const result = await createCancellablePromiseCustom(
-      createCancellablePromiseCustom(
-        createCancellablePromiseCustom(
-          this.runParent(ctx, input),
-          timeoutCancelSignal,
-          new DurableExecutionTimedOutError(),
-        ),
-        cancelSignal,
+    const finalCancelSignal = combineCancelSignals([cancelSignal, timeoutCancelSignal])
+    const result = await createCancellablePromise(
+      createCancellablePromise(
+        this.runParent({ ...ctx, cancelSignal: finalCancelSignal }, input),
+        timeoutCancelSignal,
+        new DurableExecutionTimedOutError(),
       ),
+      cancelSignal,
+      new DurableExecutionCancelledError(),
     )
     clearTimeout()
     return result

@@ -22,7 +22,7 @@ async function main() {
   const executor = new DurableExecutor(storage, {
     backgroundProcessIntraBatchSleepMs: 50,
   })
-  executor.startBackgroundProcesses()
+  executor.start()
 
   try {
     const task = executor.task({

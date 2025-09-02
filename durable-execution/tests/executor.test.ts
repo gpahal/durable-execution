@@ -23,7 +23,7 @@ describe('executor', () => {
       backgroundProcessIntraBatchSleepMs: 50,
       enableStorageStats: true,
     })
-    executor.startBackgroundProcesses()
+    executor.start()
   })
 
   afterEach(async () => {
@@ -111,7 +111,7 @@ describe('executor', () => {
     executor = new DurableExecutor(storage, {
       logLevel: 'error',
     })
-    executor.startBackgroundProcesses()
+    executor.start()
 
     await expect(executor.enqueueTask(task)).rejects.toThrow('Task test not found')
   })
@@ -295,7 +295,7 @@ describe('executor', () => {
     const failingExecutor = new DurableExecutor(failingStorage, {
       logLevel: 'error',
     })
-    failingExecutor.startBackgroundProcesses()
+    failingExecutor.start()
 
     const testTask = failingExecutor.task({
       id: 'test',
@@ -337,7 +337,7 @@ describe('executor', () => {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    failingExecutor.startBackgroundProcesses()
+    failingExecutor.start()
 
     const testTask = failingExecutor.task({
       id: 'test',
@@ -375,7 +375,7 @@ describe('executor', () => {
     const failingExecutor = new DurableExecutor(failingStorage, {
       logLevel: 'error',
     })
-    failingExecutor.startBackgroundProcesses()
+    failingExecutor.start()
 
     const testTask = failingExecutor.task({
       id: 'test',
@@ -409,8 +409,8 @@ describe('executor', () => {
       backgroundProcessIntraBatchSleepMs: 50,
     })
 
-    executor1.startBackgroundProcesses()
-    executor2.startBackgroundProcesses()
+    executor1.start()
+    executor2.start()
 
     let executionCount = 0
     const testTask = executor1.task({
@@ -463,7 +463,7 @@ describe('executor', () => {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    failingExecutor.startBackgroundProcesses()
+    failingExecutor.start()
 
     const child = failingExecutor.task({
       id: 'child',
@@ -513,7 +513,7 @@ describe('executor', () => {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    failingExecutor.startBackgroundProcesses()
+    failingExecutor.start()
 
     const child = failingExecutor.task({
       id: 'child',
@@ -565,7 +565,7 @@ describe('executor', () => {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.startBackgroundProcesses()
+    executor.start()
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
@@ -625,7 +625,7 @@ describe('executor', () => {
       expect(execution.children).toHaveLength(1)
       expect(execution.children[0]!.taskId).toBe('child')
       expect(execution.children[0]!.executionId).toMatch(/^te_/)
-      executor.startBackgroundProcesses()
+      executor.start()
 
       const finishedExecution = await handle.waitAndGetFinishedExecution({
         pollingIntervalMs: 100,
@@ -696,7 +696,7 @@ describe('executor', () => {
 
       const childTaskExecutionId = execution.children[0]!.executionId
       await storage.deleteById({ executionId: childTaskExecutionId })
-      executor.startBackgroundProcesses()
+      executor.start()
 
       const finishedExecution = await handle.waitAndGetFinishedExecution({
         pollingIntervalMs: 100,

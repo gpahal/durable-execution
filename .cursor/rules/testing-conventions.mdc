@@ -86,7 +86,7 @@ describe('TaskExecution', () => {
   beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
     executor = new DurableExecutor(storage)
-    executor.startBackgroundProcesses()
+    executor.start()
   })
 
   afterEach(async () => {

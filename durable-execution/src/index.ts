@@ -84,6 +84,7 @@ export {
   type CancelSignal,
   createCancelSignal,
   createTimeoutCancelSignal,
+  combineCancelSignals,
   createCancellablePromise,
 } from '@gpahal/std/cancel'
 export { type Mutex, createMutex } from '@gpahal/std/promises'

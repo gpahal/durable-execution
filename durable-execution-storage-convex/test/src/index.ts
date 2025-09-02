@@ -28,7 +28,7 @@ async function runWithStorage(storage: ConvexTaskExecutionsStorage) {
   const executor = new DurableExecutor(storage, {
     enableStorageBatching: true,
   })
-  executor.startBackgroundProcesses()
+  executor.start()
   try {
     await runWithExecutor(executor)
   } finally {

@@ -13,7 +13,7 @@ onlyBuiltDependencies:
 
 catalogs:
   prod:
-    '@gpahal/std': ^0.0.38
+    '@gpahal/std': ^0.0.40
     '@standard-schema/spec': ^1.0.0
     '@standard-schema/utils': ^0.3.0
     nanoid: ^5.1.5
@@ -22,9 +22,9 @@ catalogs:
   dev:
     '@changesets/cli': ^2.29.6
     '@edge-runtime/vm': ^5.0.0
-    '@gpahal/eslint-config': ^0.0.119
+    '@gpahal/eslint-config': ^0.0.121
     '@gpahal/prettier-config': ^0.0.32
-    '@gpahal/std-node': ^0.0.36
+    '@gpahal/std-node': ^0.0.38
     '@gpahal/tsconfig': ^0.0.20
     '@ianvs/prettier-plugin-sort-imports': ^4.7.0
     '@libsql/client': ^0.15.14

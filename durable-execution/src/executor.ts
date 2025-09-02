@@ -1,7 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 import z from 'zod'
 
-import { createCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
+import { createCancellablePromise, createCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
 import { getErrorMessage } from '@gpahal/std/errors'
 import { isFunction } from '@gpahal/std/functions'
 import { sleep } from '@gpahal/std/promises'
@@ -23,6 +23,7 @@ import {
   type Logger,
   type LogLevel,
 } from './logger'
+import { PromisePool } from './promise-pool'
 import { SerializerInternal, zSerializer, type Serializer } from './serializer'
 import {
   convertTaskExecutionStorageValueToTaskExecution,
@@ -63,7 +64,7 @@ import {
   validateCommonTaskOptions,
   validateEnqueueOptions,
 } from './task-internal'
-import { createCancellablePromiseCustom, generateId, summarizeStandardSchemaIssues } from './utils'
+import { generateId, summarizeStandardSchemaIssues } from './utils'
 
 const BACKGROUND_PROCESS_MAX_CONSECUTIVE_ERRORS = 3
 
@@ -254,8 +255,8 @@ export const zDurableExecutorOptions = z.object({
  *   console.log(uploadFileExecution)
  * }
  *
- * // Start the durable executor background processes
- * executor.startBackgroundProcesses()
+ * // Start the durable executor
+ * executor.start()
  *
  * // Run the app
  * await app()
@@ -285,8 +286,8 @@ export class DurableExecutor {
   private readonly maxSerializedOutputDataSize: number
   readonly shutdownSignal: CancelSignal
   private readonly cancelShutdownSignal: () => void
-  private readonly backgroundProcessesPromises: Set<Promise<void>>
-  private readonly backgroundPromises: Set<Promise<void>>
+  private readonly backgroundProcessesPromisePool: PromisePool
+  private readonly backgroundPromisePool: PromisePool
   readonly taskInternalsMap: Map<string, TaskInternal>
   readonly runningTaskExecutionsMap: Map<
     string,
@@ -426,8 +427,8 @@ export class DurableExecutor {
     this.shutdownSignal = cancelSignal
     this.cancelShutdownSignal = cancel
 
-    this.backgroundProcessesPromises = new Set()
-    this.backgroundPromises = new Set()
+    this.backgroundProcessesPromisePool = new PromisePool()
+    this.backgroundPromisePool = new PromisePool()
     this.taskInternalsMap = new Map()
     this.runningTaskExecutionsMap = new Map()
   }
@@ -439,28 +440,6 @@ export class DurableExecutor {
     if (this.shutdownSignal.isCancelled()) {
       throw DurableExecutionError.nonRetryable('Durable executor shutdown')
     }
-  }
-
-  /**
-   * Add a background process promise to the durable executor.
-   *
-   * @param promise - The promise to add.
-   */
-  addBackgroundProcessesPromise(promise: Promise<void>): void {
-    this.backgroundProcessesPromises.add(promise)
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    promise.finally(() => this.backgroundProcessesPromises.delete(promise))
-  }
-
-  /**
-   * Add a background promise to the durable executor.
-   *
-   * @param promise - The promise to add.
-   */
-  addBackgroundPromise(promise: Promise<void>): void {
-    this.backgroundPromises.add(promise)
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    promise.finally(() => this.backgroundPromises.delete(promise))
   }
 
   private taskInternal<TRunInput = undefined, TInput = TRunInput, TOutput = unknown>(
@@ -619,16 +598,6 @@ export class DurableExecutor {
             output: undefined,
             children: [childTask(firstTask, input), ...otherTasks.map((task) => childTask(task))],
           }
-        },
-        finalize: ({ children }) => {
-          const lastChild = children.at(-1)!
-          if (lastChild.status !== 'completed') {
-            throw DurableExecutionError.nonRetryable(
-              `Task at index ${children.length - 1} failed: ${lastChild.error.message}`,
-            )
-          }
-
-          return lastChild.output
         },
       },
       true,
@@ -1047,7 +1016,11 @@ export class DurableExecutor {
           if (isFirstIteration) {
             isFirstIteration = false
           } else {
-            await createCancellablePromiseCustom(sleep(resolvedPollingIntervalMs), cancelSignal)
+            await createCancellablePromise(
+              sleep(resolvedPollingIntervalMs, { stopOnCancelSignal: cancelSignal }),
+              cancelSignal,
+              new DurableExecutionCancelledError(),
+            )
 
             if (cancelSignal?.isCancelled()) {
               throw new DurableExecutionCancelledError()
@@ -1404,10 +1377,12 @@ export class DurableExecutor {
         this.logger.error(`Error in running task execution ${executionId}`, error)
       })
       .finally(() => {
-        try {
-          cancel()
-        } catch (error) {
-          this.logger.error(`Error in cancelling task execution ${executionId}`, error)
+        if (!cancelSignal.isCancelled()) {
+          try {
+            cancel()
+          } catch (error) {
+            this.logger.error(`Error in cancelling task execution ${executionId}`, error)
+          }
         }
         this.runningTaskExecutionsMap.delete(executionId)
       })
@@ -1437,12 +1412,11 @@ export class DurableExecutor {
     execution: TaskExecutionStorageValue,
     cancelSignal: CancelSignal,
   ): Promise<void> {
-    const taskRunCtx: TaskRunContext = {
+    const taskRunCtx: Omit<TaskRunContext, 'cancelSignal'> = {
       root: execution.root,
       parent: execution.parent,
       taskId: execution.taskId,
       executionId: execution.executionId,
-      cancelSignal,
       shutdownSignal: this.shutdownSignal,
       attempt: execution.retryAttempts,
       prevError: execution.error,
@@ -1785,6 +1759,16 @@ export class DurableExecutor {
         const firstDummyChildIdx = (execution.children || []).findIndex(
           (child) => child.executionId === 'dummy',
         )
+        if (firstDummyChildIdx === 0) {
+          await markExecutionAsFailed(
+            execution,
+            DurableExecutionError.any(
+              `Sequential tasks ${execution.taskId} is in an invalid state`,
+            ),
+          )
+          return
+        }
+
         if (firstDummyChildIdx > 0) {
           const firstDummyChild = execution.children![firstDummyChildIdx]!
           const childTaskInternal = this.taskInternalsMap.get(firstDummyChild.taskId)
@@ -1865,8 +1849,46 @@ export class DurableExecutor {
             },
             execution,
           )
-          return
+        } else {
+          const prevChildTaskExecution = await this.storage.getById({
+            executionId: execution.children![execution.children!.length - 1]!.executionId,
+          })
+          if (!prevChildTaskExecution) {
+            await markExecutionAsFailed(
+              execution,
+              new DurableExecutionNotFoundError(
+                `Task at index ${execution.children!.length - 1} not found`,
+              ),
+            )
+            return
+          }
+          if (prevChildTaskExecution.status === 'completed') {
+            const now = Date.now()
+            await this.storage.updateById(
+              now,
+              {
+                executionId: execution.executionId,
+                filters: { status: 'waiting_for_children' },
+                update: {
+                  status: 'completed',
+                  output: prevChildTaskExecution.output,
+                  onChildrenFinishedProcessingStatus: 'processed',
+                },
+              },
+              execution,
+            )
+          } else {
+            await markExecutionAsFailed(
+              execution,
+              DurableExecutionError.nonRetryable(
+                `Task at index ${firstDummyChildIdx - 1} failed: ${prevChildTaskExecution.error?.message || 'Unknown error'}`,
+              ),
+              'finalize_failed',
+            )
+          }
         }
+
+        return
       }
 
       let finalizeFn: ((input: DefaultParentTaskOutput) => Promise<unknown>) | undefined
@@ -2055,7 +2077,7 @@ export class DurableExecutor {
     }
 
     for (const execution of executions) {
-      this.addBackgroundPromise(processExecution(execution))
+      this.backgroundPromisePool.addPromise(processExecution(execution))
     }
     return { hasMore: executions.length > 0 }
   }
@@ -2121,7 +2143,7 @@ export class DurableExecutor {
     }
 
     for (const execution of executions) {
-      this.addBackgroundPromise(processExecution(execution))
+      this.backgroundPromisePool.addPromise(processExecution(execution))
     }
     return { hasMore: executions.length > 0 }
   }
@@ -2387,17 +2409,23 @@ export class DurableExecutor {
       }
     }
 
-    await sleep(this.backgroundProcessIntraBatchSleepMs, 0.25)
+    await sleep(this.backgroundProcessIntraBatchSleepMs, { jitterRatio: 0.25 })
     while (!this.shutdownSignal.isCancelled()) {
       const { hasMore } = await runBackgroundProcessSingleBatch()
       await (!hasMore && !this.shutdownSignal.isCancelled()
-        ? sleep(backgroundProcessIntraBatchSleepMs, 0.25)
+        ? sleep(backgroundProcessIntraBatchSleepMs, { jitterRatio: 0.25 })
         : sleep(5))
     }
   }
 
-  private async startBackgroundProcessesInternal(): Promise<void> {
-    await Promise.all([
+  /**
+   * Start the durable executor. Use {@link DurableExecutor.shutdown} to stop the durable executor.
+   */
+  start(): void {
+    this.throwIfShutdown()
+
+    this.logger.info('Starting durable executor')
+    this.backgroundProcessesPromisePool.addPromises([
       this.processReadyTaskExecutions(),
       this.processOnChildrenFinishedTaskExecutions(),
       this.markFinishedTaskExecutionsAsCloseStatusReady(),
@@ -2405,22 +2433,10 @@ export class DurableExecutor {
       this.cancelNeedsPromiseCancellationTaskExecutions(),
       this.retryExpiredTaskExecutions(),
     ])
-  }
 
-  /**
-   * Start the durable executor background processes. Use {@link DurableExecutor.shutdown} to stop
-   * the durable executor.
-   */
-  startBackgroundProcesses(): void {
-    this.throwIfShutdown()
+    this.storage.start()
 
-    this.logger.info('Starting background processes')
-    const promise = this.startBackgroundProcessesInternal().catch((error) => {
-      this.logger.error('Background processes exited with error', error)
-    })
-    this.addBackgroundProcessesPromise(promise)
-    this.storage.startBackgroundProcesses()
-    this.logger.info('Started background processes')
+    this.logger.info('Started durable executor')
   }
 
   /**
@@ -2441,12 +2457,10 @@ export class DurableExecutor {
     }
     this.logger.debug('Cancelled durable executor')
 
-    if (this.backgroundPromises.size > 0) {
+    if (this.backgroundProcessesPromisePool.size > 0 || this.backgroundPromisePool.size > 0) {
       this.logger.debug('Stopping background processes and promises')
-      await Promise.all(this.backgroundProcessesPromises)
-      this.backgroundProcessesPromises.clear()
-      await Promise.all(this.backgroundPromises)
-      this.backgroundPromises.clear()
+      await this.backgroundProcessesPromisePool.allSettled()
+      await this.backgroundPromisePool.allSettled()
     }
     this.logger.debug('Stopped background processes and promises')
 
