@@ -48,6 +48,8 @@ import {
  * - {@link InMemoryTaskExecutionsStorage} - For development/testing only
  * - [Drizzle ORM Storage](https://github.com/gpahal/durable-execution/tree/main/durable-execution-storage-drizzle) -
  *   Production-ready PostgreSQL/MySQL support
+ * - [Convex Storage](https://github.com/gpahal/durable-execution/tree/main/durable-execution-storage-convex) -
+ *   Production-ready Convex support
  *
  * @example
  * ```ts
@@ -609,40 +611,43 @@ export type TaskExecutionStorageGetByIdFilters = {
 export type TaskExecutionStorageUpdate = {
   executorId?: string
   status?: TaskExecutionStatus
+  isFinished?: boolean
   runOutput?: string
   output?: string
   error?: DurableExecutionErrorStorageValue
   retryAttempts?: number
   startAt?: number
+  startedAt?: number
   expiresAt?: number
+  waitingForChildrenStartedAt?: number
+  waitingForFinalizeStartedAt?: number
+  finishedAt?: number
 
   children?: ReadonlyArray<TaskExecutionSummary>
   activeChildrenCount?: number
   onChildrenFinishedProcessingStatus?: TaskExecutionOnChildrenFinishedProcessingStatus
   onChildrenFinishedProcessingExpiresAt?: number
+  onChildrenFinishedProcessingFinishedAt?: number
 
   finalize?: TaskExecutionSummary
 
   closeStatus?: TaskExecutionCloseStatus
   closeExpiresAt?: number
+  closedAt?: number
 
   needsPromiseCancellation?: boolean
 
-  unsetExecutorId?: boolean
-  isFinished?: boolean
-  unsetRunOutput?: boolean
-  unsetError?: boolean
-  startedAt?: number
-  unsetStartedAt?: boolean
-  unsetExpiresAt?: boolean
-  waitingForChildrenStartedAt?: number
-  waitingForFinalizeStartedAt?: number
-  finishedAt?: number
-  unsetOnChildrenFinishedProcessingExpiresAt?: boolean
-  onChildrenFinishedProcessingFinishedAt?: number
-  unsetCloseExpiresAt?: boolean
-  closedAt?: number
   updatedAt: number
+
+  unset?: {
+    executorId?: boolean
+    runOutput?: boolean
+    error?: boolean
+    startedAt?: boolean
+    expiresAt?: boolean
+    onChildrenFinishedProcessingExpiresAt?: boolean
+    closeExpiresAt?: boolean
+  }
 }
 
 /**
@@ -664,61 +669,18 @@ export function applyTaskExecutionStorageUpdate(
   updateExpiresAtWithStartedAt?: number,
 ): TaskExecutionStorageValue {
   for (const key in update) {
-    switch (key) {
-      case 'unsetExecutorId': {
-        if (update.unsetExecutorId) {
-          execution.executorId = undefined
-        }
-
-        break
-      }
-      case 'unsetRunOutput': {
-        if (update.unsetRunOutput) {
-          execution.runOutput = undefined
-        }
-
-        break
-      }
-      case 'unsetError': {
-        if (update.unsetError) {
-          execution.error = undefined
-        }
-
-        break
-      }
-      case 'unsetStartedAt': {
-        if (update.unsetStartedAt) {
-          execution.startedAt = undefined
-        }
-
-        break
-      }
-      case 'unsetExpiresAt': {
-        if (update.unsetExpiresAt) {
-          execution.expiresAt = undefined
-        }
-
-        break
-      }
-      case 'unsetOnChildrenFinishedProcessingExpiresAt': {
-        if (update.unsetOnChildrenFinishedProcessingExpiresAt) {
-          execution.onChildrenFinishedProcessingExpiresAt = undefined
-        }
-
-        break
-      }
-      case 'unsetCloseExpiresAt': {
-        if (update.unsetCloseExpiresAt) {
-          execution.closeExpiresAt = undefined
-        }
-
-        break
-      }
-      default: {
+    if (key === 'unset') {
+      for (const unsetKey in update.unset) {
         // @ts-expect-error - This is safe because we know the key is valid
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        execution[key] = update[key]
+        if (update.unset[unsetKey]) {
+          // @ts-expect-error - This is safe because we know the key is valid
+          execution[unsetKey] = undefined
+        }
       }
+    } else {
+      // @ts-expect-error - This is safe because we know the key is valid
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      execution[key] = update[key]
     }
   }
 

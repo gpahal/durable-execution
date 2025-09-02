@@ -10,6 +10,8 @@ import {
   type TaskRetryOptions,
 } from 'durable-execution'
 
+import { omitUndefinedValues } from '@gpahal/std/objects'
+
 export type TaskExecutionDBValue = {
   rootTaskId?: string | null
   rootExecutionId?: string | null
@@ -261,128 +263,21 @@ export function taskExecutionDBValueToStorageValue(
 export function taskExecutionStorageUpdateToDBUpdate(
   update: TaskExecutionStorageUpdate,
 ): TaskExecutionDBUpdate {
-  const dbUpdate: TaskExecutionDBUpdate = {
-    updatedAt: update.updatedAt,
-  }
+  const dbUpdate = omitUndefinedValues({
+    ...update,
+    children: update.children as Array<TaskExecutionSummary>,
+    unset: undefined,
+  })
 
-  if (update.executorId != null) {
-    dbUpdate.executorId = update.executorId
-  }
-
-  if (update.unsetExecutorId) {
-    dbUpdate.executorId = null
-  }
-
-  if (update.status != null) {
-    dbUpdate.status = update.status
-  }
-
-  if (update.isFinished != null) {
-    dbUpdate.isFinished = update.isFinished
-  }
-
-  if (update.runOutput != null) {
-    dbUpdate.runOutput = update.runOutput
-  }
-
-  if (update.unsetRunOutput) {
-    dbUpdate.runOutput = null
-  }
-
-  if (update.output != null) {
-    dbUpdate.output = update.output
-  }
-
-  if (update.error != null) {
-    dbUpdate.error = update.error
-  }
-
-  if (update.unsetError) {
-    dbUpdate.error = null
-  }
-
-  if (update.retryAttempts != null) {
-    dbUpdate.retryAttempts = update.retryAttempts
-  }
-
-  if (update.startAt != null) {
-    dbUpdate.startAt = update.startAt
-  }
-
-  if (update.startedAt != null) {
-    dbUpdate.startedAt = update.startedAt
-  }
-
-  if (update.unsetStartedAt) {
-    dbUpdate.startedAt = null
-  }
-
-  if (update.expiresAt != null) {
-    dbUpdate.expiresAt = update.expiresAt
-  }
-
-  if (update.unsetExpiresAt) {
-    dbUpdate.expiresAt = null
-  }
-
-  if (update.waitingForChildrenStartedAt != null) {
-    dbUpdate.waitingForChildrenStartedAt = update.waitingForChildrenStartedAt
-  }
-
-  if (update.waitingForFinalizeStartedAt != null) {
-    dbUpdate.waitingForFinalizeStartedAt = update.waitingForFinalizeStartedAt
-  }
-
-  if (update.finishedAt != null) {
-    dbUpdate.finishedAt = update.finishedAt
-  }
-
-  if (update.children != null) {
-    dbUpdate.children = update.children as Array<TaskExecutionSummary>
-  }
-
-  if (update.activeChildrenCount != null) {
-    dbUpdate.activeChildrenCount = update.activeChildrenCount
-  }
-
-  if (update.onChildrenFinishedProcessingStatus != null) {
-    dbUpdate.onChildrenFinishedProcessingStatus = update.onChildrenFinishedProcessingStatus
-  }
-
-  if (update.onChildrenFinishedProcessingExpiresAt != null) {
-    dbUpdate.onChildrenFinishedProcessingExpiresAt = update.onChildrenFinishedProcessingExpiresAt
-  }
-
-  if (update.unsetOnChildrenFinishedProcessingExpiresAt) {
-    dbUpdate.onChildrenFinishedProcessingExpiresAt = null
-  }
-
-  if (update.onChildrenFinishedProcessingFinishedAt != null) {
-    dbUpdate.onChildrenFinishedProcessingFinishedAt = update.onChildrenFinishedProcessingFinishedAt
-  }
-
-  if (update.finalize != null) {
-    dbUpdate.finalize = update.finalize
-  }
-
-  if (update.closeStatus != null) {
-    dbUpdate.closeStatus = update.closeStatus
-  }
-
-  if (update.closeExpiresAt != null) {
-    dbUpdate.closeExpiresAt = update.closeExpiresAt
-  }
-
-  if (update.unsetCloseExpiresAt) {
-    dbUpdate.closeExpiresAt = null
-  }
-
-  if (update.closedAt != null) {
-    dbUpdate.closedAt = update.closedAt
-  }
-
-  if (update.needsPromiseCancellation != null) {
-    dbUpdate.needsPromiseCancellation = update.needsPromiseCancellation
+  const updateUnset: TaskExecutionStorageUpdate['unset'] = update.unset
+  if (updateUnset) {
+    for (const key in updateUnset) {
+      // @ts-expect-error - This is safe because we know the key is valid
+      if (updateUnset[key]) {
+        // @ts-expect-error - This is safe because we know the key is valid
+        dbUpdate[key] = null
+      }
+    }
   }
 
   return dbUpdate

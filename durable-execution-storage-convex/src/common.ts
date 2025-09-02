@@ -11,6 +11,8 @@ import {
   type TaskExecutionSummary,
 } from 'durable-execution'
 
+import { omitUndefinedValues } from '@gpahal/std/objects'
+
 import type { Doc } from './component/_generated/dataModel'
 import {
   vDurableExecutionError,
@@ -24,20 +26,15 @@ export type TaskExecutionDBValue = Doc<'taskExecutions'>
 
 export const vTaskExecutionDBUpdateRequest = v.object({
   executorId: v.optional(v.string()),
-  unsetExecutorId: v.optional(v.boolean()),
   status: v.optional(vTaskExecutionStatus),
   isFinished: v.optional(v.boolean()),
   runOutput: v.optional(v.string()),
-  unsetRunOutput: v.optional(v.boolean()),
   output: v.optional(v.string()),
   error: v.optional(vDurableExecutionError),
-  unsetError: v.optional(v.boolean()),
   retryAttempts: v.optional(v.number()),
   startAt: v.optional(v.number()),
   startedAt: v.optional(v.number()),
-  unsetStartedAt: v.optional(v.boolean()),
   expiresAt: v.optional(v.number()),
-  unsetExpiresAt: v.optional(v.boolean()),
   waitingForChildrenStartedAt: v.optional(v.number()),
   waitingForFinalizeStartedAt: v.optional(v.number()),
   finishedAt: v.optional(v.number()),
@@ -52,7 +49,6 @@ export const vTaskExecutionDBUpdateRequest = v.object({
   acc: v.optional(v.number()),
   ocfpStatus: v.optional(vTaskExecutionOnChildrenFinishedProcessingStatus),
   ocfpExpiresAt: v.optional(v.number()),
-  unsetOCFPExpiresAt: v.optional(v.boolean()),
   ocfpFinishedAt: v.optional(v.number()),
   finalize: v.optional(
     v.object({
@@ -62,10 +58,21 @@ export const vTaskExecutionDBUpdateRequest = v.object({
   ),
   closeStatus: v.optional(vTaskExecutionCloseStatus),
   closeExpiresAt: v.optional(v.number()),
-  unsetCloseExpiresAt: v.optional(v.boolean()),
   closedAt: v.optional(v.number()),
   npc: v.optional(v.boolean()),
   updatedAt: v.number(),
+
+  unset: v.optional(
+    v.object({
+      executorId: v.optional(v.boolean()),
+      runOutput: v.optional(v.boolean()),
+      error: v.optional(v.boolean()),
+      startedAt: v.optional(v.boolean()),
+      expiresAt: v.optional(v.boolean()),
+      ocfpExpiresAt: v.optional(v.boolean()),
+      closeExpiresAt: v.optional(v.boolean()),
+    }),
+  ),
 })
 export type TaskExecutionDBUpdateRequest = Infer<typeof vTaskExecutionDBUpdateRequest>
 
@@ -218,22 +225,17 @@ export function taskExecutionDBValueToStorageValue(
 export function taskExecutionStorageUpdateToDBUpdateRequest(
   update: TaskExecutionStorageUpdate,
 ): TaskExecutionDBUpdateRequest {
-  return {
+  return omitUndefinedValues({
     executorId: update.executorId,
-    unsetExecutorId: update.unsetExecutorId,
     status: update.status,
     isFinished: update.isFinished,
     runOutput: update.runOutput,
-    unsetRunOutput: update.unsetRunOutput,
     output: update.output,
     error: update.error,
-    unsetError: update.unsetError,
     retryAttempts: update.retryAttempts,
     startAt: update.startAt,
     startedAt: update.startedAt,
-    unsetStartedAt: update.unsetStartedAt,
     expiresAt: update.expiresAt,
-    unsetExpiresAt: update.unsetExpiresAt,
     waitingForChildrenStartedAt: update.waitingForChildrenStartedAt,
     waitingForFinalizeStartedAt: update.waitingForFinalizeStartedAt,
     finishedAt: update.finishedAt,
@@ -241,143 +243,43 @@ export function taskExecutionStorageUpdateToDBUpdateRequest(
     acc: update.activeChildrenCount,
     ocfpStatus: update.onChildrenFinishedProcessingStatus,
     ocfpExpiresAt: update.onChildrenFinishedProcessingExpiresAt,
-    unsetOCFPExpiresAt: update.unsetOnChildrenFinishedProcessingExpiresAt,
     ocfpFinishedAt: update.onChildrenFinishedProcessingFinishedAt,
     finalize: update.finalize,
     closeStatus: update.closeStatus,
     closeExpiresAt: update.closeExpiresAt,
-    unsetCloseExpiresAt: update.unsetCloseExpiresAt,
     closedAt: update.closedAt,
     npc: update.needsPromiseCancellation,
     updatedAt: update.updatedAt,
-  }
+
+    unset: omitUndefinedValues({
+      executorId: update.unset?.executorId,
+      runOutput: update.unset?.runOutput,
+      error: update.unset?.error,
+      startedAt: update.unset?.startedAt,
+      expiresAt: update.unset?.expiresAt,
+      ocfpExpiresAt: update.unset?.onChildrenFinishedProcessingExpiresAt,
+      closeExpiresAt: update.unset?.closeExpiresAt,
+    }),
+  })
 }
 
 export function taskExecutionStorageUpdateRequestToDBUpdate(
   update: Infer<typeof vTaskExecutionDBUpdateRequest>,
 ): TaskExecutionDBUpdate {
-  const dbUpdate: TaskExecutionDBUpdate = {
-    updatedAt: update.updatedAt,
-  }
+  const dbUpdate = omitUndefinedValues({
+    ...update,
+    unset: undefined,
+  })
 
-  if (update.executorId != null) {
-    dbUpdate.executorId = update.executorId
-  }
-
-  if (update.unsetExecutorId) {
-    dbUpdate.executorId = undefined
-  }
-
-  if (update.status != null) {
-    dbUpdate.status = update.status
-  }
-
-  if (update.isFinished != null) {
-    dbUpdate.isFinished = update.isFinished
-  }
-
-  if (update.runOutput != null) {
-    dbUpdate.runOutput = update.runOutput
-  }
-
-  if (update.unsetRunOutput) {
-    dbUpdate.runOutput = undefined
-  }
-
-  if (update.output != null) {
-    dbUpdate.output = update.output
-  }
-
-  if (update.error != null) {
-    dbUpdate.error = update.error
-  }
-
-  if (update.unsetError) {
-    dbUpdate.error = undefined
-  }
-
-  if (update.retryAttempts != null) {
-    dbUpdate.retryAttempts = update.retryAttempts
-  }
-
-  if (update.startAt != null) {
-    dbUpdate.startAt = update.startAt
-  }
-
-  if (update.startedAt != null) {
-    dbUpdate.startedAt = update.startedAt
-  }
-
-  if (update.unsetStartedAt) {
-    dbUpdate.startedAt = undefined
-  }
-
-  if (update.expiresAt != null) {
-    dbUpdate.expiresAt = update.expiresAt
-  }
-
-  if (update.unsetExpiresAt) {
-    dbUpdate.expiresAt = undefined
-  }
-
-  if (update.waitingForChildrenStartedAt != null) {
-    dbUpdate.waitingForChildrenStartedAt = update.waitingForChildrenStartedAt
-  }
-
-  if (update.waitingForFinalizeStartedAt != null) {
-    dbUpdate.waitingForFinalizeStartedAt = update.waitingForFinalizeStartedAt
-  }
-
-  if (update.finishedAt != null) {
-    dbUpdate.finishedAt = update.finishedAt
-  }
-
-  if (update.children != null) {
-    dbUpdate.children = update.children
-  }
-
-  if (update.acc != null) {
-    dbUpdate.acc = update.acc
-  }
-
-  if (update.ocfpStatus != null) {
-    dbUpdate.ocfpStatus = update.ocfpStatus
-  }
-
-  if (update.ocfpExpiresAt != null) {
-    dbUpdate.ocfpExpiresAt = update.ocfpExpiresAt
-  }
-
-  if (update.unsetOCFPExpiresAt) {
-    dbUpdate.ocfpExpiresAt = undefined
-  }
-
-  if (update.ocfpFinishedAt != null) {
-    dbUpdate.ocfpFinishedAt = update.ocfpFinishedAt
-  }
-
-  if (update.finalize != null) {
-    dbUpdate.finalize = update.finalize
-  }
-
-  if (update.closeStatus != null) {
-    dbUpdate.closeStatus = update.closeStatus
-  }
-
-  if (update.closeExpiresAt != null) {
-    dbUpdate.closeExpiresAt = update.closeExpiresAt
-  }
-
-  if (update.unsetCloseExpiresAt) {
-    dbUpdate.closeExpiresAt = undefined
-  }
-
-  if (update.closedAt != null) {
-    dbUpdate.closedAt = update.closedAt
-  }
-
-  if (update.npc != null) {
-    dbUpdate.npc = update.npc
+  const updateUnset: TaskExecutionStorageUpdate['unset'] = update.unset
+  if (updateUnset) {
+    for (const key in updateUnset) {
+      // @ts-expect-error - This is safe because we know the key is valid
+      if (updateUnset[key]) {
+        // @ts-expect-error - This is safe because we know the key is valid
+        dbUpdate[key] = undefined
+      }
+    }
   }
 
   return dbUpdate

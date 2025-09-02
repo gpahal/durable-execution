@@ -982,14 +982,16 @@ async function testUpdateManyById(storage: TaskExecutionsStorage) {
         executionId: execution.executionId,
         filters: {},
         update: {
-          unsetExecutorId: true,
-          unsetRunOutput: true,
-          unsetError: true,
-          unsetExpiresAt: true,
-          unsetOnChildrenFinishedProcessingExpiresAt: true,
-          unsetCloseExpiresAt: true,
           needsPromiseCancellation: false,
           updatedAt: now,
+          unset: {
+            executorId: true,
+            runOutput: true,
+            error: true,
+            expiresAt: true,
+            onChildrenFinishedProcessingExpiresAt: true,
+            closeExpiresAt: true,
+          },
         },
       },
     ])
@@ -1664,7 +1666,9 @@ async function testUpdateByOnChildrenFinishedProcessingExpiresAtLessThan(
     onChildrenFinishedProcessingExpiresAtLessThan: now,
     update: {
       onChildrenFinishedProcessingStatus: 'processed',
-      unsetOnChildrenFinishedProcessingExpiresAt: true,
+      unset: {
+        onChildrenFinishedProcessingExpiresAt: true,
+      },
       updatedAt: now,
     },
     limit: 2,
@@ -1731,7 +1735,9 @@ async function testUpdateByCloseExpiresAtLessThan(storage: TaskExecutionsStorage
     closeExpiresAtLessThan: now,
     update: {
       closeStatus: 'closed',
-      unsetCloseExpiresAt: true,
+      unset: {
+        closeExpiresAt: true,
+      },
       updatedAt: now,
     },
     limit: 2,
@@ -2901,7 +2907,7 @@ async function runDurableExecutorBench(
     }
 
     finishedCount++
-    if (finishedCount % 10 === 0) {
+    if (finishedCount % 50 === 0) {
       console.log(
         `=> ${finishedCount}/${parentTasksCount + sequentialTasksCount + pollingTasksCount} tasks finished`,
       )

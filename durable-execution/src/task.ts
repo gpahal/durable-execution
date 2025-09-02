@@ -691,11 +691,17 @@ export type WaitingForChildrenTaskExecution = Omit<
  */
 export type WaitingForFinalizeTaskExecution = Omit<
   WaitingForChildrenTaskExecution,
-  'status' | 'error'
+  'status' | 'error' | 'waitingForChildrenStartedAt'
 > & {
   status: 'waiting_for_finalize'
   waitingForFinalizeStartedAt: Date
   finalize: TaskExecutionSummary
+
+  /**
+   * The time the task execution waiting for children started. This is only present for tasks which
+   * have children.
+   */
+  waitingForChildrenStartedAt?: Date
 }
 
 /**

@@ -239,13 +239,15 @@ export type Mounts = {
               | "finalize_failed"
               | "completed"
               | "cancelled";
-            unsetCloseExpiresAt?: boolean;
-            unsetError?: boolean;
-            unsetExecutorId?: boolean;
-            unsetExpiresAt?: boolean;
-            unsetOCFPExpiresAt?: boolean;
-            unsetRunOutput?: boolean;
-            unsetStartedAt?: boolean;
+            unset?: {
+              closeExpiresAt?: boolean;
+              error?: boolean;
+              executorId?: boolean;
+              expiresAt?: boolean;
+              ocfpExpiresAt?: boolean;
+              runOutput?: boolean;
+              startedAt?: boolean;
+            };
             updatedAt: number;
             waitingForChildrenStartedAt?: number;
             waitingForFinalizeStartedAt?: number;
@@ -374,13 +376,15 @@ export type Mounts = {
               | "finalize_failed"
               | "completed"
               | "cancelled";
-            unsetCloseExpiresAt?: boolean;
-            unsetError?: boolean;
-            unsetExecutorId?: boolean;
-            unsetExpiresAt?: boolean;
-            unsetOCFPExpiresAt?: boolean;
-            unsetRunOutput?: boolean;
-            unsetStartedAt?: boolean;
+            unset?: {
+              closeExpiresAt?: boolean;
+              error?: boolean;
+              executorId?: boolean;
+              expiresAt?: boolean;
+              ocfpExpiresAt?: boolean;
+              runOutput?: boolean;
+              startedAt?: boolean;
+            };
             updatedAt: number;
             waitingForChildrenStartedAt?: number;
             waitingForFinalizeStartedAt?: number;
@@ -432,13 +436,15 @@ export type Mounts = {
               | "finalize_failed"
               | "completed"
               | "cancelled";
-            unsetCloseExpiresAt?: boolean;
-            unsetError?: boolean;
-            unsetExecutorId?: boolean;
-            unsetExpiresAt?: boolean;
-            unsetOCFPExpiresAt?: boolean;
-            unsetRunOutput?: boolean;
-            unsetStartedAt?: boolean;
+            unset?: {
+              closeExpiresAt?: boolean;
+              error?: boolean;
+              executorId?: boolean;
+              expiresAt?: boolean;
+              ocfpExpiresAt?: boolean;
+              runOutput?: boolean;
+              startedAt?: boolean;
+            };
             updatedAt: number;
             waitingForChildrenStartedAt?: number;
             waitingForFinalizeStartedAt?: number;

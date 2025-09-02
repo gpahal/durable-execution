@@ -23,33 +23,39 @@ import {
 
 export type TaskExecutionStorageUpdateInternal = Omit<
   TaskExecutionStorageUpdate,
-  | 'unsetExecutorId'
   | 'isFinished'
-  | 'unsetRunOutput'
-  | 'unsetError'
   | 'startedAt'
-  | 'unsetStartedAt'
-  | 'unsetExpiresAt'
   | 'finishedAt'
-  | 'unsetOnChildrenFinishedProcessingExpiresAt'
   | 'onChildrenFinishedProcessingFinishedAt'
-  | 'unsetCloseExpiresAt'
   | 'closedAt'
   | 'updatedAt'
+  | 'unset'
 > & {
-  unsetExecutorId?: never
   isFinished?: never
-  unsetRunOutput?: never
-  unsetError?: never
   startedAt?: never
-  unsetStartedAt?: never
-  unsetExpiresAt?: never
   finishedAt?: never
-  unsetOnChildrenFinishedProcessingExpiresAt?: never
   onChildrenFinishedProcessingFinishedAt?: never
-  unsetCloseExpiresAt?: never
   closedAt?: never
   updatedAt?: never
+
+  unset?: Omit<
+    TaskExecutionStorageUpdate['unset'],
+    | 'executorId'
+    | 'runOutput'
+    | 'error'
+    | 'startedAt'
+    | 'expiresAt'
+    | 'onChildrenFinishedProcessingExpiresAt'
+    | 'closeExpiresAt'
+  > & {
+    executorId?: boolean
+    runOutput?: boolean
+    error?: boolean
+    startedAt?: boolean
+    expiresAt?: boolean
+    onChildrenFinishedProcessingExpiresAt?: boolean
+    closeExpiresAt?: boolean
+  }
 }
 
 export function getTaskExecutionStorageUpdate(
@@ -58,30 +64,43 @@ export function getTaskExecutionStorageUpdate(
 ): TaskExecutionStorageUpdate {
   const update: TaskExecutionStorageUpdate = {
     ...internalUpdate,
-    unsetExecutorId: undefined,
     isFinished: undefined,
-    unsetRunOutput: undefined,
-    unsetError: undefined,
     startedAt: undefined,
-    unsetStartedAt: undefined,
-    unsetExpiresAt: undefined,
     finishedAt: undefined,
-    unsetOnChildrenFinishedProcessingExpiresAt: undefined,
     onChildrenFinishedProcessingFinishedAt: undefined,
-    unsetCloseExpiresAt: undefined,
     closedAt: undefined,
     updatedAt: now,
+    unset: {
+      ...internalUpdate.unset,
+      executorId: undefined,
+      runOutput: undefined,
+      error: undefined,
+      startedAt: undefined,
+      expiresAt: undefined,
+      onChildrenFinishedProcessingExpiresAt: undefined,
+      closeExpiresAt: undefined,
+    },
+  }
+  const updateUnset: TaskExecutionStorageUpdate['unset'] = {
+    ...internalUpdate.unset,
+    executorId: undefined,
+    runOutput: undefined,
+    error: undefined,
+    startedAt: undefined,
+    expiresAt: undefined,
+    onChildrenFinishedProcessingExpiresAt: undefined,
+    closeExpiresAt: undefined,
   }
   if (internalUpdate.status) {
     if (FINISHED_TASK_EXECUTION_STATUSES.includes(internalUpdate.status)) {
       update.isFinished = true
-      update.unsetRunOutput = true
+      updateUnset.runOutput = true
       update.finishedAt = now
     }
     if (internalUpdate.status === 'ready') {
-      update.unsetRunOutput = true
-      update.unsetStartedAt = true
-      update.unsetExpiresAt = true
+      updateUnset.runOutput = true
+      updateUnset.startedAt = true
+      updateUnset.expiresAt = true
     }
     if (internalUpdate.status === 'running') {
       update.startedAt = now
@@ -97,21 +116,21 @@ export function getTaskExecutionStorageUpdate(
       internalUpdate.status !== 'ready' &&
       internalUpdate.status !== 'running'
     ) {
-      update.unsetError = true
+      updateUnset.error = true
     }
     if (
       (internalUpdate.status !== 'running' && internalUpdate.status !== 'cancelled') ||
       (update.needsPromiseCancellation != null && !update.needsPromiseCancellation)
     ) {
-      update.unsetExecutorId = true
+      updateUnset.executorId = true
     }
     if (internalUpdate.status !== 'running') {
-      update.unsetExpiresAt = true
+      updateUnset.expiresAt = true
     }
   }
   if (internalUpdate.onChildrenFinishedProcessingStatus) {
     if (internalUpdate.onChildrenFinishedProcessingStatus !== 'processing') {
-      update.unsetOnChildrenFinishedProcessingExpiresAt = true
+      updateUnset.onChildrenFinishedProcessingExpiresAt = true
     }
     if (internalUpdate.onChildrenFinishedProcessingStatus === 'processed') {
       update.onChildrenFinishedProcessingFinishedAt = now
@@ -119,12 +138,14 @@ export function getTaskExecutionStorageUpdate(
   }
   if (internalUpdate.closeStatus) {
     if (internalUpdate.closeStatus !== 'closing') {
-      update.unsetCloseExpiresAt = true
+      updateUnset.closeExpiresAt = true
     }
     if (internalUpdate.closeStatus === 'closed') {
       update.closedAt = now
     }
   }
+
+  update.unset = omitUndefinedValues(updateUnset)
   return omitUndefinedValues(update)
 }
 
@@ -526,7 +547,7 @@ export class TaskExecutionsStorageInternal {
 
   private throwIfShutdown(): void {
     if (this.shutdownSignal.isCancelled()) {
-      throw DurableExecutionCancelledError
+      throw new DurableExecutionCancelledError('Storage shutdown')
     }
   }
 

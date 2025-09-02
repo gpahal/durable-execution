@@ -268,10 +268,11 @@ importers:
         version: link:..
 
   durable-execution-storage-drizzle:
-    devDependencies:
+    dependencies:
       '@gpahal/std':
         specifier: catalog:prod
         version: 0.0.38
+    devDependencies:
       '@gpahal/std-node':
         specifier: catalog:dev
         version: 0.0.36

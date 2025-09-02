@@ -1239,7 +1239,7 @@ export class DurableExecutor {
     } else {
       throw DurableExecutionError.nonRetryable(
         // @ts-expect-error - This is safe
-        `Invalid status for task execution ${executionId}: ${options.status}`,
+        `Invalid status for task execution ${execution.executionId}: ${options.status}`,
       )
     }
 
@@ -1495,7 +1495,6 @@ export class DurableExecutor {
                     update: {
                       status: 'finalize_failed',
                       error: finalizeError,
-                      waitingForChildrenStartedAt: now,
                       waitingForFinalizeStartedAt: now,
                       children: [],
                     },
@@ -1513,7 +1512,6 @@ export class DurableExecutor {
                         finalizeOutput,
                         this.maxSerializedOutputDataSize,
                       ),
-                      waitingForChildrenStartedAt: now,
                       waitingForFinalizeStartedAt: now,
                       children: [],
                     },
@@ -1692,7 +1690,7 @@ export class DurableExecutor {
         const delayMultiplier = execution.retryOptions.delayMultiplier ?? 1
         const maxDelayMs = execution.retryOptions.maxDelayMs
         let delayMs = baseDelayMs
-        if (execution.retryAttempts > 0) {
+        if (execution.retryAttempts > 0 && delayMs > 0) {
           delayMs *= Math.pow(delayMultiplier, execution.retryAttempts)
         }
         if (maxDelayMs != null) {

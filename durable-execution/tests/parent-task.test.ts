@@ -282,7 +282,7 @@ describe('parentTask', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBe('test_output_')
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
-    expect(finishedExecution.waitingForChildrenStartedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.waitingForChildrenStartedAt).toBeUndefined()
     expect(finishedExecution.waitingForFinalizeStartedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(

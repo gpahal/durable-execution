@@ -56,6 +56,9 @@
     "drizzle-orm": "catalog:dev",
     "durable-execution": "workspace:*"
   },
+  "dependencies": {
+    "@gpahal/std": "catalog:prod"
+  },
   "devDependencies": {
     "@gpahal/std": "catalog:prod",
     "@gpahal/std-node": "catalog:dev",
