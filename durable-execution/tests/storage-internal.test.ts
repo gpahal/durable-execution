@@ -1,20 +1,19 @@
-import { createCancelSignal } from '@gpahal/std/cancel'
+import { Effect, Exit, Runtime, Scope } from 'effect'
+
 import { sleep } from '@gpahal/std/promises'
 
-import { DurableExecutionCancelledError, DurableExecutionError } from '../src/errors'
+import { DurableExecutionError } from '../src/errors'
 import { InMemoryTaskExecutionsStorage } from '../src/in-memory-storage'
-import type { LoggerInternal } from '../src/logger'
-import type { TaskExecutionsStorage, TaskExecutionStorageValue } from '../src/storage'
-import { TaskExecutionsStorageInternal } from '../src/storage-internal'
-
-function createMockLogger(): LoggerInternal {
-  // @ts-expect-error - This is safe
-  return {
-    debug: vi.fn(),
-    info: vi.fn(),
-    error: vi.fn(),
-  }
-}
+import {
+  TaskExecutionsStorageService,
+  type TaskExecutionsStorage,
+  type TaskExecutionStorageValue,
+} from '../src/storage'
+import {
+  makeTaskExecutionsStorageInternal,
+  type TaskExecutionsStorageInternal,
+  type TaskExecutionsStorageInternalOptions,
+} from '../src/storage-internal'
 
 function createMockStorageValue(
   overrides?: Partial<TaskExecutionStorageValue>,
@@ -44,49 +43,83 @@ function createMockStorageValue(
 }
 
 describe('TaskExecutionsStorageInternal', () => {
-  let logger: LoggerInternal
   let storage: TaskExecutionsStorage
   let storageInternal: TaskExecutionsStorageInternal
+  let scope: Scope.CloseableScope
+  let runtime: Runtime.Runtime<never>
+  let makeStorageInternal: (
+    options: TaskExecutionsStorageInternalOptions & {
+      storage?: TaskExecutionsStorage
+    },
+  ) => Promise<void>
 
   beforeEach(() => {
-    logger = createMockLogger()
     storage = new InMemoryTaskExecutionsStorage()
+
+    makeStorageInternal = async (
+      options: TaskExecutionsStorageInternalOptions & {
+        storage?: TaskExecutionsStorage
+      },
+    ) => {
+      const { storageInternalLocal, scopeLocal, runtimeLocal } = await Effect.runPromise(
+        Effect.gen(function* () {
+          const scopeLocal = yield* Scope.make()
+
+          const effect = makeTaskExecutionsStorageInternal(options).pipe(
+            Effect.provideService(TaskExecutionsStorageService, options.storage ?? storage),
+          )
+          const storageInternalLocal = yield* effect.pipe(
+            Effect.provideService(Scope.Scope, scopeLocal),
+          )
+          const runtimeLocal = yield* Effect.runtime<never>()
+          return { storageInternalLocal, scopeLocal, runtimeLocal }
+        }),
+      )
+
+      storageInternal = storageInternalLocal
+      scope = scopeLocal
+      runtime = runtimeLocal
+    }
   })
 
   afterEach(async () => {
-    if (storageInternal) {
-      await storageInternal.shutdown()
+    if (runtime && storageInternal) {
+      await Runtime.runPromise(runtime, storageInternal.shutdown)
+    }
+    if (scope) {
+      await Effect.runPromise(Scope.close(scope, Exit.void))
     }
   })
 
   describe('initialization', () => {
-    it('should initialize with batching disabled', () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+    it('should initialize with batching disabled', async () => {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       expect(storageInternal).toBeDefined()
-      expect(storageInternal.getCallsDurationsStats()).toBeDefined()
-      expect(storageInternal.getPerSecondCallsCountsStats()).toBeDefined()
+      expect(Runtime.runSync(runtime, storageInternal.getMetrics)).toBeDefined()
     })
 
-    it('should initialize with batching enabled', () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+    it('should initialize with batching enabled', async () => {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       expect(storageInternal).toBeDefined()
-      expect(storageInternal.getCallsDurationsStats()).toBeDefined()
-      expect(storageInternal.getPerSecondCallsCountsStats()).toBeDefined()
+      expect(Runtime.runSync(runtime, storageInternal.getMetrics)).toBeDefined()
     })
 
-    it('should handle custom max retry attempts', () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+    it('should handle custom max retry attempts', async () => {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
         maxRetryAttempts: 5,
       })
       expect(storageInternal).toBeDefined()
@@ -95,146 +128,182 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('insertMany', () => {
     it('should handle empty executions array', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      await expect(storageInternal.insertMany([])).resolves.toBeUndefined()
+      await expect(
+        Runtime.runPromise(runtime, storageInternal.insertMany([])),
+      ).resolves.toBeUndefined()
     })
 
     it('should insert single execution without batching', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const execution = createMockStorageValue()
-      await storageInternal.insertMany([execution])
+      await Runtime.runPromise(runtime, storageInternal.insertMany([execution]))
 
-      const result = await storage.getManyById([
-        { executionId: execution.executionId, filters: {} },
-      ])
-      expect(result[0]).toEqual(execution)
+      const result = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: execution.executionId, filters: {} }),
+      )
+      expect(result).toEqual(execution)
     })
 
     it('should insert multiple executions without batching', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const executions = [
         createMockStorageValue({ executionId: 'exec-1' }),
         createMockStorageValue({ executionId: 'exec-2' }),
         createMockStorageValue({ executionId: 'exec-3' }),
       ]
-      await storageInternal.insertMany(executions)
+      await Runtime.runPromise(runtime, storageInternal.insertMany(executions))
 
       for (const execution of executions) {
-        const result = await storage.getManyById([
-          { executionId: execution.executionId, filters: {} },
-        ])
-        expect(result[0]).toEqual(execution)
+        const result = await Runtime.runPromise(
+          runtime,
+          storageInternal.getById({ executionId: execution.executionId, filters: {} }),
+        )
+        expect(result).toEqual(execution)
       }
     })
 
     it('should batch small inserts when batching is enabled', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 10,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      storageInternal.start()
+      await Runtime.runPromise(runtime, storageInternal.start)
 
       const execution1 = createMockStorageValue({ executionId: 'exec-1' })
       const execution2 = createMockStorageValue({ executionId: 'exec-2' })
 
-      const promise1 = storageInternal.insertMany([execution1])
-      const promise2 = storageInternal.insertMany([execution2])
+      const promise1 = Runtime.runPromise(runtime, storageInternal.insertMany([execution1]))
+      const promise2 = Runtime.runPromise(runtime, storageInternal.insertMany([execution2]))
 
       await Promise.all([promise1, promise2])
 
-      const result1 = await storage.getManyById([{ executionId: 'exec-1', filters: {} }])
-      const result2 = await storage.getManyById([{ executionId: 'exec-2', filters: {} }])
-      expect(result1[0]).toEqual(execution1)
-      expect(result2[0]).toEqual(execution2)
+      const result1 = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'exec-1', filters: {} }),
+      )
+      const result2 = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'exec-2', filters: {} }),
+      )
+      expect(result1).toEqual(execution1)
+      expect(result2).toEqual(execution2)
     })
 
     it('should not batch large inserts even when batching is enabled', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      storageInternal.start()
+      await Runtime.runPromise(runtime, storageInternal.start)
 
-      const executions = [
-        createMockStorageValue({ executionId: 'exec-1' }),
-        createMockStorageValue({ executionId: 'exec-2' }),
-        createMockStorageValue({ executionId: 'exec-3' }),
-      ]
-      await storageInternal.insertMany(executions)
+      const executions = Array.from({ length: 20 }, (_, i) =>
+        createMockStorageValue({ executionId: `exec-${i}` }),
+      )
+      await Runtime.runPromise(runtime, storageInternal.insertMany(executions))
 
-      for (const execution of executions) {
-        const result = await storage.getManyById([
-          { executionId: execution.executionId, filters: {} },
-        ])
-        expect(result[0]).toEqual(execution)
+      const validateExecutions = async (execution: TaskExecutionStorageValue) => {
+        const result = await Runtime.runPromise(
+          runtime,
+          storageInternal.getById({ executionId: execution.executionId, filters: {} }),
+        )
+        expect(result).toEqual(execution)
       }
+
+      await Promise.all(executions.map(validateExecutions))
     })
   })
 
   describe('getById', () => {
     beforeEach(async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const execution = createMockStorageValue()
-      await storage.insertMany([execution])
+      await Runtime.runPromise(runtime, storageInternal.insertMany([execution]))
     })
 
     it('should get execution by id', async () => {
-      const result = await storageInternal.getById({ executionId: 'exec-1' })
+      const result = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'exec-1' }),
+      )
       expect(result).toBeDefined()
       expect(result?.executionId).toBe('exec-1')
     })
 
     it('should return undefined for non-existent execution', async () => {
-      const result = await storageInternal.getById({ executionId: 'non-existent' })
+      const result = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'non-existent' }),
+      )
       expect(result).toBeUndefined()
     })
 
     it('should apply filters correctly', async () => {
-      const result = await storageInternal.getById({
-        executionId: 'exec-1',
-        filters: { status: 'ready' },
-      })
+      const result = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({
+          executionId: 'exec-1',
+          filters: { status: 'ready' },
+        }),
+      )
       expect(result).toBeDefined()
 
-      const result2 = await storageInternal.getById({
-        executionId: 'exec-1',
-        filters: { status: 'completed' },
-      })
+      const result2 = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({
+          executionId: 'exec-1',
+          filters: { status: 'completed' },
+        }),
+      )
       expect(result2).toBeUndefined()
     })
 
     it('should batch getById calls when batching is enabled', async () => {
-      await storageInternal.shutdown()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await Runtime.runPromise(runtime, storageInternal.shutdown)
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 10,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      storageInternal.start()
+      await Runtime.runPromise(runtime, storageInternal.start)
 
-      const promise1 = storageInternal.getById({ executionId: 'exec-1', filters: {} })
-      const promise2 = storageInternal.getById({
-        executionId: 'exec-1',
-        filters: { status: 'ready' },
-      })
+      const promise1 = Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'exec-1', filters: {} }),
+      )
+      const promise2 = Runtime.runPromise(
+        runtime,
+        storageInternal.getById({
+          executionId: 'exec-1',
+          filters: { status: 'ready' },
+        }),
+      )
 
       const [result1, result2] = await Promise.all([promise1, promise2])
       expect(result1).toBeDefined()
@@ -244,10 +313,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('getBySleepingTaskUniqueId', () => {
     beforeEach(async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const execution = createMockStorageValue({
         isSleepingTask: true,
@@ -257,17 +327,23 @@ describe('TaskExecutionsStorageInternal', () => {
     })
 
     it('should get execution by sleeping task unique id', async () => {
-      const result = await storageInternal.getBySleepingTaskUniqueId({
-        sleepingTaskUniqueId: 'sleep-1',
-      })
+      const result = await Runtime.runPromise(
+        runtime,
+        storageInternal.getBySleepingTaskUniqueId({
+          sleepingTaskUniqueId: 'sleep-1',
+        }),
+      )
       expect(result).toBeDefined()
       expect(result?.sleepingTaskUniqueId).toBe('sleep-1')
     })
 
     it('should return undefined for non-existent sleeping task', async () => {
-      const result = await storageInternal.getBySleepingTaskUniqueId({
-        sleepingTaskUniqueId: 'non-existent',
-      })
+      const result = await Runtime.runPromise(
+        runtime,
+        storageInternal.getBySleepingTaskUniqueId({
+          sleepingTaskUniqueId: 'non-existent',
+        }),
+      )
       expect(result).toBeUndefined()
     })
   })
@@ -277,43 +353,57 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const execution = createMockStorageValue()
-      await storage.insertMany([execution])
+      await Runtime.runPromise(runtime, storageInternal.insertMany([execution]))
     })
 
     it('should update execution by id', async () => {
-      await storageInternal.updateById(now, {
-        executionId: 'exec-1',
-        update: { status: 'running' },
-      })
+      await Runtime.runPromise(
+        runtime,
+        storageInternal.updateById(now, {
+          executionId: 'exec-1',
+          update: { status: 'running' },
+        }),
+      )
 
-      const result = await storage.getManyById([{ executionId: 'exec-1', filters: {} }])
-      expect(result[0]?.status).toBe('running')
+      const result = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'exec-1', filters: {} }),
+      )
+      expect(result?.status).toBe('running')
     })
 
     it('should apply filters when updating', async () => {
-      await storageInternal.updateById(now, {
-        executionId: 'exec-1',
-        filters: { status: 'ready' },
-        update: { status: 'running' },
-      })
+      await Runtime.runPromise(
+        runtime,
+        storageInternal.updateById(now, {
+          executionId: 'exec-1',
+          filters: { status: 'ready' },
+          update: { status: 'running' },
+        }),
+      )
 
-      const result = await storage.getManyById([{ executionId: 'exec-1', filters: {} }])
-      expect(result[0]?.status).toBe('running')
+      const result = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'exec-1', filters: {} }),
+      )
+      expect(result?.status).toBe('running')
     })
 
     it('should handle finalize of parent with completed status', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      storageInternal.start()
+      await Runtime.runPromise(runtime, storageInternal.start)
       const execution = createMockStorageValue({
         executionId: 'finalize-exec',
         parent: {
@@ -324,15 +414,18 @@ describe('TaskExecutionsStorageInternal', () => {
           isFinalizeOfParent: true,
         },
       })
-      await storage.insertMany([execution])
+      await Runtime.runPromise(runtime, storageInternal.insertMany([execution]))
 
-      await storageInternal.updateById(
-        now,
-        {
-          executionId: 'finalize-exec',
-          update: { status: 'completed' },
-        },
-        execution,
+      await Runtime.runPromise(
+        runtime,
+        storageInternal.updateById(
+          now,
+          {
+            executionId: 'finalize-exec',
+            update: { status: 'completed' },
+          },
+          execution,
+        ),
       )
 
       const result = await storage.getManyById([{ executionId: 'finalize-exec', filters: {} }])
@@ -340,28 +433,38 @@ describe('TaskExecutionsStorageInternal', () => {
     })
 
     it('should batch updateById calls when batching is enabled', async () => {
-      await storageInternal.shutdown()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await Runtime.runPromise(runtime, storageInternal.shutdown)
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 10,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      storageInternal.start()
+      await Runtime.runPromise(runtime, storageInternal.start)
 
-      const promise1 = storageInternal.updateById(now, {
-        executionId: 'exec-1',
-        update: { status: 'running' },
-      })
-      const promise2 = storageInternal.updateById(now + 1, {
-        executionId: 'exec-1',
-        update: { executorId: 'executor-1' },
-      })
+      const promise1 = Runtime.runPromise(
+        runtime,
+        storageInternal.updateById(now, {
+          executionId: 'exec-1',
+          update: { status: 'running' },
+        }),
+      )
+      const promise2 = Runtime.runPromise(
+        runtime,
+        storageInternal.updateById(now + 1, {
+          executionId: 'exec-1',
+          update: { executorId: 'executor-1' },
+        }),
+      )
 
       await Promise.all([promise1, promise2])
 
-      const result = await storage.getManyById([{ executionId: 'exec-1', filters: {} }])
-      expect(result[0]?.status).toBe('running')
-      expect(result[0]?.executorId).toBe('executor-1')
+      const result = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'exec-1', filters: {} }),
+      )
+      expect(result?.status).toBe('running')
+      expect(result?.executorId).toBe('executor-1')
     })
   })
 
@@ -370,24 +473,31 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const execution = createMockStorageValue()
-      await storage.insertMany([execution])
+      await Runtime.runPromise(runtime, storageInternal.insertMany([execution]))
     })
 
     it('should update execution without children', async () => {
-      await storageInternal.updateByIdAndInsertChildrenIfUpdated(now, {
-        executionId: 'exec-1',
-        update: { status: 'waiting_for_children' },
-        childrenTaskExecutionsToInsertIfAnyUpdated: [],
-      })
+      await Runtime.runPromise(
+        runtime,
+        storageInternal.updateByIdAndInsertChildrenIfUpdated(now, {
+          executionId: 'exec-1',
+          update: { status: 'waiting_for_children' },
+          childrenTaskExecutionsToInsertIfAnyUpdated: [],
+        }),
+      )
 
-      const result = await storage.getManyById([{ executionId: 'exec-1', filters: {} }])
-      expect(result[0]?.status).toBe('waiting_for_children')
+      const result = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'exec-1', filters: {} }),
+      )
+      expect(result?.status).toBe('waiting_for_children')
     })
 
     it('should update execution and insert children', async () => {
@@ -396,30 +506,43 @@ describe('TaskExecutionsStorageInternal', () => {
         createMockStorageValue({ executionId: 'child-2' }),
       ]
 
-      await storageInternal.updateByIdAndInsertChildrenIfUpdated(now, {
-        executionId: 'exec-1',
-        update: { status: 'waiting_for_children' },
-        childrenTaskExecutionsToInsertIfAnyUpdated: children,
-      })
+      await Runtime.runPromise(
+        runtime,
+        storageInternal.updateByIdAndInsertChildrenIfUpdated(now, {
+          executionId: 'exec-1',
+          update: { status: 'waiting_for_children' },
+          childrenTaskExecutionsToInsertIfAnyUpdated: children,
+        }),
+      )
 
-      const parent = await storage.getManyById([{ executionId: 'exec-1', filters: {} }])
-      expect(parent[0]?.status).toBe('waiting_for_children')
+      const parent = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'exec-1', filters: {} }),
+      )
+      expect(parent?.status).toBe('waiting_for_children')
 
-      const child1 = await storage.getManyById([{ executionId: 'child-1', filters: {} }])
-      expect(child1[0]).toBeDefined()
+      const child1 = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'child-1', filters: {} }),
+      )
+      expect(child1).toBeDefined()
 
-      const child2 = await storage.getManyById([{ executionId: 'child-2', filters: {} }])
-      expect(child2[0]).toBeDefined()
+      const child2 = await Runtime.runPromise(
+        runtime,
+        storageInternal.getById({ executionId: 'child-2', filters: {} }),
+      )
+      expect(child2).toBeDefined()
     })
 
     it('should not batch when children count is >= 3', async () => {
-      await storageInternal.shutdown()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await Runtime.runPromise(runtime, storageInternal.shutdown)
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 10,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      storageInternal.start()
+      await Runtime.runPromise(runtime, storageInternal.start)
 
       const children = [
         createMockStorageValue({ executionId: 'child-1' }),
@@ -427,15 +550,21 @@ describe('TaskExecutionsStorageInternal', () => {
         createMockStorageValue({ executionId: 'child-3' }),
       ]
 
-      await storageInternal.updateByIdAndInsertChildrenIfUpdated(now, {
-        executionId: 'exec-1',
-        update: { status: 'waiting_for_children' },
-        childrenTaskExecutionsToInsertIfAnyUpdated: children,
-      })
+      await Runtime.runPromise(
+        runtime,
+        storageInternal.updateByIdAndInsertChildrenIfUpdated(now, {
+          executionId: 'exec-1',
+          update: { status: 'waiting_for_children' },
+          childrenTaskExecutionsToInsertIfAnyUpdated: children,
+        }),
+      )
 
       for (const child of children) {
-        const result = await storage.getManyById([{ executionId: child.executionId, filters: {} }])
-        expect(result[0]).toBeDefined()
+        const result = await Runtime.runPromise(
+          runtime,
+          storageInternal.getById({ executionId: child.executionId, filters: {} }),
+        )
+        expect(result).toBeDefined()
       }
     })
   })
@@ -445,10 +574,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const parent = createMockStorageValue({
         executionId: 'parent-1',
@@ -474,56 +604,73 @@ describe('TaskExecutionsStorageInternal', () => {
           isFinalizeOfParent: false,
         },
       })
-      await storage.insertMany([parent, child1, child2])
+      await Runtime.runPromise(runtime, storageInternal.insertMany([parent, child1, child2]))
     })
 
     it('should update children by parent execution id and finished status', async () => {
-      await storageInternal.updateByParentExecutionIdAndIsFinished(now, {
-        parentExecutionId: 'parent-1',
-        isFinished: false,
-        update: { closeStatus: 'ready' },
-      })
+      await Runtime.runPromise(
+        runtime,
+        storageInternal.updateByParentExecutionIdAndIsFinished(now, {
+          parentExecutionId: 'parent-1',
+          isFinished: false,
+          update: { closeStatus: 'ready' },
+        }),
+      )
 
-      const children = await storage.getManyByParentExecutionId([{ parentExecutionId: 'parent-1' }])
-      expect(children[0]).toHaveLength(2)
-      for (const child of children[0]!) {
+      const children = await Runtime.runPromise(
+        runtime,
+        storageInternal.getByParentExecutionId({ parentExecutionId: 'parent-1' }),
+      )
+      expect(children).toHaveLength(2)
+      for (const child of children) {
         expect(child.closeStatus).toBe('ready')
       }
     })
 
     it('should batch updates when batching is enabled', async () => {
-      await storageInternal.shutdown()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await Runtime.runPromise(runtime, storageInternal.shutdown)
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 10,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      storageInternal.start()
+      await Runtime.runPromise(runtime, storageInternal.start)
 
-      const promise1 = storageInternal.updateByParentExecutionIdAndIsFinished(now, {
-        parentExecutionId: 'parent-1',
-        isFinished: false,
-        update: { closeStatus: 'ready' },
-      })
-      const promise2 = storageInternal.updateByParentExecutionIdAndIsFinished(now + 1, {
-        parentExecutionId: 'parent-1',
-        isFinished: false,
-        update: { closeStatus: 'closing' },
-      })
+      const promise1 = Runtime.runPromise(
+        runtime,
+        storageInternal.updateByParentExecutionIdAndIsFinished(now, {
+          parentExecutionId: 'parent-1',
+          isFinished: false,
+          update: { closeStatus: 'ready' },
+        }),
+      )
+      const promise2 = Runtime.runPromise(
+        runtime,
+        storageInternal.updateByParentExecutionIdAndIsFinished(now + 1, {
+          parentExecutionId: 'parent-1',
+          isFinished: false,
+          update: { closeStatus: 'closing' },
+        }),
+      )
 
       await Promise.all([promise1, promise2])
 
-      const children = await storage.getManyByParentExecutionId([{ parentExecutionId: 'parent-1' }])
-      expect(children[0]).toHaveLength(2)
+      const children = await Runtime.runPromise(
+        runtime,
+        storageInternal.getByParentExecutionId({ parentExecutionId: 'parent-1' }),
+      )
+      expect(children).toHaveLength(2)
     })
   })
 
   describe('getByParentExecutionId', () => {
     beforeEach(async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const parent = createMockStorageValue({ executionId: 'parent-1' })
       const child1 = createMockStorageValue({
@@ -546,32 +693,45 @@ describe('TaskExecutionsStorageInternal', () => {
           isFinalizeOfParent: false,
         },
       })
-      await storage.insertMany([parent, child1, child2])
+      await Runtime.runPromise(runtime, storageInternal.insertMany([parent, child1, child2]))
     })
 
     it('should get children by parent execution id', async () => {
-      const children = await storageInternal.getByParentExecutionId('parent-1')
+      const children = await Runtime.runPromise(
+        runtime,
+        storageInternal.getByParentExecutionId({ parentExecutionId: 'parent-1' }),
+      )
       expect(children).toHaveLength(2)
       expect(children[0]?.executionId).toBe('child-1')
       expect(children[1]?.executionId).toBe('child-2')
     })
 
     it('should return empty array for non-existent parent', async () => {
-      const children = await storageInternal.getByParentExecutionId('non-existent')
+      const children = await Runtime.runPromise(
+        runtime,
+        storageInternal.getByParentExecutionId({ parentExecutionId: 'non-existent' }),
+      )
       expect(children).toEqual([])
     })
 
     it('should batch requests when batching is enabled', async () => {
-      await storageInternal.shutdown()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await Runtime.runPromise(runtime, storageInternal.shutdown)
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 10,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      storageInternal.start()
+      await Runtime.runPromise(runtime, storageInternal.start)
 
-      const promise1 = storageInternal.getByParentExecutionId('parent-1')
-      const promise2 = storageInternal.getByParentExecutionId('parent-1')
+      const promise1 = Runtime.runPromise(
+        runtime,
+        storageInternal.getByParentExecutionId({ parentExecutionId: 'parent-1' }),
+      )
+      const promise2 = Runtime.runPromise(
+        runtime,
+        storageInternal.getByParentExecutionId({ parentExecutionId: 'parent-1' }),
+      )
 
       const [children1, children2] = await Promise.all([promise1, promise2])
       expect(children1).toHaveLength(2)
@@ -608,14 +768,16 @@ describe('TaskExecutionsStorageInternal', () => {
         deleteAll: vi.fn(),
       }
 
-      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
+        storage: mockStorage,
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
         maxRetryAttempts: 3,
       })
       const execution = createMockStorageValue()
-      await storageInternal.insertMany([execution])
+      await Runtime.runPromise(runtime, storageInternal.insertMany([execution]))
 
       expect(callCount).toBe(3)
       expect(mockStorage.insertMany).toHaveBeenCalledTimes(3)
@@ -647,15 +809,19 @@ describe('TaskExecutionsStorageInternal', () => {
         deleteAll: vi.fn(),
       }
 
-      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
+        storage: mockStorage,
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
         maxRetryAttempts: 3,
       })
       const execution = createMockStorageValue()
 
-      await expect(storageInternal.insertMany([execution])).rejects.toThrow('Permanent error')
+      await expect(
+        Runtime.runPromise(runtime, storageInternal.insertMany([execution])),
+      ).rejects.toThrow('Permanent error')
       expect(callCount).toBe(1)
       expect(mockStorage.insertMany).toHaveBeenCalledTimes(1)
     })
@@ -686,15 +852,19 @@ describe('TaskExecutionsStorageInternal', () => {
         deleteAll: vi.fn(),
       }
 
-      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
+        storage: mockStorage,
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
         maxRetryAttempts: 2,
       })
       const execution = createMockStorageValue()
 
-      await expect(storageInternal.insertMany([execution])).rejects.toThrow('Temporary error')
+      await expect(
+        Runtime.runPromise(runtime, storageInternal.insertMany([execution])),
+      ).rejects.toThrow('Temporary error')
       expect(executionCount).toBe(3)
       expect(mockStorage.insertMany).toHaveBeenCalledTimes(3)
     })
@@ -702,112 +872,99 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('shutdown', () => {
     it('should handle shutdown without background processes', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      await expect(storageInternal.shutdown()).resolves.toBeUndefined()
+      await expect(Runtime.runPromise(runtime, storageInternal.shutdown)).resolves.toBeUndefined()
     })
 
     it('should handle shutdown with background processes', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      storageInternal.start()
+      await Runtime.runPromise(runtime, storageInternal.start)
       await sleep(10)
-      await expect(storageInternal.shutdown()).resolves.toBeUndefined()
+      await expect(Runtime.runPromise(runtime, storageInternal.shutdown)).resolves.toBeUndefined()
     })
 
     it('should handle shutdown with pending requests', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      storageInternal.start()
+      await Runtime.runPromise(runtime, storageInternal.start)
 
       const promises = []
       for (let i = 0; i < 10; i++) {
         promises.push(
-          storageInternal.insertMany([
-            createMockStorageValue({ executionId: `shutdown-test-${i}` }),
-          ]),
+          Runtime.runPromise(
+            runtime,
+            storageInternal.insertMany([
+              createMockStorageValue({ executionId: `shutdown-test-${i}` }),
+            ]),
+          ),
         )
       }
 
-      await expect(storageInternal.shutdown()).resolves.toBeUndefined()
+      await expect(Runtime.runPromise(runtime, storageInternal.shutdown)).resolves.toBeUndefined()
     })
 
-    it('should throw if operations are attempted after shutdown', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+    it('should not throw if operations are attempted after shutdown', async () => {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      await storageInternal.shutdown()
+      await Runtime.runPromise(runtime, storageInternal.shutdown)
 
-      expect(() => storageInternal.start()).toThrowError()
+      await expect(Runtime.runPromise(runtime, storageInternal.start)).resolves.not.toThrow()
     })
   })
 
   describe('timing stats', () => {
     it('should track timing stats for operations', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const execution = createMockStorageValue()
 
-      await storageInternal.insertMany([execution])
-      await storageInternal.getById({ executionId: 'exec-1' })
+      await Runtime.runPromise(runtime, storageInternal.insertMany([execution]))
+      await Runtime.runPromise(runtime, storageInternal.getById({ executionId: 'exec-1' }))
 
-      expect(storageInternal.getCallsDurationsStats().has('insertMany')).toBe(true)
-      expect(storageInternal.getCallsDurationsStats().has('getManyById')).toBe(true)
+      expect(
+        (await Runtime.runPromise(runtime, storageInternal.getMetrics)).some(
+          (a) => a.processName === 'insertMany',
+        ),
+      ).toBe(true)
+      expect(
+        (await Runtime.runPromise(runtime, storageInternal.getMetrics)).some(
+          (a) => a.processName === 'getManyById',
+        ),
+      ).toBe(true)
 
-      const insertStats = storageInternal.getCallsDurationsStats().get('insertMany')
-      expect(insertStats?.callsCount).toBeGreaterThan(0)
-      expect(insertStats?.meanDurationMs).toBeGreaterThanOrEqual(0)
+      const insertStats = (await Runtime.runPromise(runtime, storageInternal.getMetrics)).find(
+        (a) => a.processName === 'insertMany',
+      )
+      expect(insertStats?.count).toBeGreaterThan(0)
+      expect(insertStats?.max).toBeGreaterThanOrEqual(0)
 
-      const getStats = storageInternal.getCallsDurationsStats().get('getManyById')
-      expect(getStats?.callsCount).toBeGreaterThan(0)
-      expect(getStats?.meanDurationMs).toBeGreaterThanOrEqual(0)
-    })
-
-    it('should update mean duration correctly', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
-        enableBatching: false,
-        enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
-      })
-      const execution1 = createMockStorageValue({ executionId: 'exec-mean-1' })
-      const execution2 = createMockStorageValue({ executionId: 'exec-mean-2' })
-
-      await storageInternal.insertMany([execution1])
-      await storageInternal.insertMany([execution2])
-
-      const stats = storageInternal.getCallsDurationsStats().get('insertMany')
-      expect(stats?.callsCount).toBe(2)
-    })
-  })
-
-  describe('storage call counts', () => {
-    it('should track storage calls per second', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
-        enableBatching: false,
-        enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
-      })
-      const execution = createMockStorageValue()
-
-      await storageInternal.insertMany([execution])
-      await storageInternal.getById({ executionId: 'exec-1' })
-
-      const totalCallsCount = storageInternal.getPerSecondCallsCountsStats().totalCallsCount
-      expect(totalCallsCount).toBeGreaterThan(0)
+      const getStats = (await Runtime.runPromise(runtime, storageInternal.getMetrics)).find(
+        (a) => a.processName === 'getManyById',
+      )
+      expect(getStats?.count).toBeGreaterThan(0)
+      expect(getStats?.max).toBeGreaterThanOrEqual(0)
     })
   })
 
@@ -816,27 +973,31 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const executions = [
         createMockStorageValue({ executionId: 'exec-1', status: 'ready', startAt: now - 1000 }),
         createMockStorageValue({ executionId: 'exec-2', status: 'ready', startAt: now - 500 }),
         createMockStorageValue({ executionId: 'exec-3', status: 'ready', startAt: now + 1000 }),
       ]
-      await storage.insertMany(executions)
+      await Runtime.runPromise(runtime, storageInternal.insertMany(executions))
     })
 
     it('should update executions by status and startAt', async () => {
-      const updated = await storageInternal.updateByStatusAndStartAtLessThanAndReturn(now, {
-        status: 'ready',
-        startAtLessThan: now,
-        update: { status: 'running', executorId: 'executor-1' },
-        updateExpiresAtWithStartedAt: now,
-        limit: 10,
-      })
+      const updated = await Runtime.runPromise(
+        runtime,
+        storageInternal.updateByStatusAndStartAtLessThanAndReturn(now, {
+          status: 'ready',
+          startAtLessThan: now,
+          update: { status: 'running', executorId: 'executor-1' },
+          updateExpiresAtWithStartedAt: now,
+          limit: 10,
+        }),
+      )
 
       expect(updated).toHaveLength(2)
       expect(updated[0]?.executionId).toBe('exec-1')
@@ -849,32 +1010,19 @@ describe('TaskExecutionsStorageInternal', () => {
     })
 
     it('should respect limit parameter', async () => {
-      const updated = await storageInternal.updateByStatusAndStartAtLessThanAndReturn(now, {
-        status: 'ready',
-        startAtLessThan: now,
-        update: { status: 'running' },
-        updateExpiresAtWithStartedAt: now,
-        limit: 1,
-      })
-
-      expect(updated).toHaveLength(1)
-      expect(updated[0]?.executionId).toBe('exec-1')
-    })
-
-    it('should handle custom retry attempts', async () => {
-      const updated = await storageInternal.updateByStatusAndStartAtLessThanAndReturn(
-        now,
-        {
+      const updated = await Runtime.runPromise(
+        runtime,
+        storageInternal.updateByStatusAndStartAtLessThanAndReturn(now, {
           status: 'ready',
           startAtLessThan: now,
           update: { status: 'running' },
           updateExpiresAtWithStartedAt: now,
-          limit: 10,
-        },
-        5,
+          limit: 1,
+        }),
       )
 
-      expect(updated.length).toBeGreaterThanOrEqual(0)
+      expect(updated).toHaveLength(1)
+      expect(updated[0]?.executionId).toBe('exec-1')
     })
   })
 
@@ -883,25 +1031,29 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const executions = [
         createMockStorageValue({ executionId: 'exec-1', closeStatus: 'ready' }),
         createMockStorageValue({ executionId: 'exec-2', closeStatus: 'ready' }),
         createMockStorageValue({ executionId: 'exec-3', closeStatus: 'idle' }),
       ]
-      await storage.insertMany(executions)
+      await Runtime.runPromise(runtime, storageInternal.insertMany(executions))
     })
 
     it('should update executions by close status', async () => {
-      const updated = await storageInternal.updateByCloseStatusAndReturn(now, {
-        closeStatus: 'ready',
-        update: { closeStatus: 'closing' },
-        limit: 10,
-      })
+      const updated = await Runtime.runPromise(
+        runtime,
+        storageInternal.updateByCloseStatusAndReturn(now, {
+          closeStatus: 'ready',
+          update: { closeStatus: 'closing' },
+          limit: 10,
+        }),
+      )
 
       expect(updated).toHaveLength(2)
       for (const execution of updated) {
@@ -915,10 +1067,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const executions = [
         createMockStorageValue({
@@ -936,17 +1089,20 @@ describe('TaskExecutionsStorageInternal', () => {
           expiresAt: now + 1000,
         }),
       ]
-      await storage.insertMany(executions)
+      await Runtime.runPromise(runtime, storageInternal.insertMany(executions))
     })
 
     it('should update sleeping tasks by expiry time', async () => {
-      const count = await storageInternal.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(now, {
-        status: 'running',
-        isSleepingTask: true,
-        expiresAtLessThan: now,
-        update: { status: 'timed_out' },
-        limit: 10,
-      })
+      const count = await Runtime.runPromise(
+        runtime,
+        storageInternal.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(now, {
+          status: 'running',
+          isSleepingTask: true,
+          expiresAtLessThan: now,
+          update: { status: 'timed_out' },
+          limit: 10,
+        }),
+      )
 
       expect(count).toBe(1)
 
@@ -960,10 +1116,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
       const executions = [
         createMockStorageValue({
@@ -982,18 +1139,18 @@ describe('TaskExecutionsStorageInternal', () => {
           needsPromiseCancellation: true,
         }),
       ]
-      await storage.insertMany(executions)
+      await Runtime.runPromise(runtime, storageInternal.insertMany(executions))
     })
 
     it('should update executions by executor id and needs promise cancellation', async () => {
-      const updated = await storageInternal.updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
-        now,
-        {
+      const updated = await Runtime.runPromise(
+        runtime,
+        storageInternal.updateByExecutorIdAndNeedsPromiseCancellationAndReturn(now, {
           executorId: 'executor-1',
           needsPromiseCancellation: true,
           update: { needsPromiseCancellation: false },
           limit: 10,
-        },
+        }),
       )
 
       expect(updated).toHaveLength(1)
@@ -1004,17 +1161,18 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('background processes', () => {
     it('should handle background processes lifecycle', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 10,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
 
-      expect(() => storageInternal.start()).not.toThrow()
+      await expect(Runtime.runPromise(runtime, storageInternal.start)).resolves.not.toThrow()
 
       await sleep(50)
 
-      await expect(storageInternal.shutdown()).resolves.toBeUndefined()
+      await expect(Runtime.runPromise(runtime, storageInternal.shutdown)).resolves.toBeUndefined()
     })
 
     it('should handle errors in background batch processing', async () => {
@@ -1041,60 +1199,21 @@ describe('TaskExecutionsStorageInternal', () => {
         deleteAll: vi.fn(),
       }
 
-      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
+        storage: mockStorage,
         enableBatching: true,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 10,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      storageInternal.start()
+      await Runtime.runPromise(runtime, storageInternal.start)
 
       const execution = createMockStorageValue()
-      await expect(storageInternal.insertMany([execution])).rejects.toThrow('Test error')
+      await expect(
+        Runtime.runPromise(runtime, storageInternal.insertMany([execution])),
+      ).rejects.toThrow('Test error')
 
-      await storageInternal.shutdown()
-    })
-
-    it('should handle cancelled error during shutdown', async () => {
-      const [cancelSignal] = createCancelSignal()
-      const mockStorage: TaskExecutionsStorage = {
-        insertMany: vi.fn(() => {
-          if (cancelSignal.isCancelled()) {
-            throw DurableExecutionCancelledError
-          }
-        }),
-        getManyById: vi.fn(() => []),
-        getManyBySleepingTaskUniqueId: vi.fn(() => []),
-        updateManyById: vi.fn(),
-        updateManyByIdAndInsertChildrenIfUpdated: vi.fn(),
-        updateByStatusAndStartAtLessThanAndReturn: vi.fn(() => []),
-        updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn:
-          vi.fn(() => []),
-        updateByCloseStatusAndReturn: vi.fn(() => []),
-        updateByStatusAndIsSleepingTaskAndExpiresAtLessThan: vi.fn(() => 0),
-        updateByOnChildrenFinishedProcessingExpiresAtLessThan: vi.fn(() => 0),
-        updateByCloseExpiresAtLessThan: vi.fn(() => 0),
-        updateByExecutorIdAndNeedsPromiseCancellationAndReturn: vi.fn(() => []),
-        getManyByParentExecutionId: vi.fn(() => []),
-        updateManyByParentExecutionIdAndIsFinished: vi.fn(),
-        updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus: vi.fn(() => 0),
-        deleteById: vi.fn(),
-        deleteAll: vi.fn(),
-      }
-
-      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, {
-        enableBatching: true,
-        enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 10,
-      })
-      storageInternal.start()
-
-      await sleep(50)
-      await storageInternal.shutdown()
-
-      expect(logger.error).not.toHaveBeenCalledWith(
-        expect.stringContaining('Error in batch requester'),
-        DurableExecutionCancelledError,
-      )
+      await Runtime.runPromise(runtime, storageInternal.shutdown)
     })
   })
 
@@ -1106,18 +1225,19 @@ describe('TaskExecutionsStorageInternal', () => {
       await storage.insertMany([mockValue])
 
       const futureTime = Date.now() + 2000
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+      await makeStorageInternal({
+        executorId: 'test-executor-id',
         enableBatching: false,
         enableStats: true,
-        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        backgroundBatchingIntraBatchSleepMs: 10,
       })
-      const count = await storageInternal.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
-        Date.now(),
-        {
+      const count = await Runtime.runPromise(
+        runtime,
+        storageInternal.updateByOnChildrenFinishedProcessingExpiresAtLessThan(Date.now(), {
           onChildrenFinishedProcessingExpiresAtLessThan: futureTime,
           update: { status: 'failed' },
           limit: 10,
-        },
+        }),
       )
 
       expect(count).toBe(1)
@@ -1128,13 +1248,13 @@ describe('TaskExecutionsStorageInternal', () => {
       await storage.insertMany([mockValue])
 
       const pastTime = Date.now() - 1000
-      const count = await storageInternal.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
-        Date.now(),
-        {
+      const count = await Runtime.runPromise(
+        runtime,
+        storageInternal.updateByOnChildrenFinishedProcessingExpiresAtLessThan(Date.now(), {
           onChildrenFinishedProcessingExpiresAtLessThan: pastTime,
           update: { status: 'failed' },
           limit: 10,
-        },
+        }),
       )
 
       expect(count).toBe(0)

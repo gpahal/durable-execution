@@ -14,13 +14,13 @@ describe('simpleTask', () => {
   let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
-    executor = new DurableExecutor(storage, {
+    executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.start()
+    await executor.start()
   })
 
   afterEach(async () => {
@@ -44,6 +44,42 @@ describe('simpleTask', () => {
       pollingIntervalMs: 100,
     })
     expect(executionCount).toBe(1)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('test')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe('test')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete with custom insertMany', async () => {
+    let executionCount = 0
+    const task = executor.task({
+      id: 'test',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        return 'test'
+      },
+    })
+
+    const handle = await executor.enqueueTask(task, undefined, {
+      taskExecutionsStorageTransaction: {
+        insertMany: async (executions) => {
+          executionCount++
+          await storage.insertMany(executions)
+        },
+      },
+    })
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.taskId).toBe('test')
@@ -240,6 +276,46 @@ describe('simpleTask', () => {
         Schema.Struct({
           name: Schema.String,
         }),
+      )
+      .task({
+        id: 'test',
+        timeoutMs: 1000,
+        run: async (_, input) => {
+          executionCount++
+          await sleep(1)
+          return input.name
+        },
+      })
+
+    // @ts-expect-error - Testing invalid input
+    const handle = await executor.enqueueTask(task, { name: 0 })
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(executionCount).toBe(0)
+    expect(finishedExecution.status).toBe('failed')
+    assert(finishedExecution.status === 'failed')
+    expect(finishedExecution.taskId).toBe('test')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.error).toBeDefined()
+    expect(finishedExecution.error?.message).toContain('Invalid input to task test')
+    expect(finishedExecution.error?.errorType).toBe('generic')
+    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should fail with standard input schema', async () => {
+    let executionCount = 0
+    const task = executor
+      .inputSchema(
+        Schema.Struct({
+          name: Schema.String,
+        }).pipe(Schema.standardSchemaV1),
       )
       .task({
         id: 'test',
@@ -528,7 +604,7 @@ describe('simpleTask', () => {
 
     const handle = await executor.enqueueTask(task)
     await sleep(500)
-    expect(executor.getRunningTaskExecutionIds()).toContain(handle.getExecutionId())
+    expect(executor.getRunningTaskExecutionIds()).toContain(handle.executionId)
     await handle.cancel()
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
@@ -551,7 +627,7 @@ describe('simpleTask', () => {
     expect(executor.getRunningTaskExecutionIds()).toContain(finishedExecution.executionId)
 
     await sleep(2500)
-    expect(executor.getRunningTaskExecutionIds()).not.toContain(handle.getExecutionId())
+    expect(executor.getRunningTaskExecutionIds()).not.toContain(handle.executionId)
   })
 
   it('should handle immediate multiple cancellations', async () => {
@@ -801,10 +877,10 @@ describe('simpleTask', () => {
       run: async (ctx) => {
         executionCount++
         for (let i = 0; i < 20; i++) {
-          if (ctx.shutdownSignal.isCancelled()) {
+          if (ctx.shutdownSignal.aborted) {
             throw new DurableExecutionCancelledError()
           }
-          await sleep(5000)
+          await sleep(500)
         }
       },
     })
@@ -1056,7 +1132,9 @@ describe('simpleTask', () => {
 
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
-    expect(finishedExecution.error?.message).toBe('Task at index 1 failed: Task 2 failed')
+    expect(finishedExecution.error?.message).toBe(
+      'Sequential task failed [parentTaskId=seq] [index=1]: Task 2 failed',
+    )
     expect(executionCount).toBe(2)
   })
 
@@ -1126,7 +1204,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
     expect(finishedExecution.error?.message).toContain(
-      'Task at index 0 failed: Task execution timed out',
+      'Sequential task failed [parentTaskId=seq] [index=0]: Task execution timed out',
     )
   })
 
@@ -1183,10 +1261,10 @@ describe('simpleTask', () => {
     expect(executionCount).toBe(1)
   })
 
-  it('should complete polling task', async () => {
+  it('should complete looping task', async () => {
     let executionCount = 0
-    const pollTask = executor.task({
-      id: 'poll',
+    const iterationTask = executor.task({
+      id: 'iteration',
       timeoutMs: 1000,
       run: () => {
         executionCount++
@@ -1196,13 +1274,13 @@ describe('simpleTask', () => {
             }
           : {
               isDone: true,
-              output: 'poll_output',
+              output: 'iteration_output',
             }
       },
     })
 
-    const pollingTask = executor.pollingTask('polling', pollTask, 10)
-    const handle = await executor.enqueueTask(pollingTask)
+    const loopingTask = executor.loopingTask('looping', iterationTask, 10)
+    const handle = await executor.enqueueTask(loopingTask)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
@@ -1210,16 +1288,16 @@ describe('simpleTask', () => {
     expect(executionCount).toBe(3)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
-    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.taskId).toBe('looping')
     expect(finishedExecution.output.isSuccess).toBe(true)
     assert(finishedExecution.output.isSuccess)
-    expect(finishedExecution.output.output).toBe('poll_output')
+    expect(finishedExecution.output.output).toBe('iteration_output')
   })
 
-  it('should complete polling task with input schema', async () => {
+  it('should complete looping task with input schema', async () => {
     let executionCount = 0
-    const pollTask = executor.inputSchema(Schema.Struct({ name: Schema.String })).task({
-      id: 'poll',
+    const iterationTask = executor.inputSchema(Schema.Struct({ name: Schema.String })).task({
+      id: 'iteration',
       timeoutMs: 1000,
       run: (_, input) => {
         executionCount++
@@ -1234,8 +1312,8 @@ describe('simpleTask', () => {
       },
     })
 
-    const pollingTask = executor.pollingTask('polling', pollTask, 10)
-    const handle = await executor.enqueueTask(pollingTask, { name: 'poll_output' })
+    const loopingTask = executor.loopingTask('looping', iterationTask, 10)
+    const handle = await executor.enqueueTask(loopingTask, { name: 'iteration_output' })
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
@@ -1243,10 +1321,10 @@ describe('simpleTask', () => {
     expect(executionCount).toBe(3)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
-    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.taskId).toBe('looping')
     expect(finishedExecution.output.isSuccess).toBe(true)
     assert(finishedExecution.output.isSuccess)
-    expect(finishedExecution.output.output).toBe('poll_output')
+    expect(finishedExecution.output.output).toBe('iteration_output')
   })
 
   it('should complete sequential sleeping task', async () => {
@@ -1297,10 +1375,10 @@ describe('simpleTask', () => {
     expect(finishedExecution.output).toBe('final_output')
   })
 
-  it('should complete polling task with sleepMsBeforeRun number', async () => {
+  it('should complete looping task with sleepMsBeforeRun number', async () => {
     let executionCount = 0
-    const pollTask = executor.task({
-      id: 'poll',
+    const iterationTask = executor.task({
+      id: 'iteration',
       timeoutMs: 1000,
       run: () => {
         executionCount++
@@ -1310,13 +1388,13 @@ describe('simpleTask', () => {
             }
           : {
               isDone: true,
-              output: 'poll_output',
+              output: 'iteration_output',
             }
       },
     })
 
-    const pollingTask = executor.pollingTask('polling', pollTask, 10, 5)
-    const handle = await executor.enqueueTask(pollingTask)
+    const loopingTask = executor.loopingTask('looping', iterationTask, 10, 5)
+    const handle = await executor.enqueueTask(loopingTask)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
@@ -1324,16 +1402,16 @@ describe('simpleTask', () => {
     expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
-    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.taskId).toBe('looping')
     expect(finishedExecution.output.isSuccess).toBe(true)
     assert(finishedExecution.output.isSuccess)
-    expect(finishedExecution.output.output).toBe('poll_output')
+    expect(finishedExecution.output.output).toBe('iteration_output')
   })
 
-  it('should complete polling task with sleepMsBeforeRun function', async () => {
+  it('should complete looping task with sleepMsBeforeRun function', async () => {
     let executionCount = 0
-    const pollTask = executor.task({
-      id: 'poll',
+    const iterationTask = executor.task({
+      id: 'iteration',
       timeoutMs: 1000,
       run: () => {
         executionCount++
@@ -1343,13 +1421,13 @@ describe('simpleTask', () => {
             }
           : {
               isDone: true,
-              output: 'poll_output',
+              output: 'iteration_output',
             }
       },
     })
 
-    const pollingTask = executor.pollingTask('polling', pollTask, 10, (attempt) => attempt * 1)
-    const handle = await executor.enqueueTask(pollingTask)
+    const loopingTask = executor.loopingTask('looping', iterationTask, 10, (attempt) => attempt * 1)
+    const handle = await executor.enqueueTask(loopingTask)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
@@ -1357,16 +1435,16 @@ describe('simpleTask', () => {
     expect(executionCount).toBe(2)
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
-    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.taskId).toBe('looping')
     expect(finishedExecution.output.isSuccess).toBe(true)
     assert(finishedExecution.output.isSuccess)
-    expect(finishedExecution.output.output).toBe('poll_output')
+    expect(finishedExecution.output.output).toBe('iteration_output')
   })
 
-  it('should fail polling task', async () => {
+  it('should fail looping task', async () => {
     let executionCount = 0
-    const pollTask = executor.task({
-      id: 'poll',
+    const iterationTask = executor.task({
+      id: 'iteration',
       timeoutMs: 1000,
       run: () => {
         executionCount++
@@ -1380,23 +1458,25 @@ describe('simpleTask', () => {
       },
     })
 
-    const pollingTask = executor.pollingTask('polling', pollTask, 10)
-    const handle = await executor.enqueueTask(pollingTask)
+    const loopingTask = executor.loopingTask('looping', iterationTask, 10)
+    const handle = await executor.enqueueTask(loopingTask)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
     })
     expect(executionCount).toBe(2)
-    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.taskId).toBe('looping')
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
-    expect(finishedExecution.error?.message).toBe('Poll task poll failed: unknown error')
+    expect(finishedExecution.error?.message).toBe(
+      'Iteration task failed [taskId=iteration]: unknown error',
+    )
   })
 
-  it('should complete polling task with max attempts exceeded', async () => {
+  it('should complete looping task with max attempts exceeded', async () => {
     let executionCount = 0
-    const pollTask = executor.task({
-      id: 'poll',
+    const iterationTask = executor.task({
+      id: 'iteration',
       timeoutMs: 1000,
       run: () => {
         executionCount++
@@ -1406,23 +1486,23 @@ describe('simpleTask', () => {
       },
     })
 
-    const pollingTask = executor.pollingTask('polling', pollTask, 2)
-    const handle = await executor.enqueueTask(pollingTask)
+    const loopingTask = executor.loopingTask('looping', iterationTask, 2)
+    const handle = await executor.enqueueTask(loopingTask)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
     })
     expect(executionCount).toBe(2)
-    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.taskId).toBe('looping')
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.output.isSuccess).toBe(false)
     assert(!finishedExecution.output.isSuccess)
   })
 
-  it('should throw on polling task negative max attempts', () => {
-    const pollTask = executor.task({
-      id: 'poll',
+  it('should throw on looping task negative max attempts', () => {
+    const iterationTask = executor.task({
+      id: 'iteration',
       timeoutMs: 1000,
       run: () => {
         return {
@@ -1431,7 +1511,7 @@ describe('simpleTask', () => {
       },
     })
 
-    expect(() => executor.pollingTask('polling', pollTask, -1)).toThrow()
+    expect(() => executor.loopingTask('looping', iterationTask, -1)).toThrow()
   })
 
   it('should complete sleeping task', async () => {
@@ -1618,7 +1698,7 @@ describe('simpleTask', () => {
 
     while (true) {
       const executionStorageValues = await storage.getManyById([
-        { executionId: handle.getExecutionId(), filters: {} },
+        { executionId: handle.executionId, filters: {} },
       ])
       expect(executionStorageValues).toBeDefined()
       assert(executionStorageValues)
@@ -1650,7 +1730,7 @@ describe('simpleTask', () => {
         taskStarted = true
         try {
           for (let i = 0; i < 100; i++) {
-            if (ctx.cancelSignal.isCancelled()) {
+            if (ctx.abortSignal.aborted) {
               taskCancelled = true
               throw DurableExecutionError.nonRetryable('Task was cancelled')
             }
@@ -1658,7 +1738,7 @@ describe('simpleTask', () => {
           }
           return 'completed'
         } catch (error) {
-          if (ctx.cancelSignal.isCancelled()) {
+          if (ctx.abortSignal.aborted) {
             taskCancelled = true
           }
           throw error

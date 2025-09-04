@@ -51,9 +51,11 @@ describe('index', () => {
             enableTestMode: true,
           },
         )
-        await runStorageTest(storage, {
-          enableStorageBatching: true,
-        })
+        await expect(
+          runStorageTest(storage, {
+            enableStorageBatching: true,
+          }),
+        ).resolves.not.toThrow()
       })
     } finally {
       await container.stop()

@@ -1,15 +1,13 @@
-import { createCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
-import { getErrorMessage } from '@gpahal/std/errors'
-import { omitUndefinedValues } from '@gpahal/std/objects'
-import { sleep, sleepWithWakeup } from '@gpahal/std/promises'
+import { Duration, Effect, Metric, Schedule } from 'effect'
 
-import { DurableExecutionCancelledError, DurableExecutionError } from './errors'
-import type { LoggerInternal } from './logger'
-import { PromisePool } from './promise-pool'
+import { omitUndefinedValues } from '@gpahal/std/objects'
+
+import { makeBackgroundBatchProcessor } from './background-batch-processor'
+import { DurableExecutionError } from './errors'
 import {
+  TaskExecutionsStorageService,
   type TaskExecutionCloseStatus,
   type TaskExecutionOnChildrenFinishedProcessingStatus,
-  type TaskExecutionsStorage,
   type TaskExecutionStorageGetByIdFilters,
   type TaskExecutionStorageUpdate,
   type TaskExecutionStorageValue,
@@ -19,7 +17,14 @@ import {
   FINISHED_TASK_EXECUTION_STATUSES,
   type TaskExecutionStatus,
 } from './task'
+import { convertMaybePromiseToEffect } from './utils'
 
+/**
+ * Internal storage update type that excludes timestamp fields and some other fields that are
+ * managed automatically.
+ *
+ * @internal
+ */
 export type TaskExecutionStorageUpdateInternal = Omit<
   TaskExecutionStorageUpdate,
   | 'isFinished'
@@ -57,6 +62,24 @@ export type TaskExecutionStorageUpdateInternal = Omit<
   }
 }
 
+/**
+ * Converts an internal storage update to a complete storage update with timestamps.
+ *
+ * This function adds the fields that are automatically managed:
+ * - Sets `updatedAt` to the current time
+ * - Sets `isFinished` and `finishedAt` for terminal status transitions
+ * - Clears temporary fields like `runOutput` for finished tasks
+ * - Manages expiration and cleanup timestamps based on status
+ *
+ * The logic ensures consistent state transitions and proper cleanup of resources as tasks move
+ * through their lifecycle.
+ *
+ * @param now - Current timestamp in milliseconds
+ * @param internalUpdate - Update object without managed timestamp fields
+ * @returns Complete storage update with all managed fields set
+ *
+ * @internal
+ */
 export function getTaskExecutionStorageUpdate(
   now: number,
   internalUpdate: TaskExecutionStorageUpdateInternal,
@@ -148,591 +171,201 @@ export function getTaskExecutionStorageUpdate(
   return omitUndefinedValues(update)
 }
 
-const BATCH_REQUESTER_MAX_CONSECUTIVE_ERRORS = 5
-
-/**
- * A type that can be used to batch requests to a storage implementation.
- */
-type BatchRequest<T, R> = {
-  data: T
-  resolve: (value: R) => void
-  reject: (reason?: unknown) => void
+export type TaskExecutionsStorageInternalOptions = {
+  executorId: string
+  enableBatching: boolean
+  enableStats: boolean
+  backgroundBatchingIntraBatchSleepMs: number
+  maxRetryAttempts?: number
 }
 
-/**
- * A class that can be used to batch requests to a storage implementation.
- */
-class BatchRequester<T, R> {
-  private readonly logger: LoggerInternal
-  private readonly processName: string
-  private readonly batchSize: number
-  private readonly backgroundProcessIntraBatchSleepMs: number
-  private readonly singleRequestsBatchProcessFn: (
-    requests: ReadonlyArray<T>,
-  ) =>
-    | ReadonlyArray<R>
-    | null
-    | undefined
-    | void
-    | Promise<ReadonlyArray<R> | null | undefined | void>
-  private readonly shutdownSignal: CancelSignal
-  private readonly backgroundPromisePool: PromisePool
+export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
+  options: TaskExecutionsStorageInternalOptions,
+) {
+  const {
+    executorId,
+    enableBatching,
+    enableStats,
+    backgroundBatchingIntraBatchSleepMs,
+    maxRetryAttempts: maxRetryAttemptsOption,
+  } = options
+  const maxRetryAttempts =
+    maxRetryAttemptsOption == null ? 1 : Math.max(0, Math.min(10, maxRetryAttemptsOption))
 
-  private wakeupBackgroundProcess: (() => void) | undefined
-  private pendingRequests: Array<BatchRequest<T, R>>
+  const storage = yield* TaskExecutionsStorageService
 
-  constructor(
-    logger: LoggerInternal,
+  const metricsMap = new Map<string, Metric.Metric.Summary<number>>()
+
+  const withStats = Effect.fnUntraced(function* <T, E>(
     processName: string,
-    batchSize: number,
-    backgroundProcessIntraBatchSleepMs: number,
-    singleRequestsBatchProcessFn: (
-      requests: ReadonlyArray<T>,
-    ) =>
-      | ReadonlyArray<R>
-      | null
-      | undefined
-      | void
-      | Promise<ReadonlyArray<R> | null | undefined | void>,
-    shutdownSignal: CancelSignal,
-    backgroundPromisePool: PromisePool,
+    effect: Effect.Effect<T, E, never>,
   ) {
-    this.logger = logger
-    this.processName = processName
-    this.batchSize = batchSize
-    this.backgroundProcessIntraBatchSleepMs = backgroundProcessIntraBatchSleepMs
-    this.singleRequestsBatchProcessFn = singleRequestsBatchProcessFn
-    this.shutdownSignal = shutdownSignal
-    this.backgroundPromisePool = backgroundPromisePool
-    this.pendingRequests = []
-  }
+    const [duration, result] = yield* effect.pipe(Effect.timed)
 
-  private async sleepWithWakeup(ms: number, jitterRatio = 0): Promise<void> {
-    const [promise, resolve] = sleepWithWakeup(ms, jitterRatio)
-    this.wakeupBackgroundProcess = resolve
-    await promise
-    this.wakeupBackgroundProcess = undefined
-  }
-
-  shutdown(): void {
-    for (const request of this.pendingRequests) {
-      request.reject(DurableExecutionError.nonRetryable('Durable executor shutdown'))
-    }
-    this.pendingRequests = []
-  }
-
-  async runBackgroundProcess(): Promise<void> {
-    let consecutiveErrors = 0
-
-    const originalBackgroundProcessIntraBatchSleepMs = this.backgroundProcessIntraBatchSleepMs
-    let backgroundProcessIntraBatchSleepMs = originalBackgroundProcessIntraBatchSleepMs
-
-    const runBackgroundProcessSingleBatch = async (
-      requests: ReadonlyArray<BatchRequest<T, R>>,
-    ): Promise<void> => {
-      try {
-        const results = await this.singleRequestsBatchProcessFn(
-          requests.map((request) => request.data),
-        )
-        if (results == null) {
-          for (const request of requests) {
-            request.resolve(undefined as R)
-          }
-        } else if (results.length !== requests.length) {
-          const error = DurableExecutionError.nonRetryable(
-            `Batch processing returned ${results.length} results but expected ${requests.length}`,
-          )
-          this.logger.error(
-            `Error in batch requester ${this.processName}: result count mismatch`,
-            error,
-          )
-          for (const request of requests) {
-            request.reject(error)
-          }
-        } else {
-          for (const [i, request] of requests.entries()) {
-            request.resolve(results[i]!)
-          }
-        }
-
-        consecutiveErrors = 0
-        backgroundProcessIntraBatchSleepMs = originalBackgroundProcessIntraBatchSleepMs
-      } catch (error) {
-        for (const request of requests) {
-          request.reject(error)
-        }
-
-        if (error instanceof DurableExecutionCancelledError && this.shutdownSignal.isCancelled()) {
-          return
-        }
-
-        consecutiveErrors++
-        this.logger.error(
-          `Error in batch requester ${this.processName}: consecutive_errors=${consecutiveErrors}`,
-          error,
-        )
-
-        if (consecutiveErrors >= BATCH_REQUESTER_MAX_CONSECUTIVE_ERRORS) {
-          backgroundProcessIntraBatchSleepMs = Math.min(
-            backgroundProcessIntraBatchSleepMs * 1.25,
-            originalBackgroundProcessIntraBatchSleepMs * 5,
-          )
-        }
-      }
-    }
-
-    await this.sleepWithWakeup(backgroundProcessIntraBatchSleepMs, 0.25)
-    let skippedBatchCount = 0
-    while (true) {
-      try {
-        const requests = this.pendingRequests
-        this.pendingRequests = []
-        if (requests.length === 0) {
-          if (this.shutdownSignal.isCancelled()) {
-            break
-          }
-
-          backgroundProcessIntraBatchSleepMs = Math.min(
-            backgroundProcessIntraBatchSleepMs * 1.125,
-            originalBackgroundProcessIntraBatchSleepMs * 2,
-          )
-          await this.sleepWithWakeup(backgroundProcessIntraBatchSleepMs)
-          skippedBatchCount++
-          continue
-        } else {
-          backgroundProcessIntraBatchSleepMs = originalBackgroundProcessIntraBatchSleepMs
-          if (skippedBatchCount < 5 && requests.length < this.batchSize / 3) {
-            await this.sleepWithWakeup(backgroundProcessIntraBatchSleepMs)
-            skippedBatchCount++
-          } else {
-            skippedBatchCount = 0
-          }
-        }
-
-        for (let i = 0; i < requests.length; i += this.batchSize) {
-          this.backgroundPromisePool.addPromise(
-            runBackgroundProcessSingleBatch(requests.slice(i, i + this.batchSize)),
-          )
-        }
-      } catch (error) {
-        this.logger.error(`Error in batch requester ${this.processName}`, error)
-      }
-    }
-  }
-
-  addRequest(request: T): Promise<R> {
-    const promise = new Promise<R>((resolve, reject) => {
-      this.pendingRequests.push({ data: request, resolve, reject })
-      if (
-        this.wakeupBackgroundProcess != null &&
-        this.pendingRequests.length >= 0.75 * this.batchSize
-      ) {
-        this.wakeupBackgroundProcess()
-      }
-    })
-    return promise
-  }
-}
-
-/**
- * Internal class that can be used to interact with the storage implementation.
- *
- * This class is used to interact with the storage implementation. It is used by the executor to
- * interact with the storage implementation.
- *
- * @category Storage
- * @internal
- */
-export class TaskExecutionsStorageInternal {
-  private readonly logger: LoggerInternal
-  private readonly storage: TaskExecutionsStorage
-  private readonly enableBatching: boolean
-  private readonly enableStats: boolean
-  private readonly batchingBackgroundProcessIntraBatchSleepMs: number
-  private readonly maxRetryAttempts: number
-  private isStarted: boolean
-  private readonly shutdownSignal: CancelSignal
-  private readonly cancelShutdownSignal: () => void
-  private readonly backgroundProcessesPromisePool: PromisePool
-  private readonly backgroundPromisePool: PromisePool
-
-  private readonly callsDurationsStats: Map<string, { callsCount: number; meanDurationMs: number }>
-  private readonly perSecondCallsCountsStats: {
-    totalSeconds: number
-    totalCallsCount: number
-    meanCallsCount: number
-    maxCallsCount: number
-    recentPerSecondCallsCounts: Map<number, number>
-  }
-
-  private readonly insertManyBatchRequester:
-    | BatchRequester<ReadonlyArray<TaskExecutionStorageValue>, void>
-    | undefined
-  private readonly getByIdBatchRequester:
-    | BatchRequester<
-        { executionId: string; filters?: TaskExecutionStorageGetByIdFilters },
-        TaskExecutionStorageValue | undefined
-      >
-    | undefined
-  private readonly getBySleepingTaskUniqueIdBatchRequester:
-    | BatchRequester<{ sleepingTaskUniqueId: string }, TaskExecutionStorageValue | undefined>
-    | undefined
-  private readonly updateByIdBatchRequester:
-    | BatchRequester<
-        {
-          executionId: string
-          filters?: TaskExecutionStorageGetByIdFilters
-          update: TaskExecutionStorageUpdate
-        },
-        void
-      >
-    | undefined
-  private readonly updateByIdAndInsertChildrenIfUpdatedBatchRequester:
-    | BatchRequester<
-        {
-          executionId: string
-          filters?: TaskExecutionStorageGetByIdFilters
-          update: TaskExecutionStorageUpdate
-          childrenTaskExecutionsToInsertIfAnyUpdated: ReadonlyArray<TaskExecutionStorageValue>
-        },
-        void
-      >
-    | undefined
-  private readonly getByParentExecutionIdBatchRequester:
-    | BatchRequester<{ parentExecutionId: string }, Array<TaskExecutionStorageValue>>
-    | undefined
-  private readonly updateByParentExecutionIdAndIsFinishedBatchRequester:
-    | BatchRequester<
-        {
-          parentExecutionId: string
-          isFinished: boolean
-          update: TaskExecutionStorageUpdate
-        },
-        void
-      >
-    | undefined
-  private readonly batchRequesters: ReadonlyArray<BatchRequester<unknown, unknown>>
-
-  constructor(
-    logger: LoggerInternal,
-    storage: TaskExecutionsStorage,
-    {
-      enableBatching,
-      enableStats,
-      batchingBackgroundProcessIntraBatchSleepMs,
-      maxRetryAttempts,
-    }: {
-      enableBatching: boolean
-      enableStats: boolean
-      batchingBackgroundProcessIntraBatchSleepMs: number
-      maxRetryAttempts?: number
-    },
-  ) {
-    this.logger = logger
-    this.storage = storage
-    this.enableBatching = enableBatching
-    this.enableStats = enableStats
-    this.batchingBackgroundProcessIntraBatchSleepMs = batchingBackgroundProcessIntraBatchSleepMs
-    this.maxRetryAttempts =
-      maxRetryAttempts != null ? Math.max(0, Math.min(10, maxRetryAttempts)) : 1
-    this.isStarted = false
-
-    const [cancelSignal, cancel] = createCancelSignal()
-    this.shutdownSignal = cancelSignal
-    this.cancelShutdownSignal = cancel
-
-    this.backgroundProcessesPromisePool = new PromisePool()
-    this.backgroundPromisePool = new PromisePool()
-    this.callsDurationsStats = new Map()
-    this.perSecondCallsCountsStats = {
-      totalSeconds: 0,
-      totalCallsCount: 0,
-      meanCallsCount: 0,
-      maxCallsCount: 0,
-      recentPerSecondCallsCounts: new Map(),
-    }
-
-    if (this.enableBatching) {
-      this.insertManyBatchRequester = new BatchRequester(
-        logger,
-        'insertMany',
-        100,
-        this.batchingBackgroundProcessIntraBatchSleepMs * 2,
-        (requests) => this.insertManyBatched(requests),
-        this.shutdownSignal,
-        this.backgroundPromisePool,
+    if (!metricsMap.has(processName)) {
+      metricsMap.set(
+        processName,
+        Metric.summary({
+          name: processName,
+          maxAge: Duration.minutes(30),
+          maxSize: 100_000,
+          error: 0.025,
+          quantiles: [0.5, 0.9, 0.95],
+        }),
       )
-      this.getByIdBatchRequester = new BatchRequester(
-        logger,
-        'getById',
-        100,
-        this.batchingBackgroundProcessIntraBatchSleepMs * 2,
-        (requests) => this.getManyById(requests),
-        this.shutdownSignal,
-        this.backgroundPromisePool,
-      )
-      this.getBySleepingTaskUniqueIdBatchRequester = new BatchRequester(
-        logger,
-        'getBySleepingTaskUniqueId',
-        100,
-        this.batchingBackgroundProcessIntraBatchSleepMs * 2,
-        (requests) => this.getManyBySleepingTaskUniqueId(requests),
-        this.shutdownSignal,
-        this.backgroundPromisePool,
-      )
-      this.updateByIdBatchRequester = new BatchRequester(
-        logger,
-        'updateById',
-        100,
-        this.batchingBackgroundProcessIntraBatchSleepMs,
-        (requests) => this.updateManyById(requests),
-        this.shutdownSignal,
-        this.backgroundPromisePool,
-      )
-      this.updateByIdAndInsertChildrenIfUpdatedBatchRequester = new BatchRequester(
-        logger,
-        'updateByIdAndInsertChildrenIfUpdated',
-        50,
-        this.batchingBackgroundProcessIntraBatchSleepMs,
-        (requests) => this.updateManyByIdAndInsertChildrenIfUpdated(requests),
-        this.shutdownSignal,
-        this.backgroundPromisePool,
-      )
-      this.getByParentExecutionIdBatchRequester = new BatchRequester(
-        logger,
-        'getByParentExecutionId',
-        3,
-        this.batchingBackgroundProcessIntraBatchSleepMs,
-        (requests) => this.getManyByParentExecutionId(requests),
-        this.shutdownSignal,
-        this.backgroundPromisePool,
-      )
-      this.updateByParentExecutionIdAndIsFinishedBatchRequester = new BatchRequester(
-        logger,
-        'updateByParentExecutionIdAndIsFinished',
-        5,
-        this.batchingBackgroundProcessIntraBatchSleepMs * 2,
-        (requests) => this.updateManyByParentExecutionIdAndIsFinished(requests),
-        this.shutdownSignal,
-        this.backgroundPromisePool,
-      )
-      this.batchRequesters = [
-        this.insertManyBatchRequester as BatchRequester<unknown, unknown>,
-        this.getByIdBatchRequester as BatchRequester<unknown, unknown>,
-        this.getBySleepingTaskUniqueIdBatchRequester as BatchRequester<unknown, unknown>,
-        this.updateByIdBatchRequester as BatchRequester<unknown, unknown>,
-        this.updateByIdAndInsertChildrenIfUpdatedBatchRequester as BatchRequester<unknown, unknown>,
-        this.getByParentExecutionIdBatchRequester as BatchRequester<unknown, unknown>,
-        this.updateByParentExecutionIdAndIsFinishedBatchRequester as BatchRequester<
-          unknown,
-          unknown
-        >,
-      ]
-    } else {
-      this.batchRequesters = []
-    }
-  }
-
-  private throwIfShutdown(): void {
-    if (this.shutdownSignal.isCancelled()) {
-      throw new DurableExecutionCancelledError('Storage shutdown')
-    }
-  }
-
-  private checkIfBackgroundProcessesRunning(): boolean {
-    return this.isStarted && !this.shutdownSignal.isCancelled()
-  }
-
-  private getMergedRecentPerSecondCallsCountsStats(now: number) {
-    const currSecond = Math.floor(now / 1000)
-    const filteredEntries = [
-      ...this.perSecondCallsCountsStats.recentPerSecondCallsCounts.entries(),
-    ].filter(([key]) => {
-      return key < currSecond
-    })
-    if (filteredEntries.length === 0) {
-      return {
-        totalSeconds: this.perSecondCallsCountsStats.totalSeconds,
-        totalCallsCount: this.perSecondCallsCountsStats.totalCallsCount,
-        meanCallsCount: this.perSecondCallsCountsStats.meanCallsCount,
-        maxCallsCount: this.perSecondCallsCountsStats.maxCallsCount,
-        recentPerSecondCallsCounts: new Map(
-          this.perSecondCallsCountsStats.recentPerSecondCallsCounts,
-        ),
-      }
     }
 
-    const totalValue = filteredEntries.reduce((acc, [, value]) => acc + value, 0)
-    const maxValue = Math.max(...filteredEntries.map(([, value]) => value))
-    const prevTotalSeconds = this.perSecondCallsCountsStats.totalSeconds
-    const meanCallsCount =
-      (this.perSecondCallsCountsStats.meanCallsCount * prevTotalSeconds + totalValue) /
-      (prevTotalSeconds + filteredEntries.length)
-    return {
-      totalSeconds: prevTotalSeconds + filteredEntries.length,
-      totalCallsCount: this.perSecondCallsCountsStats.totalCallsCount + totalValue,
-      meanCallsCount,
-      maxCallsCount: Math.max(this.perSecondCallsCountsStats.maxCallsCount, maxValue),
-      recentPerSecondCallsCounts: new Map(
-        [...this.perSecondCallsCountsStats.recentPerSecondCallsCounts.entries()].filter(
-          ([key]) => key >= currSecond,
-        ),
-      ),
-    }
-  }
-
-  private mergeRecentPerSecondCallsCountsStats(now: number) {
-    const mergedRecentPerSecondCallsCountsStats = this.getMergedRecentPerSecondCallsCountsStats(now)
-    this.perSecondCallsCountsStats.totalSeconds = mergedRecentPerSecondCallsCountsStats.totalSeconds
-    this.perSecondCallsCountsStats.totalCallsCount =
-      mergedRecentPerSecondCallsCountsStats.totalCallsCount
-    this.perSecondCallsCountsStats.meanCallsCount =
-      mergedRecentPerSecondCallsCountsStats.meanCallsCount
-    this.perSecondCallsCountsStats.maxCallsCount =
-      mergedRecentPerSecondCallsCountsStats.maxCallsCount
-    this.perSecondCallsCountsStats.recentPerSecondCallsCounts =
-      mergedRecentPerSecondCallsCountsStats.recentPerSecondCallsCounts
-  }
-
-  /**
-   * Run a function with stats.
-   *
-   * @param key - The key to use for the stats.
-   * @param fn - The function to run.
-   * @returns The result of the function.
-   */
-  private async withStats<T>(key: string, fn: () => T | Promise<T>): Promise<T> {
-    const now = Date.now()
-    const start = performance.now()
-    const result = await fn()
-    const durationMs = performance.now() - start
-
-    if (!this.callsDurationsStats.has(key)) {
-      this.callsDurationsStats.set(key, { callsCount: 0, meanDurationMs: 0 })
-    }
-    const callsDurationsStat = this.callsDurationsStats.get(key)!
-    const prevCallsCount = callsDurationsStat.callsCount
-    const prevMeanDurationMs = callsDurationsStat.meanDurationMs
-    callsDurationsStat.callsCount++
-    callsDurationsStat.meanDurationMs =
-      (prevMeanDurationMs * prevCallsCount + durationMs) / (prevCallsCount + 1)
-
-    const currSecond = Math.floor(now / 1000)
-    this.perSecondCallsCountsStats.recentPerSecondCallsCounts.set(
-      currSecond,
-      (this.perSecondCallsCountsStats.recentPerSecondCallsCounts.get(currSecond) ?? 0) + 1,
-    )
-    this.mergeRecentPerSecondCallsCountsStats(currSecond)
+    const metric = metricsMap.get(processName)!
+    yield* metric(Effect.succeed(Duration.toMillis(duration)))
     return result
+  })
+
+  const wrapStorageEffect = <T, E>(processName: string, effect: Effect.Effect<T, E, never>) => {
+    return maxRetryAttempts <= 0
+      ? enableStats
+        ? withStats(processName, effect)
+        : effect
+      : (enableStats ? withStats(processName, effect) : effect).pipe(
+          Effect.retry({
+            times: maxRetryAttempts,
+            schedule: Schedule.exponential(Duration.millis(25), 2).pipe(
+              Schedule.modifyDelay(Duration.min(Duration.millis(1000))),
+            ),
+            until: (error) => error instanceof DurableExecutionError && !error.isRetryable,
+          }),
+        )
   }
 
-  private getResolvedMaxRetryAttempts(maxRetryAttempts?: number): number {
-    return Math.max(
-      0,
-      Math.min(10, maxRetryAttempts != null ? maxRetryAttempts : this.maxRetryAttempts),
-    )
-  }
-
-  private async retry<T>(
-    fnName: string,
-    fn: () => T | Promise<T>,
-    maxRetryAttempts?: number,
-  ): Promise<T> {
-    const resolvedMaxRetryAttempts = this.getResolvedMaxRetryAttempts(maxRetryAttempts)
-    if (resolvedMaxRetryAttempts <= 0) {
-      return await (this.enableStats ? this.withStats(fnName, fn) : fn())
-    }
-
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await (this.enableStats ? this.withStats(fnName, fn) : fn())
-      } catch (error) {
-        const durableExecutionError =
-          error instanceof DurableExecutionError
-            ? error
-            : DurableExecutionError.retryable(getErrorMessage(error))
-
-        if (!durableExecutionError.isRetryable) {
-          throw error
-        }
-        if (attempt >= resolvedMaxRetryAttempts) {
-          throw error
-        }
-
-        this.logger.error(`Error while retrying ${fnName}`, error)
-        await sleep(Math.min(25 * 2 ** attempt, 1000), { jitterRatio: 0.25 })
-      }
-    }
-  }
-
-  async insertMany(executions: Array<TaskExecutionStorageValue>): Promise<void> {
+  const insertManyUnbatched = Effect.fn(function* (
+    executions: ReadonlyArray<TaskExecutionStorageValue>,
+  ) {
     if (executions.length === 0) {
       return
     }
+    yield* wrapStorageEffect(
+      'insertMany',
+      convertMaybePromiseToEffect(() => storage.insertMany(executions)),
+    )
+  })
 
-    if (
-      !this.insertManyBatchRequester ||
-      !this.checkIfBackgroundProcessesRunning() ||
-      executions.length >= 3
-    ) {
-      await this.insertManyBatched([executions])
-      return
+  const insertManyBackgroundBatchProcessor = yield* makeBackgroundBatchProcessor<
+    ReadonlyArray<TaskExecutionStorageValue>,
+    void
+  >({
+    executorId,
+    processName: 'insertMany',
+    enableBatching,
+    intraBatchSleepMs: backgroundBatchingIntraBatchSleepMs,
+    batchWeight: 100,
+    processBatchRequests: (requests) => insertManyUnbatched(requests.flat()),
+  })
+
+  const insertMany = Effect.fn(function* (requests: ReadonlyArray<TaskExecutionStorageValue>) {
+    return yield* insertManyBackgroundBatchProcessor.processRequest({
+      input: requests,
+      weight: requests.length,
+      enableBatching: requests.length <= 5,
+    })
+  })
+
+  const getManyByIdUnbatched = Effect.fn(function* (
+    requests: ReadonlyArray<{ executionId: string; filters?: TaskExecutionStorageGetByIdFilters }>,
+  ) {
+    if (requests.length === 0) {
+      return []
     }
-    await this.insertManyBatchRequester.addRequest(executions)
-  }
+    return yield* wrapStorageEffect(
+      'getManyById',
+      convertMaybePromiseToEffect(() => storage.getManyById(requests)),
+    )
+  })
 
-  private async insertManyBatched(
-    requests: ReadonlyArray<ReadonlyArray<TaskExecutionStorageValue>>,
-  ): Promise<void> {
-    await this.retry('insertMany', () => this.storage.insertMany(requests.flat()))
-  }
+  const getManyByIdBackgroundBatchProcessor = yield* makeBackgroundBatchProcessor<
+    { executionId: string; filters?: TaskExecutionStorageGetByIdFilters },
+    TaskExecutionStorageValue | undefined
+  >({
+    executorId,
+    processName: 'getManyById',
+    enableBatching,
+    intraBatchSleepMs: backgroundBatchingIntraBatchSleepMs,
+    batchWeight: 100,
+    processBatchRequests: getManyByIdUnbatched,
+  })
 
-  async getById(request: {
+  const getById = Effect.fn(function* (request: {
     executionId: string
     filters?: TaskExecutionStorageGetByIdFilters
-  }): Promise<TaskExecutionStorageValue | undefined> {
-    if (!this.getByIdBatchRequester || !this.checkIfBackgroundProcessesRunning()) {
-      const storageValues = await this.getManyById([request])
-      return storageValues[0]
+  }) {
+    return yield* getManyByIdBackgroundBatchProcessor.processRequest({
+      input: request,
+    })
+  })
+
+  const getManyBySleepingTaskUniqueIdUnbatched = Effect.fn(function* (
+    requests: ReadonlyArray<{ sleepingTaskUniqueId: string }>,
+  ) {
+    if (requests.length === 0) {
+      return []
     }
+    return yield* wrapStorageEffect(
+      'getManyBySleepingTaskUniqueId',
+      convertMaybePromiseToEffect(() => storage.getManyBySleepingTaskUniqueId(requests)),
+    )
+  })
 
-    return await this.getByIdBatchRequester.addRequest(request)
-  }
+  const getManyBySleepingTaskUniqueIdBackgroundBatchProcessor = yield* makeBackgroundBatchProcessor<
+    { sleepingTaskUniqueId: string },
+    TaskExecutionStorageValue | undefined
+  >({
+    executorId,
+    processName: 'getManyBySleepingTaskUniqueId',
+    enableBatching,
+    intraBatchSleepMs: backgroundBatchingIntraBatchSleepMs,
+    batchWeight: 50,
+    processBatchRequests: getManyBySleepingTaskUniqueIdUnbatched,
+  })
 
-  private async getManyById(
-    requests: ReadonlyArray<{
-      executionId: string
-      filters?: TaskExecutionStorageGetByIdFilters
-    }>,
-  ): Promise<Array<TaskExecutionStorageValue | undefined>> {
-    return await this.retry('getManyById', () => this.storage.getManyById(requests))
-  }
-
-  async getBySleepingTaskUniqueId(request: {
+  const getBySleepingTaskUniqueId = Effect.fn(function* (request: {
     sleepingTaskUniqueId: string
-  }): Promise<TaskExecutionStorageValue | undefined> {
-    if (
-      !this.getBySleepingTaskUniqueIdBatchRequester ||
-      !this.checkIfBackgroundProcessesRunning()
-    ) {
-      const storageValues = await this.getManyBySleepingTaskUniqueId([request])
-      return storageValues[0]
-    }
+  }) {
+    return yield* getManyBySleepingTaskUniqueIdBackgroundBatchProcessor.processRequest({
+      input: request,
+    })
+  })
 
-    return await this.getBySleepingTaskUniqueIdBatchRequester.addRequest(request)
-  }
-
-  private async getManyBySleepingTaskUniqueId(
+  const updateManyByIdUnbatched = Effect.fn(function* (
     requests: ReadonlyArray<{
-      sleepingTaskUniqueId: string
+      executionId: string
+      filters?: TaskExecutionStorageGetByIdFilters
+      update: TaskExecutionStorageUpdate
     }>,
-  ): Promise<Array<TaskExecutionStorageValue | undefined>> {
-    return await this.retry('getManyBySleepingTaskUniqueId', () =>
-      this.storage.getManyBySleepingTaskUniqueId(requests),
+  ) {
+    if (requests.length === 0) {
+      return
+    }
+    yield* wrapStorageEffect(
+      'updateManyById',
+      convertMaybePromiseToEffect(() => storage.updateManyById(requests)),
     )
-  }
+  })
 
-  async updateById(
+  const updateManyByIdBackgroundBatchProcessor = yield* makeBackgroundBatchProcessor<
+    {
+      executionId: string
+      filters?: TaskExecutionStorageGetByIdFilters
+      update: TaskExecutionStorageUpdate
+    },
+    void
+  >({
+    executorId,
+    processName: 'updateManyById',
+    enableBatching,
+    intraBatchSleepMs: backgroundBatchingIntraBatchSleepMs,
+    batchWeight: 100,
+    processBatchRequests: updateManyByIdUnbatched,
+  })
+
+  const updateById = Effect.fn(function* (
     now: number,
     request: {
       executionId: string
@@ -740,7 +373,7 @@ export class TaskExecutionsStorageInternal {
       update: TaskExecutionStorageUpdateInternal
     },
     execution?: TaskExecutionStorageValue,
-  ): Promise<void> {
+  ) {
     let finalUpdate = request.update
     if (
       request.update.status &&
@@ -750,34 +383,51 @@ export class TaskExecutionsStorageInternal {
       finalUpdate = { ...request.update, closeStatus: 'ready' }
     }
 
-    if (!this.updateByIdBatchRequester || !this.checkIfBackgroundProcessesRunning()) {
-      await this.updateManyById([
-        {
-          ...request,
-          update: getTaskExecutionStorageUpdate(now, finalUpdate),
-        },
-      ])
-      return
-    }
-
-    await this.updateByIdBatchRequester.addRequest({
-      executionId: request.executionId,
-      filters: request.filters,
-      update: getTaskExecutionStorageUpdate(now, finalUpdate),
+    return yield* updateManyByIdBackgroundBatchProcessor.processRequest({
+      input: {
+        ...request,
+        update: getTaskExecutionStorageUpdate(now, finalUpdate),
+      },
     })
-  }
+  })
 
-  private async updateManyById(
+  const updateManyByIdAndInsertChildrenIfUpdatedUnbatched = Effect.fn(function* (
     requests: ReadonlyArray<{
       executionId: string
       filters?: TaskExecutionStorageGetByIdFilters
       update: TaskExecutionStorageUpdate
+      childrenTaskExecutionsToInsertIfAnyUpdated: ReadonlyArray<TaskExecutionStorageValue>
     }>,
-  ): Promise<void> {
-    await this.retry('updateManyById', () => this.storage.updateManyById(requests))
-  }
+  ) {
+    if (requests.length === 0) {
+      return
+    }
+    yield* wrapStorageEffect(
+      'updateManyByIdAndInsertChildrenIfUpdated',
+      convertMaybePromiseToEffect(() => storage.updateManyByIdAndInsertChildrenIfUpdated(requests)),
+    )
+  })
 
-  async updateByIdAndInsertChildrenIfUpdated(
+  const updateManyByIdAndInsertChildrenIfUpdatedBackgroundBatchProcessor =
+    yield* makeBackgroundBatchProcessor<
+      {
+        executionId: string
+        filters?: TaskExecutionStorageGetByIdFilters
+        update: TaskExecutionStorageUpdate
+        childrenTaskExecutionsToInsertIfAnyUpdated: ReadonlyArray<TaskExecutionStorageValue>
+      },
+      void
+    >({
+      executorId,
+      processName: 'updateManyByIdAndInsertChildrenIfUpdated',
+      enableBatching,
+      intraBatchSleepMs: backgroundBatchingIntraBatchSleepMs,
+      batchWeight: 100,
+      processBatchRequests: (requests) =>
+        updateManyByIdAndInsertChildrenIfUpdatedUnbatched(requests),
+    })
+
+  const updateByIdAndInsertChildrenIfUpdated = Effect.fn(function* (
     now: number,
     request: {
       executionId: string
@@ -786,9 +436,9 @@ export class TaskExecutionsStorageInternal {
       childrenTaskExecutionsToInsertIfAnyUpdated: ReadonlyArray<TaskExecutionStorageValue>
     },
     execution?: TaskExecutionStorageValue,
-  ): Promise<void> {
+  ) {
     if (request.childrenTaskExecutionsToInsertIfAnyUpdated.length === 0) {
-      return await this.updateById(now, request, execution)
+      return yield* updateById(now, request, execution)
     }
 
     let finalUpdate = request.update
@@ -800,40 +450,17 @@ export class TaskExecutionsStorageInternal {
       finalUpdate = { ...request.update, closeStatus: 'ready' }
     }
 
-    if (
-      !this.updateByIdAndInsertChildrenIfUpdatedBatchRequester ||
-      !this.checkIfBackgroundProcessesRunning() ||
-      request.childrenTaskExecutionsToInsertIfAnyUpdated.length >= 3
-    ) {
-      await this.updateManyByIdAndInsertChildrenIfUpdated([
-        {
-          ...request,
-          update: getTaskExecutionStorageUpdate(now, finalUpdate),
-        },
-      ])
-      return
-    }
-
-    await this.updateByIdAndInsertChildrenIfUpdatedBatchRequester.addRequest({
-      ...request,
-      update: getTaskExecutionStorageUpdate(now, finalUpdate),
+    return yield* updateManyByIdAndInsertChildrenIfUpdatedBackgroundBatchProcessor.processRequest({
+      input: {
+        ...request,
+        update: getTaskExecutionStorageUpdate(now, finalUpdate),
+      },
+      weight: request.childrenTaskExecutionsToInsertIfAnyUpdated.length,
+      enableBatching: request.childrenTaskExecutionsToInsertIfAnyUpdated.length <= 5,
     })
-  }
+  })
 
-  private async updateManyByIdAndInsertChildrenIfUpdated(
-    requests: ReadonlyArray<{
-      executionId: string
-      filters?: TaskExecutionStorageGetByIdFilters
-      update: TaskExecutionStorageUpdate
-      childrenTaskExecutionsToInsertIfAnyUpdated: ReadonlyArray<TaskExecutionStorageValue>
-    }>,
-  ): Promise<void> {
-    await this.retry('updateManyByIdAndInsertChildrenIfUpdated', () =>
-      this.storage.updateManyByIdAndInsertChildrenIfUpdated(requests),
-    )
-  }
-
-  async updateByStatusAndStartAtLessThanAndReturn(
+  const updateByStatusAndStartAtLessThanAndReturn = Effect.fn(function* (
     now: number,
     request: {
       status: TaskExecutionStatus
@@ -842,63 +469,70 @@ export class TaskExecutionsStorageInternal {
       updateExpiresAtWithStartedAt: number
       limit: number
     },
-    maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.retry(
+  ) {
+    if (request.limit <= 0) {
+      return []
+    }
+    return yield* wrapStorageEffect(
       'updateByStatusAndStartAtLessThanAndReturn',
-      () =>
-        this.storage.updateByStatusAndStartAtLessThanAndReturn({
+      convertMaybePromiseToEffect(() =>
+        storage.updateByStatusAndStartAtLessThanAndReturn({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
         }),
-      maxRetryAttempts,
+      ),
     )
-  }
+  })
 
-  async updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
-    now: number,
-    request: {
-      status: TaskExecutionStatus
-      onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus
-      update: TaskExecutionStorageUpdateInternal
-      limit: number
-    },
-    maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.retry(
-      'updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn',
-      () =>
-        this.storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
-          {
-            ...request,
-            update: getTaskExecutionStorageUpdate(now, request.update),
-          },
+  const updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
+    Effect.fn(function* (
+      now: number,
+      request: {
+        status: TaskExecutionStatus
+        onChildrenFinishedProcessingStatus: TaskExecutionOnChildrenFinishedProcessingStatus
+        update: TaskExecutionStorageUpdateInternal
+        limit: number
+      },
+    ) {
+      if (request.limit <= 0) {
+        return []
+      }
+      return yield* wrapStorageEffect(
+        'updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn',
+        convertMaybePromiseToEffect(() =>
+          storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
+            {
+              ...request,
+              update: getTaskExecutionStorageUpdate(now, request.update),
+            },
+          ),
         ),
-      maxRetryAttempts,
-    )
-  }
+      )
+    })
 
-  async updateByCloseStatusAndReturn(
+  const updateByCloseStatusAndReturn = Effect.fn(function* (
     now: number,
     request: {
       closeStatus: TaskExecutionCloseStatus
       update: TaskExecutionStorageUpdateInternal
       limit: number
     },
-    maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.retry(
+  ) {
+    if (request.limit <= 0) {
+      return []
+    }
+    return yield* wrapStorageEffect(
       'updateByCloseStatusAndReturn',
-      () =>
-        this.storage.updateByCloseStatusAndReturn({
+      convertMaybePromiseToEffect(() =>
+        storage.updateByCloseStatusAndReturn({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
         }),
-      maxRetryAttempts,
+      ),
     )
-  }
+  })
 
-  async updateByStatusAndIsSleepingTaskAndExpiresAtLessThan(
+  const updateByStatusAndIsSleepingTaskAndExpiresAtLessThan = Effect.fn(function* (
     now: number,
     request: {
       status: TaskExecutionStatus
@@ -907,60 +541,66 @@ export class TaskExecutionsStorageInternal {
       update: TaskExecutionStorageUpdateInternal
       limit: number
     },
-    maxRetryAttempts?: number,
-  ): Promise<number> {
-    return await this.retry(
+  ) {
+    if (request.limit <= 0) {
+      return 0
+    }
+    return yield* wrapStorageEffect(
       'updateByStatusAndIsSleepingTaskAndExpiresAtLessThan',
-      () =>
-        this.storage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan({
+      convertMaybePromiseToEffect(() =>
+        storage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
         }),
-      maxRetryAttempts,
+      ),
     )
-  }
+  })
 
-  async updateByOnChildrenFinishedProcessingExpiresAtLessThan(
+  const updateByOnChildrenFinishedProcessingExpiresAtLessThan = Effect.fn(function* (
     now: number,
     request: {
       onChildrenFinishedProcessingExpiresAtLessThan: number
       update: TaskExecutionStorageUpdateInternal
       limit: number
     },
-    maxRetryAttempts?: number,
-  ): Promise<number> {
-    return await this.retry(
+  ) {
+    if (request.limit <= 0) {
+      return 0
+    }
+    return yield* wrapStorageEffect(
       'updateByOnChildrenFinishedProcessingExpiresAtLessThan',
-      () =>
-        this.storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan({
+      convertMaybePromiseToEffect(() =>
+        storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
         }),
-      maxRetryAttempts,
+      ),
     )
-  }
+  })
 
-  async updateByCloseExpiresAtLessThan(
+  const updateByCloseExpiresAtLessThan = Effect.fn(function* (
     now: number,
     request: {
       closeExpiresAtLessThan: number
       update: TaskExecutionStorageUpdateInternal
       limit: number
     },
-    maxRetryAttempts?: number,
-  ): Promise<number> {
-    return await this.retry(
+  ) {
+    if (request.limit <= 0) {
+      return 0
+    }
+    return yield* wrapStorageEffect(
       'updateByCloseExpiresAtLessThan',
-      () =>
-        this.storage.updateByCloseExpiresAtLessThan({
+      convertMaybePromiseToEffect(() =>
+        storage.updateByCloseExpiresAtLessThan({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
         }),
-      maxRetryAttempts,
+      ),
     )
-  }
+  })
 
-  async updateByExecutorIdAndNeedsPromiseCancellationAndReturn(
+  const updateByExecutorIdAndNeedsPromiseCancellationAndReturn = Effect.fn(function* (
     now: number,
     request: {
       executorId: string
@@ -968,164 +608,185 @@ export class TaskExecutionsStorageInternal {
       update: TaskExecutionStorageUpdateInternal
       limit: number
     },
-    maxRetryAttempts?: number,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    return await this.retry(
+  ) {
+    return yield* wrapStorageEffect(
       'updateByExecutorIdAndNeedsPromiseCancellationAndReturn',
-      () =>
-        this.storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn({
+      convertMaybePromiseToEffect(() =>
+        storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
         }),
-      maxRetryAttempts,
+      ),
     )
-  }
+  })
 
-  async getByParentExecutionId(
-    parentExecutionId: string,
-  ): Promise<Array<TaskExecutionStorageValue>> {
-    if (!this.getByParentExecutionIdBatchRequester || !this.checkIfBackgroundProcessesRunning()) {
-      const storageValues = await this.getManyByParentExecutionId([{ parentExecutionId }])
-      return storageValues && storageValues.length > 0 ? storageValues[0]! : []
+  const getManyByParentExecutionIdUnbatched = Effect.fn(function* (
+    requests: ReadonlyArray<{ parentExecutionId: string }>,
+  ) {
+    if (requests.length === 0) {
+      return []
     }
-
-    return await this.getByParentExecutionIdBatchRequester.addRequest({ parentExecutionId })
-  }
-
-  private async getManyByParentExecutionId(
-    requests: ReadonlyArray<{
-      parentExecutionId: string
-    }>,
-  ): Promise<Array<Array<TaskExecutionStorageValue>>> {
-    return await this.retry('getManyByParentExecutionId', () =>
-      this.storage.getManyByParentExecutionId(requests),
+    return yield* wrapStorageEffect(
+      'getManyByParentExecutionId',
+      convertMaybePromiseToEffect(() => storage.getManyByParentExecutionId(requests)),
     )
-  }
+  })
 
-  async updateByParentExecutionIdAndIsFinished(
-    now: number,
-    request: {
-      parentExecutionId: string
-      isFinished: boolean
-      update: TaskExecutionStorageUpdateInternal
-    },
-  ): Promise<void> {
-    if (
-      !this.updateByParentExecutionIdAndIsFinishedBatchRequester ||
-      !this.checkIfBackgroundProcessesRunning()
-    ) {
-      await this.updateManyByParentExecutionIdAndIsFinished([
-        {
-          ...request,
-          update: getTaskExecutionStorageUpdate(now, request.update),
-        },
-      ])
-      return
-    }
+  const getManyByParentExecutionIdBackgroundBatchProcessor = yield* makeBackgroundBatchProcessor<
+    { parentExecutionId: string },
+    Array<TaskExecutionStorageValue>
+  >({
+    executorId,
+    processName: 'getManyByParentExecutionId',
+    enableBatching,
+    intraBatchSleepMs: backgroundBatchingIntraBatchSleepMs,
+    batchWeight: 3,
+    processBatchRequests: getManyByParentExecutionIdUnbatched,
+  })
 
-    return await this.updateByParentExecutionIdAndIsFinishedBatchRequester.addRequest({
-      ...request,
-      update: getTaskExecutionStorageUpdate(now, request.update),
+  const getByParentExecutionId = Effect.fn(function* (request: { parentExecutionId: string }) {
+    return yield* getManyByParentExecutionIdBackgroundBatchProcessor.processRequest({
+      input: request,
     })
-  }
+  })
 
-  private async updateManyByParentExecutionIdAndIsFinished(
+  const updateManyByParentExecutionIdAndIsFinishedUnbatched = Effect.fn(function* (
     requests: ReadonlyArray<{
       parentExecutionId: string
       isFinished: boolean
       update: TaskExecutionStorageUpdate
     }>,
-  ): Promise<void> {
-    await this.retry('updateManyByParentExecutionIdAndIsFinished', () =>
-      this.storage.updateManyByParentExecutionIdAndIsFinished(requests),
-    )
-  }
-
-  async updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus(
-    now: number,
-    request: {
-      isFinished: boolean
-      closeStatus: TaskExecutionCloseStatus
-      update: TaskExecutionStorageUpdateInternal
-      limit: number
-    },
-    maxRetryAttempts?: number,
-  ): Promise<number> {
-    return await this.retry(
-      'updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus',
-      () =>
-        this.storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus({
-          ...request,
-          update: getTaskExecutionStorageUpdate(now, request.update),
-        }),
-      maxRetryAttempts,
-    )
-  }
-
-  getCallsDurationsStats(): Map<string, { callsCount: number; meanDurationMs: number }> {
-    return new Map(
-      [...this.callsDurationsStats.entries()].map(([key, value]) => [
-        key,
-        { callsCount: value.callsCount, meanDurationMs: value.meanDurationMs },
-      ]),
-    )
-  }
-
-  getPerSecondCallsCountsStats(): {
-    totalSeconds: number
-    totalCallsCount: number
-    meanCallsCount: number
-    maxCallsCount: number
-  } {
-    const perSecondCallsCountsStats = this.getMergedRecentPerSecondCallsCountsStats(
-      Date.now() + 5000,
-    )
-    return {
-      totalSeconds: perSecondCallsCountsStats.totalSeconds,
-      totalCallsCount: perSecondCallsCountsStats.totalCallsCount,
-      meanCallsCount: perSecondCallsCountsStats.meanCallsCount,
-      maxCallsCount: perSecondCallsCountsStats.maxCallsCount,
-    }
-  }
-
-  start(): void {
-    this.throwIfShutdown()
-
-    if (!this.enableBatching || this.isStarted) {
+  ) {
+    if (requests.length === 0) {
       return
     }
-
-    this.isStarted = true
-    this.logger.debug('Starting storage background processes')
-
-    this.backgroundProcessesPromisePool.addPromises(
-      this.batchRequesters.map((batchRequester) => batchRequester.runBackgroundProcess()),
+    yield* wrapStorageEffect(
+      'updateManyByParentExecutionIdAndIsFinished',
+      convertMaybePromiseToEffect(() =>
+        storage.updateManyByParentExecutionIdAndIsFinished(requests),
+      ),
     )
+  })
 
-    this.logger.debug('Started storage background processes')
+  const updateManyByParentExecutionIdAndIsFinishedBackgroundBatchProcessor =
+    yield* makeBackgroundBatchProcessor<
+      { parentExecutionId: string; isFinished: boolean; update: TaskExecutionStorageUpdate },
+      void
+    >({
+      executorId,
+      processName: 'updateManyByParentExecutionIdAndIsFinished',
+      enableBatching,
+      intraBatchSleepMs: backgroundBatchingIntraBatchSleepMs,
+      batchWeight: 3,
+      processBatchRequests: updateManyByParentExecutionIdAndIsFinishedUnbatched,
+    })
+
+  const updateByParentExecutionIdAndIsFinished = Effect.fn(function* (
+    now: number,
+    request: {
+      parentExecutionId: string
+      isFinished: boolean
+      update: TaskExecutionStorageUpdateInternal
+    },
+  ) {
+    return yield* updateManyByParentExecutionIdAndIsFinishedBackgroundBatchProcessor.processRequest(
+      {
+        input: {
+          ...request,
+          update: getTaskExecutionStorageUpdate(now, request.update),
+        },
+      },
+    )
+  })
+
+  const updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus = Effect.fn(
+    function* (
+      now: number,
+      request: {
+        isFinished: boolean
+        closeStatus: TaskExecutionCloseStatus
+        update: TaskExecutionStorageUpdateInternal
+        limit: number
+      },
+    ) {
+      if (request.limit <= 0) {
+        return 0
+      }
+      return yield* wrapStorageEffect(
+        'updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus',
+        convertMaybePromiseToEffect(() =>
+          storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus({
+            ...request,
+            update: getTaskExecutionStorageUpdate(now, request.update),
+          }),
+        ),
+      )
+    },
+  )
+
+  const backgroundBatchProcessors = [
+    insertManyBackgroundBatchProcessor,
+    getManyByIdBackgroundBatchProcessor,
+    updateManyByIdBackgroundBatchProcessor,
+    updateManyByIdAndInsertChildrenIfUpdatedBackgroundBatchProcessor,
+    getManyByParentExecutionIdBackgroundBatchProcessor,
+    updateManyByParentExecutionIdAndIsFinishedBackgroundBatchProcessor,
+  ]
+
+  const start = Effect.all(
+    backgroundBatchProcessors.map((processor) => processor.start),
+    { concurrency: 'unbounded', discard: true },
+  )
+
+  const shutdown = Effect.all(
+    backgroundBatchProcessors.map((processor) => processor.shutdown),
+    { concurrency: 'unbounded', discard: true },
+  )
+
+  const getMetric = Effect.fnUntraced(function* ([processName, metric]: [
+    string,
+    Metric.Metric.Summary<number>,
+  ]) {
+    const value = yield* Metric.value(metric)
+    return {
+      processName,
+      count: value.count,
+      min: value.min,
+      max: value.max,
+      quantiles: value.quantiles,
+    }
+  })
+
+  const getMetrics = Effect.gen(function* () {
+    const metrics = yield* Effect.forEach(metricsMap.entries(), getMetric, {
+      concurrency: 'unbounded',
+    })
+    metrics.sort((a, b) => b.count - a.count)
+    return metrics
+  })
+
+  return {
+    insertMany,
+    getById,
+    getBySleepingTaskUniqueId,
+    updateById,
+    updateByIdAndInsertChildrenIfUpdated,
+    updateByStatusAndStartAtLessThanAndReturn,
+    updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn,
+    updateByCloseStatusAndReturn,
+    updateByStatusAndIsSleepingTaskAndExpiresAtLessThan,
+    updateByOnChildrenFinishedProcessingExpiresAtLessThan,
+    updateByCloseExpiresAtLessThan,
+    updateByExecutorIdAndNeedsPromiseCancellationAndReturn,
+    getByParentExecutionId,
+    updateByParentExecutionIdAndIsFinished,
+    updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus,
+    start,
+    shutdown,
+    getMetrics,
   }
+})
 
-  async shutdown(): Promise<void> {
-    const startTime = Date.now()
-    this.logger.debug('Shutting down storage')
-    if (!this.shutdownSignal.isCancelled()) {
-      this.cancelShutdownSignal()
-    }
-    this.logger.debug('Storage cancelled')
-
-    if (this.backgroundProcessesPromisePool.size > 0 || this.backgroundPromisePool.size > 0) {
-      this.logger.debug('Stopping storage background processes and promises')
-      await this.backgroundProcessesPromisePool.allSettled()
-      await this.backgroundPromisePool.allSettled()
-    }
-    this.logger.debug('Stopped storage background processes and promises')
-
-    this.logger.debug('Stopping batch requesters')
-    for (const batchRequester of this.batchRequesters) {
-      batchRequester.shutdown()
-    }
-    this.logger.debug('Batch requesters stopped')
-    const durationMs = Date.now() - startTime
-    this.logger.debug(`Storage shut down in ${(durationMs / 1000).toFixed(2)}s`)
-  }
-}
+export type TaskExecutionsStorageInternal = Effect.Effect.Success<
+  ReturnType<typeof makeTaskExecutionsStorageInternal>
+>

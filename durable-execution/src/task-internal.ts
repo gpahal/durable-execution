@@ -1,18 +1,8 @@
-import { Either, Schema } from 'effect'
+import { Duration, Effect, Schema } from 'effect'
 
-import {
-  combineCancelSignals,
-  createCancellablePromise,
-  createTimeoutCancelSignal,
-  type CancelSignal,
-} from '@gpahal/std/cancel'
 import { isFunction } from '@gpahal/std/functions'
 
-import {
-  DurableExecutionCancelledError,
-  DurableExecutionError,
-  DurableExecutionTimedOutError,
-} from './errors'
+import { DurableExecutionError, DurableExecutionTimedOutError } from './errors'
 import {
   isFinalizeTaskOptionsParentTaskOptions,
   isFinalizeTaskOptionsTaskOptions,
@@ -26,30 +16,40 @@ import {
   type TaskOptions,
   type TaskRetryOptions,
   type TaskRunContext,
+  type TaskType,
 } from './task'
-import { generateId } from './utils'
+import { convertMaybePromiseOrEffectToEffect, generateId } from './utils'
 
 export type TaskOptionsInternal = {
-  taskType: 'task' | 'sleepingTask' | 'parentTask'
+  taskType: TaskType
   id: string
   retryOptions: TaskRetryOptions | undefined
   sleepMsBeforeRun: number | undefined
   timeoutMs: number
-  areChildrenSequential: boolean
-  validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
+  validateInputFn:
+    | ((id: string, input: unknown) => Effect.Effect<unknown, DurableExecutionError>)
+    | undefined
   runParent: (
     ctx: TaskRunContext,
     input: unknown,
-  ) => Promise<{
-    output: unknown
-    children: ReadonlyArray<ChildTask>
-  }>
-  finalize: ((input: DefaultParentTaskOutput) => Promise<unknown>) | TaskOptionsInternal | undefined
+  ) => Effect.Effect<
+    {
+      output: unknown
+      children: ReadonlyArray<ChildTask>
+    },
+    DurableExecutionError
+  >
+  finalize:
+    | ((input: DefaultParentTaskOutput) => Effect.Effect<unknown, DurableExecutionError, never>)
+    | TaskOptionsInternal
+    | undefined
 }
 
-function convertTaskOptionsOptionsInternal(
-  taskOptions: TaskOptions<unknown, unknown>,
-  validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
+export function convertTaskOptionsToOptionsInternal<TRunInput, TInput, TOutput>(
+  taskOptions: TaskOptions<TRunInput, TOutput>,
+  validateInputFn:
+    | ((id: string, input: TInput) => Effect.Effect<TRunInput, DurableExecutionError>)
+    | undefined,
 ): TaskOptionsInternal {
   return {
     taskType: 'task',
@@ -57,22 +57,26 @@ function convertTaskOptionsOptionsInternal(
     retryOptions: taskOptions.retryOptions,
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
     timeoutMs: taskOptions.timeoutMs,
-    validateInputFn,
-    areChildrenSequential: false,
-    runParent: async (ctx, input) => {
-      const output = await taskOptions.run(ctx, input)
-      return {
-        output,
-        children: [],
-      }
-    },
+    validateInputFn: validateInputFn as
+      | ((id: string, input: unknown) => Effect.Effect<unknown, DurableExecutionError>)
+      | undefined,
+    runParent: (ctx, input) =>
+      Effect.gen(function* () {
+        const runOutput = yield* convertMaybePromiseOrEffectToEffect(() =>
+          taskOptions.run(ctx, input as TRunInput),
+        )
+        return {
+          output: runOutput,
+          children: [],
+        }
+      }),
     finalize: undefined,
   }
 }
 
-function convertSleepingTaskOptionsOptionsInternal(
-  taskOptions: SleepingTaskOptions<unknown>,
-  validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
+export function convertSleepingTaskOptionsToOptionsInternal<TInput, TOutput>(
+  taskOptions: SleepingTaskOptions<TOutput>,
+  validateInputFn: ((id: string, input: TInput) => Effect.Effect<string, unknown>) | undefined,
 ): TaskOptionsInternal {
   return {
     taskType: 'sleepingTask',
@@ -80,53 +84,133 @@ function convertSleepingTaskOptionsOptionsInternal(
     retryOptions: undefined,
     sleepMsBeforeRun: undefined,
     timeoutMs: taskOptions.timeoutMs,
-    validateInputFn,
-    areChildrenSequential: false,
-    runParent: () => {
-      throw DurableExecutionError.any('Sleeping tasks cannot be run', false, true)
-    },
+    validateInputFn: validateInputFn as
+      | ((id: string, input: unknown) => Effect.Effect<unknown, DurableExecutionError>)
+      | undefined,
+    runParent: () =>
+      Effect.fail(new DurableExecutionError('Sleeping tasks cannot be run', { isInternal: true })),
     finalize: undefined,
   }
 }
 
-function convertParentTaskOptionsOptionsInternal(
-  taskOptions: ParentTaskOptions<unknown, unknown, unknown, unknown>,
-  areChildrenSequential: boolean,
-  validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
+export function convertParentTaskOptionsToOptionsInternal<
+  TRunInput,
+  TInput,
+  TRunOutput,
+  TOutput,
+  TFinalizeTaskRunOutput,
+>(
+  taskOptions: ParentTaskOptions<TRunInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
+  validateInputFn: ((id: string, input: TInput) => Effect.Effect<TRunInput, unknown>) | undefined,
 ): TaskOptionsInternal {
+  let finalize:
+    | ((input: DefaultParentTaskOutput) => Effect.Effect<unknown, DurableExecutionError, never>)
+    | TaskOptionsInternal
+    | undefined = undefined
+  if (isFunction(taskOptions.finalize)) {
+    finalize = (input: DefaultParentTaskOutput) =>
+      convertMaybePromiseOrEffectToEffect(() =>
+        (taskOptions.finalize as (input: DefaultParentTaskOutput) => unknown)(input),
+      )
+  } else if (taskOptions.finalize != null) {
+    finalize = isFinalizeTaskOptionsParentTaskOptions(taskOptions.finalize as FinalizeTaskOptions)
+      ? convertParentTaskOptionsToOptionsInternal(
+          taskOptions.finalize as ParentTaskOptions<unknown, unknown, unknown, unknown>,
+          undefined,
+        )
+      : isFinalizeTaskOptionsTaskOptions(taskOptions.finalize as FinalizeTaskOptions)
+        ? convertTaskOptionsToOptionsInternal(
+            taskOptions.finalize as TaskOptions<unknown, unknown>,
+            undefined,
+          )
+        : undefined
+  }
+
   return {
     taskType: 'parentTask',
     id: taskOptions.id,
     retryOptions: taskOptions.retryOptions,
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
     timeoutMs: taskOptions.timeoutMs,
-    validateInputFn,
-    areChildrenSequential,
-    runParent: async (ctx, input) => {
-      const runParentOutput = await taskOptions.runParent(ctx, input)
-      return {
-        output: runParentOutput.output,
-        children: runParentOutput.children ?? [],
-      }
-    },
-    finalize: taskOptions.finalize
-      ? isFunction(taskOptions.finalize)
-        ? (taskOptions.finalize as (input: DefaultParentTaskOutput) => Promise<unknown>)
-        : isFinalizeTaskOptionsParentTaskOptions(taskOptions.finalize as FinalizeTaskOptions)
-          ? convertParentTaskOptionsOptionsInternal(
-              taskOptions.finalize as ParentTaskOptions<unknown, unknown, unknown, unknown>,
-              false,
-              undefined,
-            )
-          : isFinalizeTaskOptionsTaskOptions(taskOptions.finalize as FinalizeTaskOptions)
-            ? convertTaskOptionsOptionsInternal(
-                taskOptions.finalize as TaskOptions<unknown, unknown>,
-                undefined,
-              )
-            : undefined
-      : undefined,
+    validateInputFn: validateInputFn as
+      | ((id: string, input: unknown) => Effect.Effect<unknown, DurableExecutionError>)
+      | undefined,
+    runParent: (ctx, input) =>
+      Effect.gen(function* () {
+        const runParentOutput = yield* convertMaybePromiseOrEffectToEffect(() =>
+          taskOptions.runParent(ctx, input as TRunInput),
+        )
+        return {
+          output: runParentOutput.output,
+          children: runParentOutput.children ?? [],
+        }
+      }),
+    finalize,
   }
 }
+
+export type TaskInternal = {
+  taskType: TaskType
+  id: string
+  retryOptions: TaskRetryOptions
+  sleepMsBeforeRun: number
+  timeoutMs: number
+  validateInputFn:
+    | ((id: string, input: unknown) => Effect.Effect<unknown, DurableExecutionError>)
+    | undefined
+  runParent: (
+    ctx: TaskRunContext,
+    input: unknown,
+  ) => Effect.Effect<
+    {
+      output: unknown
+      children: ReadonlyArray<ChildTask>
+    },
+    DurableExecutionError
+  >
+  finalize:
+    | ((input: DefaultParentTaskOutput) => Effect.Effect<unknown, DurableExecutionError, never>)
+    | TaskInternal
+    | undefined
+}
+
+export const addTaskInternal: (
+  taskInternalsMap: Map<string, TaskInternal>,
+  optionsInternal: TaskOptionsInternal,
+) => Effect.Effect<TaskInternal, DurableExecutionError, never> = Effect.fn(function* (
+  taskInternalsMap: Map<string, TaskInternal>,
+  optionsInternal: TaskOptionsInternal,
+) {
+  const validatedCommonTaskOptions = yield* validateCommonTaskOptions(optionsInternal)
+  if (taskInternalsMap.has(optionsInternal.id)) {
+    return yield* Effect.fail(
+      DurableExecutionError.nonRetryable(
+        `Task with given id already exists [taskId=${optionsInternal.id}]`,
+      ),
+    )
+  }
+
+  let finalize: TaskInternal['finalize']
+  if (optionsInternal.finalize == null) {
+    finalize = undefined
+  } else if (isFunction(optionsInternal.finalize)) {
+    finalize = optionsInternal.finalize as (
+      input: DefaultParentTaskOutput,
+    ) => Effect.Effect<unknown, DurableExecutionError, never>
+  } else {
+    finalize = yield* addTaskInternal(taskInternalsMap, optionsInternal.finalize as TaskInternal)
+  }
+
+  const taskInternal = {
+    ...optionsInternal,
+    retryOptions: validatedCommonTaskOptions.retryOptions,
+    sleepMsBeforeRun: validatedCommonTaskOptions.sleepMsBeforeRun,
+    timeoutMs: validatedCommonTaskOptions.timeoutMs,
+    finalize,
+  }
+  taskInternalsMap.set(optionsInternal.id, taskInternal)
+  return taskInternal
+})
 
 const RetryOptionsSchema = Schema.Struct({
   maxAttempts: Schema.Int.pipe(Schema.between(0, 1000)),
@@ -187,6 +271,7 @@ const RetryOptionsSchema = Schema.Struct({
     },
   ),
 )
+const decodeRetryOptions = Schema.decodeUnknown(RetryOptionsSchema)
 
 const SleepMsBeforeRunSchema = Schema.Number.pipe(
   Schema.greaterThanOrEqualTo(0),
@@ -204,258 +289,115 @@ const SleepMsBeforeRunSchema = Schema.Number.pipe(
     },
   }),
 )
+const decodeSleepMsBeforeRun = Schema.decodeUnknown(SleepMsBeforeRunSchema)
 
 const TimeoutMsSchema = Schema.Int.pipe(Schema.greaterThanOrEqualTo(1))
+const decodeTimeoutMs = Schema.decodeUnknown(TimeoutMsSchema)
 
-/**
- * An internal representation of a task.
- *
- * @category Task
- * @internal
- */
-export class TaskInternal {
-  readonly taskType: 'task' | 'sleepingTask' | 'parentTask'
-  readonly id: string
-  readonly retryOptions: TaskRetryOptions
-  readonly sleepMsBeforeRun: number
-  readonly timeoutMs: number
-  readonly areChildrenSequential: boolean
-  private readonly validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined
-  private readonly runParent: (
-    ctx: TaskRunContext,
-    input: unknown,
-  ) => Promise<{
-    output: unknown
-    children: ReadonlyArray<ChildTask>
-  }>
-  readonly finalize:
-    | ((input: DefaultParentTaskOutput) => Promise<unknown>)
-    | TaskInternal
-    | undefined
-
-  constructor(
-    taskType: 'task' | 'sleepingTask' | 'parentTask',
-    id: string,
-    retryOptions: TaskRetryOptions,
-    sleepMsBeforeRun: number,
-    timeoutMs: number,
-    areChildrenSequential: boolean,
-    validateInputFn: ((id: string, input: unknown) => Promise<unknown>) | undefined,
-    runParent: (
-      ctx: TaskRunContext,
-      input: unknown,
-    ) => Promise<{
-      output: unknown
-      children: ReadonlyArray<ChildTask>
-    }>,
-    finalize: ((input: DefaultParentTaskOutput) => Promise<unknown>) | TaskInternal | undefined,
-  ) {
-    this.taskType = taskType
-    this.id = id
-    this.retryOptions = retryOptions
-    this.sleepMsBeforeRun = sleepMsBeforeRun
-    this.timeoutMs = timeoutMs
-    this.areChildrenSequential = areChildrenSequential
-    this.validateInputFn = validateInputFn
-    this.runParent = runParent
-    this.finalize = finalize
+export const runParentWithTimeout = Effect.fn(function* (
+  taskInternal: TaskInternal,
+  ctx: Omit<TaskRunContext, 'abortSignal'>,
+  input: unknown,
+  timeoutMs: number,
+) {
+  if (taskInternal.validateInputFn) {
+    input = yield* taskInternal.validateInputFn(taskInternal.id, input)
   }
 
-  static fromTaskOptionsInternal(
-    taskInternalsMap: Map<string, TaskInternal>,
-    taskOptions: TaskOptionsInternal,
-  ): TaskInternal {
-    const validatedCommonTaskOptions = validateCommonTaskOptions(taskOptions)
-    if (taskInternalsMap.has(taskOptions.id)) {
-      throw DurableExecutionError.nonRetryable(
-        `Task ${taskOptions.id} already exists. Use unique ids for tasks`,
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const controller = yield* Effect.acquireRelease(
+        Effect.sync(() => new AbortController()),
+        (c) => Effect.sync(() => c.abort()),
       )
-    }
-
-    const finalize = taskOptions.finalize
-      ? isFunction(taskOptions.finalize)
-        ? (taskOptions.finalize as (input: DefaultParentTaskOutput) => Promise<unknown>)
-        : TaskInternal.fromTaskOptionsInternal(
-            taskInternalsMap,
-            taskOptions.finalize as TaskOptionsInternal,
-          )
-      : undefined
-
-    const taskInternal = new TaskInternal(
-      taskOptions.taskType,
-      taskOptions.id,
-      validatedCommonTaskOptions.retryOptions,
-      validatedCommonTaskOptions.sleepMsBeforeRun,
-      validatedCommonTaskOptions.timeoutMs,
-      taskOptions.areChildrenSequential,
-      taskOptions.validateInputFn,
-      taskOptions.runParent,
-      finalize,
-    )
-    taskInternalsMap.set(taskInternal.id, taskInternal)
-    return taskInternal
-  }
-
-  static fromTaskOptions<TRunInput, TInput, TOutput>(
-    taskInternalsMap: Map<string, TaskInternal>,
-    taskOptions: TaskOptions<TRunInput, TOutput>,
-    validateInputFn?: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
-  ): TaskInternal {
-    return TaskInternal.fromTaskOptionsInternal(
-      taskInternalsMap,
-      convertTaskOptionsOptionsInternal(
-        taskOptions as TaskOptions<unknown, unknown>,
-        validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
-      ),
-    )
-  }
-
-  static fromSleepingTaskOptions<TInput, TOutput>(
-    taskInternalsMap: Map<string, TaskInternal>,
-    taskOptions: SleepingTaskOptions<TOutput>,
-    validateInputFn?: (id: string, input: TInput) => string | Promise<string>,
-  ): TaskInternal {
-    return TaskInternal.fromTaskOptionsInternal(
-      taskInternalsMap,
-      convertSleepingTaskOptionsOptionsInternal(
-        taskOptions,
-        validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
-      ),
-    )
-  }
-
-  static fromParentTaskOptions<
-    TRunInput,
-    TInput = TRunInput,
-    TRunOutput = unknown,
-    TOutput = unknown,
-    TFinalizeTaskRunOutput = unknown,
-  >(
-    taskInternalsMap: Map<string, TaskInternal>,
-    taskOptions: ParentTaskOptions<TRunInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
-    areChildrenSequential: boolean,
-    validateInputFn?: (id: string, input: TInput) => TRunInput | Promise<TRunInput>,
-  ): TaskInternal {
-    return TaskInternal.fromTaskOptionsInternal(
-      taskInternalsMap,
-      convertParentTaskOptionsOptionsInternal(
-        taskOptions as ParentTaskOptions<unknown, unknown, unknown, unknown>,
-        areChildrenSequential,
-        validateInputFn as ((id: string, input: unknown) => Promise<unknown>) | undefined,
-      ),
-    )
-  }
-
-  async runParentWithTimeoutAndCancellation(
-    ctx: Omit<TaskRunContext, 'cancelSignal'>,
-    input: unknown,
-    timeoutMs: number,
-    cancelSignal: CancelSignal,
-  ): Promise<{
-    output: unknown
-    children: ReadonlyArray<ChildTask>
-  }> {
-    if (this.validateInputFn) {
-      input = await this.validateInputFn(this.id, input)
-    }
-    const [timeoutCancelSignal, clearTimeout] = createTimeoutCancelSignal(timeoutMs)
-    const finalCancelSignal = combineCancelSignals([cancelSignal, timeoutCancelSignal])
-    const result = await createCancellablePromise(
-      createCancellablePromise(
-        this.runParent({ ...ctx, cancelSignal: finalCancelSignal }, input),
-        timeoutCancelSignal,
-        new DurableExecutionTimedOutError(),
-      ),
-      cancelSignal,
-      new DurableExecutionCancelledError(),
-    )
-    clearTimeout()
-    return result
-  }
-}
-
-export function validateCommonTaskOptions(taskOptions: CommonTaskOptions): {
-  retryOptions: TaskRetryOptions
-  sleepMsBeforeRun: number
-  timeoutMs: number
-} {
-  validateTaskId(taskOptions.id)
-
-  const parsedRetryOptions = Schema.decodeUnknownEither(RetryOptionsSchema)(
-    taskOptions.retryOptions,
+      const result = yield* taskInternal.runParent(
+        { ...ctx, abortSignal: controller.signal },
+        input,
+      )
+      return result
+    }),
+  ).pipe(
+    Effect.timeoutFail({
+      duration: Duration.millis(timeoutMs),
+      onTimeout: () => new DurableExecutionTimedOutError() as DurableExecutionError,
+    }),
   )
-  if (Either.isLeft(parsedRetryOptions)) {
-    throw DurableExecutionError.nonRetryable(
-      `Invalid retry options for task ${taskOptions.id}: ${parsedRetryOptions.left.message}`,
-    )
-  }
+})
 
-  const parsedSleepMsBeforeRun = Schema.decodeUnknownEither(SleepMsBeforeRunSchema)(
-    taskOptions.sleepMsBeforeRun,
+export const validateCommonTaskOptions = Effect.fn(function* (taskOptions: CommonTaskOptions) {
+  yield* validateTaskId(taskOptions.id)
+
+  const retryOptions = yield* decodeRetryOptions(taskOptions.retryOptions).pipe(
+    Effect.mapError((error) =>
+      DurableExecutionError.nonRetryable(
+        `Invalid retry options for task ${taskOptions.id}: ${error.message}`,
+      ),
+    ),
   )
-  if (Either.isLeft(parsedSleepMsBeforeRun)) {
-    throw DurableExecutionError.nonRetryable(
-      `Invalid sleep ms before run for task ${taskOptions.id}: ${parsedSleepMsBeforeRun.left.message}`,
-    )
-  }
 
-  const parsedTimeoutMs = Schema.decodeUnknownEither(TimeoutMsSchema)(taskOptions.timeoutMs)
-  if (Either.isLeft(parsedTimeoutMs)) {
-    throw DurableExecutionError.nonRetryable(
-      `Invalid timeout value for task ${taskOptions.id}: ${parsedTimeoutMs.left.message}`,
-    )
-  }
+  const sleepMsBeforeRun = yield* decodeSleepMsBeforeRun(taskOptions.sleepMsBeforeRun).pipe(
+    Effect.mapError((error) =>
+      DurableExecutionError.nonRetryable(
+        `Invalid sleep ms before run for task ${taskOptions.id}: ${error.message}`,
+      ),
+    ),
+  )
+
+  const timeoutMs = yield* decodeTimeoutMs(taskOptions.timeoutMs).pipe(
+    Effect.mapError((error) =>
+      DurableExecutionError.nonRetryable(
+        `Invalid timeout value for task ${taskOptions.id}: ${error.message}`,
+      ),
+    ),
+  )
 
   return {
-    retryOptions: parsedRetryOptions.right,
-    sleepMsBeforeRun: parsedSleepMsBeforeRun.right,
-    timeoutMs: parsedTimeoutMs.right,
+    retryOptions,
+    sleepMsBeforeRun,
+    timeoutMs,
   }
-}
+})
 
-export function validateEnqueueOptions(
+export const validateEnqueueOptions = Effect.fn(function* (
   taskId: string,
   options?: TaskEnqueueOptions,
-): TaskEnqueueOptions {
+) {
   const validatedOptions: TaskEnqueueOptions = {}
 
   if (options?.retryOptions) {
-    const parsedRetryOptions = Schema.decodeUnknownEither(RetryOptionsSchema)(options.retryOptions)
-    if (Either.isLeft(parsedRetryOptions)) {
-      throw DurableExecutionError.nonRetryable(
-        `Invalid retry options for task ${taskId}: ${parsedRetryOptions.left.message}`,
-      )
-    }
-
-    validatedOptions.retryOptions = parsedRetryOptions.right
+    validatedOptions.retryOptions = yield* decodeRetryOptions(options.retryOptions).pipe(
+      Effect.mapError((error) =>
+        DurableExecutionError.nonRetryable(
+          `Invalid retry options for task ${taskId}: ${error.message}`,
+        ),
+      ),
+    )
   }
 
   if (options?.sleepMsBeforeRun != null) {
-    const parsedSleepMsBeforeRun = Schema.decodeUnknownEither(SleepMsBeforeRunSchema)(
+    validatedOptions.sleepMsBeforeRun = yield* decodeSleepMsBeforeRun(
       options.sleepMsBeforeRun,
+    ).pipe(
+      Effect.mapError((error) =>
+        DurableExecutionError.nonRetryable(
+          `Invalid sleep ms before run for task ${taskId}: ${error.message}`,
+        ),
+      ),
     )
-    if (Either.isLeft(parsedSleepMsBeforeRun)) {
-      throw DurableExecutionError.nonRetryable(
-        `Invalid sleep ms before run for task ${taskId}: ${parsedSleepMsBeforeRun.left.message}`,
-      )
-    }
-
-    validatedOptions.sleepMsBeforeRun = parsedSleepMsBeforeRun.right
   }
 
   if (options?.timeoutMs != null) {
-    const parsedTimeoutMs = Schema.decodeUnknownEither(TimeoutMsSchema)(options.timeoutMs)
-    if (Either.isLeft(parsedTimeoutMs)) {
-      throw DurableExecutionError.nonRetryable(
-        `Invalid timeout value for task ${taskId}: ${parsedTimeoutMs.left.message}`,
-      )
-    }
-
-    validatedOptions.timeoutMs = parsedTimeoutMs.right
+    validatedOptions.timeoutMs = yield* decodeTimeoutMs(options.timeoutMs).pipe(
+      Effect.mapError((error) =>
+        DurableExecutionError.nonRetryable(
+          `Invalid timeout value for task ${taskId}: ${error.message}`,
+        ),
+      ),
+    )
   }
 
   return validatedOptions
-}
+})
 
 export function overrideTaskEnqueueOptions(
   existingOptions: {
@@ -501,20 +443,26 @@ const _TASK_ID_REGEX = /^\w+$/
  * alphanumeric characters and underscores.
  *
  * @param id - The id to validate.
- * @throws An error if the id is invalid.
+ * @returns An effect that fails with an error if the id is invalid.
  *
  * @category Task
  */
-export function validateTaskId(id: string): void {
+export const validateTaskId = Effect.fn(function* (id: string) {
   if (id.length === 0) {
-    throw DurableExecutionError.nonRetryable('Task id cannot be empty')
+    return yield* Effect.fail(DurableExecutionError.nonRetryable('Task id cannot be empty'))
   }
   if (id.length > 255) {
-    throw DurableExecutionError.nonRetryable('Task id cannot be longer than 255 characters')
-  }
-  if (!_TASK_ID_REGEX.test(id)) {
-    throw DurableExecutionError.nonRetryable(
-      'Task id can only contain alphanumeric characters and underscores',
+    return yield* Effect.fail(
+      DurableExecutionError.nonRetryable(
+        `Task id cannot be longer than 255 characters [idLength=${id.length}]`,
+      ),
     )
   }
-}
+  if (!_TASK_ID_REGEX.test(id)) {
+    return yield* Effect.fail(
+      DurableExecutionError.nonRetryable(
+        'Task id can only contain alphanumeric characters and underscores',
+      ),
+    )
+  }
+})

@@ -1,6 +1,13 @@
-import type { CancelSignal } from '@gpahal/std/cancel'
+import type { Effect } from 'effect'
 
 import type { DurableExecutionErrorStorageValue } from './errors'
+
+/**
+ * The type of task.
+ *
+ * @category Task
+ */
+export type TaskType = 'task' | 'sleepingTask' | 'parentTask' | 'sequentialTasks'
 
 /**
  * Represents a durable task that can be executed with automatic retry, timeout and failure handling
@@ -31,14 +38,18 @@ import type { DurableExecutionErrorStorageValue } from './errors'
  *
  * @category Task
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export type Task<TInput, TOutput, TIsSleepingTask extends boolean = boolean> = {
+export type Task<
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  TInput,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  TOutput,
+  TTaskType extends TaskType = TaskType,
+> = {
+  readonly taskType: TTaskType
   readonly id: string
-  readonly isSleepingTask: TIsSleepingTask
   readonly retryOptions: TaskRetryOptions
   readonly sleepMsBeforeRun: number
   readonly timeoutMs: number
-  readonly areChildrenSequential: boolean
 }
 
 /**
@@ -46,10 +57,7 @@ export type Task<TInput, TOutput, TIsSleepingTask extends boolean = boolean> = {
  *
  * @category Task
  */
-export type AnyTask =
-  | Task<unknown, unknown>
-  | Task<unknown, unknown, true>
-  | Task<unknown, unknown, false>
+export type AnyTask = Task<unknown, unknown>
 
 /**
  * Type-safe record of available tasks.
@@ -86,18 +94,18 @@ export type InferTaskOutput<TTask extends AnyTask> =
   TTask extends Task<unknown, infer O> ? O : never
 
 /**
- * TypeScript utility type to extract the sleeping task type from a Task.
+ * TypeScript utility type to extract the task type from a Task.
  *
  * @example
  * ```ts
- * type EmailIsSleepingTask = InferTaskIsSleepingTask<typeof emailTask>
- * // Result: false
+ * type EmailTaskType = InferTaskType<typeof emailTask>
+ * // Result: 'task'
  * ```
  *
  * @category Task
  */
-export type InferTaskIsSleepingTask<TTask extends AnyTask> =
-  TTask extends Task<unknown, unknown, true> ? true : false
+export type InferTaskType<TTask extends AnyTask> =
+  TTask extends Task<unknown, unknown, infer T> ? T : never
 
 /**
  * Common options for a task. These options are used by both {@link TaskOptions} and
@@ -146,6 +154,21 @@ export type CommonTaskOptions = {
  *   maxDelayMs: 30000     // Cap at 30 seconds
  * }
  * // Results in delays: 1s, 2s, 4s, 8s, 16s (capped)
+ *
+ * // Constant delay (no backoff)
+ * const constantRetry: TaskRetryOptions = {
+ *   maxAttempts: 3,
+ *   baseDelayMs: 5000,    // Always wait 5 seconds
+ *   delayMultiplier: 1,   // No increase
+ * }
+ * // Results in delays: 5s, 5s, 5s
+ *
+ * // Immediate retry (no delay)
+ * const immediateRetry: TaskRetryOptions = {
+ *   maxAttempts: 2,
+ *   baseDelayMs: 0,       // No delay between retries
+ * }
+ * // Results in delays: 0s, 0s
  * ```
  *
  * @category Task
@@ -156,15 +179,18 @@ export type TaskRetryOptions = {
    */
   maxAttempts: number
   /**
-   * The base delay before each retry. Defaults to 0.
+   * The base delay before each retry in milliseconds. Defaults to 0 (immediate retry). When set to
+   * 0, retries happen immediately without delay.
    */
   baseDelayMs?: number
   /**
-   * The multiplier for the delay before each retry. Default is 1.
+   * The multiplier for the delay before each retry. Defaults to 1 (constant delay). Values > 1
+   * create exponential backoff, values < 1 create decreasing delays.
    */
   delayMultiplier?: number
   /**
-   * The maximum delay before each retry.
+   * The maximum delay before each retry in milliseconds. When specified, delays are capped at this
+   * value regardless of the exponential calculation.
    */
   maxDelayMs?: number
 }
@@ -175,8 +201,8 @@ export type TaskRetryOptions = {
  * should be idempotent as it may be run multiple times if there is a process failure or if the
  * task is retried.
  *
- * When enqueued with an executor, a {@link TaskExecutionHandle} is returned. It supports getting
- * the execution status, waiting for the task to complete, and cancelling the task.
+ * When enqueued with an executor, a task execution handle is returned. It supports getting the
+ * execution status, waiting for the task to complete, and cancelling the task.
  *
  * The output of the `run` function is the output of the task.
  *
@@ -226,7 +252,10 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
    * @param input - The input to the task.
    * @returns The output of the task.
    */
-  run: (ctx: TaskRunContext, input: TInput) => TOutput | Promise<TOutput>
+  run: (
+    ctx: TaskRunContext,
+    input: TInput,
+  ) => TOutput | Promise<TOutput> | Effect.Effect<TOutput, unknown, never>
 }
 
 /**
@@ -269,6 +298,8 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
  *   },
  * })
  * ```
+ *
+ * @template TOutput - The type of the output when the sleeping task is woken up
  *
  * @category Task
  */
@@ -321,6 +352,7 @@ export type SleepingTaskOptions<TOutput = unknown> = Pick<CommonTaskOptions, 'id
  *
  * const summarizeFile = executor
  *   .validateInput(async (input: { filePath: string }) => {
+ *     // Example validation function - implement your own validation logic
  *     if (!isValidFilePath(input.filePath)) {
  *       throw new Error('Invalid file path')
  *     }
@@ -405,6 +437,14 @@ export type ParentTaskOptions<
         output: TRunOutput
         children?: ReadonlyArray<ChildTask>
       }>
+    | Effect.Effect<
+        {
+          output: TRunOutput
+          children?: ReadonlyArray<ChildTask>
+        },
+        unknown,
+        never
+      >
   /**
    * Function or task to run after the runParent function and children tasks finish. This is useful
    * for combining the output of the run function and children tasks. It is called even if the
@@ -414,7 +454,9 @@ export type ParentTaskOptions<
    * not be a long running function.
    */
   finalize?:
-    | ((input: DefaultParentTaskOutput<TRunOutput>) => TOutput | Promise<TOutput>)
+    | ((
+        input: DefaultParentTaskOutput<TRunOutput>,
+      ) => TOutput | Promise<TOutput> | Effect.Effect<TOutput, unknown, never>)
     | FinalizeTaskOptions<TRunOutput, TOutput, TFinalizeTaskRunOutput>
 }
 
@@ -429,12 +471,18 @@ export type ParentTaskOptions<
  * }
  * ```
  *
- * **Important**: The `children` array includes ALL children task executions, both successful and
- * failed ones. This behaves similar to `Promise.allSettled()` - you get the results regardless of
- * individual child success or failure, allowing you to implement custom error handling logic.
+ * **Critical**: The `finalize` function/task receives outputs from all children, including those
+ * that have failed. This behaves similar to `Promise.allSettled()` - you get the results
+ * regardless of individual child success or failure. This allows you to implement custom error
+ * handling logic, such as failing the parent only if critical children fail, or providing partial
+ * results. As a caveat, always check the status of child executions in the finalize function/task.
  *
  * No validation is done on the input and the output of the parent task is the output of the
  * `finalize` task.
+ *
+ * @template TRunOutput - The type of the parent task's run output
+ * @template TOutput - The type of the finalize task's output (becomes the parent task's output)
+ * @template TFinalizeTaskRunOutput - If finalize is a parent task, the type of its run output
  *
  * @category Task
  */
@@ -456,6 +504,22 @@ export type DefaultParentTaskOutput<TRunOutput = unknown> = {
   children: ReadonlyArray<FinishedChildTaskExecution>
 }
 
+/**
+ * Type predicate to check if a {@link FinalizeTaskOptions} is a {@link TaskOptions}.
+ *
+ * This utility function helps determine whether the finalize configuration is a simple task (with
+ * a `run` function) or a parent task (with a `runParent` function).
+ *
+ * @template TRunOutput - The type of the parent task's run output.
+ * @template TOutput - The type of the finalize task's output.
+ * @template TFinalizeTaskRunOutput - If finalize is a parent task, the type of its run output.
+ *
+ * @param options - The finalize task options to check.
+ * @returns `true` if the options represent a simple task, `false` otherwise.
+ *
+ * @category Task
+ * @internal
+ */
 export function isFinalizeTaskOptionsTaskOptions<
   TRunOutput = unknown,
   TOutput = unknown,
@@ -466,6 +530,22 @@ export function isFinalizeTaskOptionsTaskOptions<
   return 'run' in options && !('runParent' in options)
 }
 
+/**
+ * Type predicate to check if a {@link FinalizeTaskOptions} is a {@link ParentTaskOptions}.
+ *
+ * This utility function helps determine whether the finalize configuration is a parent task (with
+ * a `runParent` function) or a simple task (with a `run` function).
+ *
+ * @template TRunOutput - The type of the parent task's run output.
+ * @template TOutput - The type of the finalize task's output.
+ * @template TFinalizeTaskRunOutput - If finalize is a parent task, the type of its run output.
+ *
+ * @param options - The finalize task options to check.
+ * @returns `true` if the options represent a parent task, `false` otherwise.
+ *
+ * @category Task
+ * @internal
+ */
 export function isFinalizeTaskOptionsParentTaskOptions<
   TRunOutput = unknown,
   TOutput = unknown,
@@ -488,7 +568,7 @@ export function isFinalizeTaskOptionsParentTaskOptions<
  *
  * - **Identity**: `taskId`, `executionId` - Unique identifiers
  * - **Hierarchy**: `root`, `parent` - Task relationship information
- * - **Signals**: `shutdownSignal`, `cancelSignal` - For graceful termination
+ * - **Signals**: `shutdownSignal`, `abortSignal` - For graceful termination
  * - **Retry State**: `attempt`, `prevError` - Retry attempt information
  *
  * @example
@@ -500,7 +580,7 @@ export function isFinalizeTaskOptionsParentTaskOptions<
  *     console.log(`Execution ${ctx.executionId}, attempt ${ctx.attempt}`)
  *
  *     // Check for executor shutdown or task cancellation
- *     if (ctx.shutdownSignal.isCancelled() || ctx.cancelSignal.isCancelled()) {
+ *     if (ctx.shutdownSignal.aborted || ctx.abortSignal.aborted) {
  *       throw new DurableExecutionCancelledError()
  *     }
  *
@@ -535,15 +615,13 @@ export type TaskRunContext = {
    */
   executionId: string
   /**
-   * The shutdown signal of the executor. It is cancelled when the executor is shutting down.
-   * It can be used to gracefully shutdown the task when executor is shutting down.
+   * The shutdown signal of the task. It is set when the executor is shutting down.
    */
-  shutdownSignal: CancelSignal
+  shutdownSignal: AbortSignal
   /**
-   * The cancel signal of the task. It can be used to gracefully shutdown the task run function
-   * when the task has been cancelled.
+   * The abort signal of the task. It is cancelled when the task gets cancelled or times out.
    */
-  cancelSignal: CancelSignal
+  abortSignal: AbortSignal
   /**
    * The attempt number of the task. The first attempt is 0, the second attempt is 1, etc.
    */
@@ -1003,173 +1081,15 @@ export type TaskEnqueueOptions<TTask extends AnyTask = AnyTask> = {
   /**
    * Options for retrying the task. Has no effect on sleeping tasks.
    */
-  retryOptions?: false extends InferTaskIsSleepingTask<TTask>
-    ? TaskRetryOptions
-    : true extends InferTaskIsSleepingTask<TTask>
-      ? undefined
-      : TaskRetryOptions
+  retryOptions?: InferTaskType<TTask> extends 'sleepingTask' ? never : TaskRetryOptions
   /**
    * The number of milliseconds to wait before running the task. Has no effect on sleeping tasks.
    */
-  sleepMsBeforeRun?: false extends InferTaskIsSleepingTask<TTask>
-    ? number
-    : true extends InferTaskIsSleepingTask<TTask>
-      ? undefined
-      : number
+  sleepMsBeforeRun?: InferTaskType<TTask> extends 'sleepingTask' ? never : number
   /**
    * The number of milliseconds after which the task will be timed out.
    */
   timeoutMs?: number
-}
-
-/**
- * A handle providing control and monitoring capabilities for a task execution.
- *
- * TaskExecutionHandle is returned when you enqueue a task and provides methods to:
- * - Monitor execution progress and status
- * - Wait for completion with polling
- * - Cancel running or queued tasks
- * - Access task metadata
- *
- * The handle is type-safe and provides strongly-typed access to the task's output.
- *
- * ## Common Patterns
- *
- * ### Fire-and-Forget
- *
- * ```ts
- * await executor.enqueueTask(backgroundTask, input)
- * // Don't wait for result, just enqueue and continue
- * ```
- *
- * ### Wait for Result
- *
- * ```ts
- * const handle = await executor.enqueueTask(processingTask, input)
- * const result = await handle.waitAndGetFinishedExecution()
- *
- * if (result.status === 'completed') {
- *   console.log('Success:', result.output)
- * } else {
- *   console.error('Failed:', result.error?.message)
- * }
- * ```
- *
- * ### Polling with Cancellation
- *
- * ```ts
- * const handle = await executor.enqueueTask(longTask, input)
- *
- * // Cancel after timeout
- * setTimeout(() => handle.cancel(), 30_000)
- *
- * try {
- *   const result = await handle.waitAndGetFinishedExecution({
- *     pollingIntervalMs: 500  // Check every 500ms
- *   })
- * } catch (error) {
- *   // Handle cancellation or other errors
- * }
- * ```
- *
- * ### Status Monitoring
- *
- * ```ts
- * const handle = await executor.enqueueTask(batchTask, input)
- *
- * // Periodically check status
- * const interval = setInterval(async () => {
- *   const execution = await handle.getExecution()
- *   console.log(`Status: ${execution.status}`)
- *
- *   if (execution.status === 'waiting_for_children') {
- *     console.log(`Children: ${execution.activeChildrenCount} active`)
- *   }
- * }, 1000)
- *
- * await handle.waitAndGetFinishedExecution()
- * clearInterval(interval)
- * ```
- *
- * @see [Task execution](https://gpahal.github.io/durable-execution/index.html#task-execution)
- * for detailed information about execution states.
- *
- * @category Task
- */
-export type TaskExecutionHandle<TOutput = unknown> = {
-  /**
-   * Get the unique identifier of the task definition.
-   *
-   * @returns The task id (e.g., 'sendEmail', 'processFile')
-   */
-  getTaskId: () => string
-  /**
-   * Get the unique identifier of this specific task execution instance.
-   *
-   * Each time a task is enqueued, it gets a new execution id for tracking.
-   *
-   * @returns The execution id (e.g., 'te_abc123')
-   */
-  getExecutionId: () => string
-  /**
-   * Get the current state and metadata of the task execution.
-   *
-   * This provides a snapshot of the current execution state including status,
-   * timing information, error details, and child task information.
-   *
-   * @returns Promise resolving to the current task execution state
-   */
-  getExecution: () => Promise<TaskExecution<TOutput>>
-  /**
-   * Wait for the task to reach a terminal state and return the final result.
-   *
-   * This method polls the task execution status until it reaches a finished state
-   * (completed, failed, timed_out, finalize_failed, or cancelled).
-   *
-   * @param options - Configuration for the waiting behavior
-   * @param options.signal - Signal to cancel the waiting (not the task itself)
-   * @param options.pollingIntervalMs - How often to check status (default: 1000ms)
-   * @returns Promise resolving to the finished task execution with typed output
-   *
-   * @example
-   * ```ts
-   * const result = await handle.waitAndGetFinishedExecution({
-   *   pollingIntervalMs: 500,  // Check every 500ms
-   *   signal: abortController.signal  // Cancel waiting on user action
-   * })
-   * ```
-   */
-  waitAndGetFinishedExecution: (options?: {
-    signal?: CancelSignal | AbortSignal
-    pollingIntervalMs?: number
-  }) => Promise<FinishedTaskExecution<TOutput>>
-  /**
-   * Request cancellation of the task execution.
-   *
-   * This marks the task as cancelled and signals any running execution to stop. The task can check
-   * `ctx.cancelSignal` to handle cancellation gracefully.
-   *
-   * - If the task is queued: It will be marked as cancelled without running
-   * - If the task is running: It receives a cancellation signal via `ctx.cancelSignal`
-   * - If the task has children: All child tasks are also cancelled
-   *
-   * @returns Promise that resolves when the cancellation request is processed
-   *
-   * @example
-   * ```ts
-   * const handle = await executor.enqueueTask(longRunningTask, input)
-   *
-   * // Cancel after 30 seconds
-   * setTimeout(() => handle.cancel(), 30_000)
-   *
-   * try {
-   *   await handle.waitAndGetFinishedExecution()
-   * } catch (error) {
-   *   // Task was cancelled
-   * }
-   * ```
-   */
-  cancel: () => Promise<void>
 }
 
 /**

@@ -17,11 +17,10 @@ describe('index', () => {
 
   it('should complete runStorageTest with in memory storage', { timeout: 60_000 }, async () => {
     const storage = new InMemoryTaskExecutionsStorage()
-    await runStorageTest(storage)
+    await expect(runStorageTest(storage)).resolves.not.toThrow()
   })
 
   it('should complete runStorageBench with in memory storage', { timeout: 120_000 }, async () => {
-    // eslint-disable-next-line unicorn/consistent-function-scoping
     const test1 = async () => {
       const startTime = Date.now()
       await expect(
@@ -32,7 +31,6 @@ describe('index', () => {
       return Date.now() - startTime
     }
 
-    // eslint-disable-next-line unicorn/consistent-function-scoping
     const test2 = async () => {
       const startTime = Date.now()
       await expect(

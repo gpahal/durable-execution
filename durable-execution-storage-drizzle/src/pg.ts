@@ -179,7 +179,7 @@ export type TaskExecutionsPgTable = ReturnType<typeof createPgTaskExecutionsTabl
  * const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable)
  *
  * // Use with DurableExecutor
- * const executor = new DurableExecutor(storage)
+ * const executor = await DurableExecutor.make(storage)
  * ```
  *
  * @param db - A Drizzle PostgreSQL database instance.

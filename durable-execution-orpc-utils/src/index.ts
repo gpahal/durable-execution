@@ -180,7 +180,7 @@ function createEnqueueTaskProcedure<
           input.input as InferTaskInput<typeof task>,
           input.options,
         )
-        return handle.getExecutionId()
+        return handle.executionId
       } catch (error) {
         if (error instanceof DurableExecutionError) {
           if (error instanceof DurableExecutionNotFoundError) {
@@ -300,7 +300,7 @@ function createWakeupSleepingTaskExecutionProcedure<
           message: `Task ${input.taskId} not found`,
         })
       }
-      if (!task.isSleepingTask) {
+      if (task.taskType !== 'sleepingTask') {
         throw new ORPCError('BAD_REQUEST', {
           message: `Task ${input.taskId} is not a sleeping task`,
         })
@@ -308,7 +308,7 @@ function createWakeupSleepingTaskExecutionProcedure<
 
       try {
         return await executor.wakeupSleepingTaskExecution(
-          task as Task<unknown, unknown, true>,
+          task as Task<unknown, unknown, 'sleepingTask'>,
           input.sleepingTaskUniqueId,
           input.options,
         )
@@ -380,7 +380,7 @@ export type TasksRouter<
  * import { createTasksRouter } from 'durable-execution-orpc-utils'
  *
  * // Create executor with storage implementation
- * const executor = new DurableExecutor(new InMemoryTaskExecutionsStorage())
+ * const executor = await DurableExecutor.make(new InMemoryTaskExecutionsStorage())
  *
  * // Define tasks
  * const sendEmail = executor.task({
@@ -543,7 +543,7 @@ export function convertProcedureClientToTask<
           isInternal = true
         }
 
-        throw DurableExecutionError.any(orpcError.message, isRetryable, isInternal)
+        throw new DurableExecutionError(orpcError.message, { isRetryable, isInternal })
       } else if (isSuccess) {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-return
         return data as TProcedure extends ProcedureClient<

@@ -55,7 +55,7 @@ describe('index', () => {
       const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable, {
         enableTestMode: true,
       })
-      await runStorageTest(storage)
+      await expect(runStorageTest(storage)).resolves.not.toThrow()
     } finally {
       if (pool) {
         await pool.end()
@@ -91,7 +91,7 @@ describe('index', () => {
           enableTestMode: true,
         },
       )
-      await runStorageTest(storage)
+      await expect(runStorageTest(storage)).resolves.not.toThrow()
     } finally {
       if (pool) {
         await pool.end()
@@ -110,7 +110,7 @@ describe('index', () => {
       const storage = createSQLiteTaskExecutionsStorage(db, taskExecutionsTable, {
         enableTestMode: true,
       })
-      await runStorageTest(storage)
+      await expect(runStorageTest(storage)).resolves.not.toThrow()
     })
   })
 })

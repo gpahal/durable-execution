@@ -52,7 +52,7 @@ import { DurableExecutor, InMemoryTaskExecutionsStorage } from 'durable-executio
 import { createTasksRouter } from 'durable-execution-orpc-utils'
 
 // Create executor (use persistent storage in production)
-const executor = new DurableExecutor(new InMemoryTaskExecutionsStorage())
+const executor = await DurableExecutor.make(new InMemoryTaskExecutionsStorage())
 
 // Define tasks
 const sendEmail = executor.task({
@@ -80,7 +80,7 @@ export const tasks = { sendEmail, waitForWebhook }
 export const tasksRouter = createTasksRouter(os, executor, tasks)
 
 // Start server
-executor.start()
+await executor.start()
 // ... mount tasksRouter with your oRPC server
 ```
 
@@ -189,8 +189,8 @@ export const tasks = { sendEmail, processOrder: processOrderTask }
 The library automatically maps oRPC errors to durable execution errors:
 
 - HTTP 404 → `DurableExecutionNotFoundError`
-- HTTP 408, 429, 500-504 → Retryable errors
-- HTTP 5xx → Internal errors
+- Retryable: 408, 429, 500, 502, 503, 504
+- HTTP 5xx → Marked internal errors; only 500, 502, 503, 504 are auto-retryable
 
 ## API Reference
 

@@ -27,7 +27,7 @@ describe('executorCrash', () => {
     })
 
     const storage = await loadInMemoryTaskExecutionsStorageFromFile(storageFilePath)
-    const executor = new DurableExecutor(storage, {
+    const executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       expireLeewayMs: 1000,
       backgroundProcessIntraBatchSleepMs: 50,
@@ -44,7 +44,7 @@ describe('executorCrash', () => {
     })
 
     console.log('Starting executor')
-    executor.start()
+    await executor.start()
     try {
       for (let i = 0; i < 10; i++) {
         const runningTaskExecutionIds = executor.getRunningTaskExecutionIds()

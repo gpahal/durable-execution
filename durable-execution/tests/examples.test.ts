@@ -15,13 +15,13 @@ describe('examples', () => {
   let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
-    executor = new DurableExecutor(storage, {
+    executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.start()
+    await executor.start()
   })
 
   afterEach(async () => {
@@ -996,14 +996,14 @@ describe('examples', () => {
     )
   })
 
-  it('should complete polling task', async () => {
+  it('should complete looping task', async () => {
     let value: number | undefined
     setTimeout(() => {
       value = 10
     }, 1000)
 
-    const pollTask = executor.task({
-      id: 'poll',
+    const iterationTask = executor.task({
+      id: 'iteration',
       sleepMsBeforeRun: 100,
       timeoutMs: 1000,
       run: () => {
@@ -1018,15 +1018,15 @@ describe('examples', () => {
       },
     })
 
-    const pollingTask = executor.pollingTask('polling', pollTask, 20, 100)
-    const handle = await executor.enqueueTask(pollingTask)
+    const loopingTask = executor.loopingTask('looping', iterationTask, 20, 100)
+    const handle = await executor.enqueueTask(loopingTask)
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
     })
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
-    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.taskId).toBe('looping')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.isSuccess).toBe(true)
@@ -1039,16 +1039,16 @@ describe('examples', () => {
     )
   })
 
-  it('should complete polling task manually', async () => {
+  it('should complete looping task manually', async () => {
     let value: number | undefined
     setTimeout(() => {
       value = 10
     }, 1000)
 
-    const pollingTask: Task<{ prevCount: number }, { count: number; value: number }> = executor
+    const loopingTask: Task<{ prevCount: number }, { count: number; value: number }> = executor
       .inputSchema(Schema.Struct({ prevCount: Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)) }))
       .parentTask({
-        id: 'polling',
+        id: 'looping',
         sleepMsBeforeRun: 100,
         timeoutMs: 1000,
         runParent: (ctx, input) => {
@@ -1072,11 +1072,11 @@ describe('examples', () => {
             } as
               | { isDone: false; value: undefined; prevCount: number }
               | { isDone: true; value: number; prevCount: number },
-            children: [childTask(pollingTask, { prevCount: input.prevCount + 1 })],
+            children: [childTask(loopingTask, { prevCount: input.prevCount + 1 })],
           }
         },
         finalize: {
-          id: 'pollingFinalize',
+          id: 'loopingFinalize',
           timeoutMs: 1000,
           run: (ctx, { output, children }) => {
             if (output.isDone) {
@@ -1099,14 +1099,14 @@ describe('examples', () => {
         },
       })
 
-    const handle = await executor.enqueueTask(pollingTask, { prevCount: 0 })
+    const handle = await executor.enqueueTask(loopingTask, { prevCount: 0 })
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
     })
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
-    expect(finishedExecution.taskId).toBe('polling')
+    expect(finishedExecution.taskId).toBe('looping')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.count).toBeGreaterThanOrEqual(2)

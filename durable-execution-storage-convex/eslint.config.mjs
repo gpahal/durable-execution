@@ -1,4 +1,6 @@
 import eslintBaseConfig from '@gpahal/eslint-config/base'
+import eslintTurboConfig from '@gpahal/eslint-config/turbo'
+import eslintVitestConfig from '@gpahal/eslint-config/vitest'
 
 /** @type {import("@gpahal/eslint-config/base").Config} */
 export default eslintBaseConfig({
@@ -10,5 +12,7 @@ export default eslintBaseConfig({
         'unicorn/filename-case': 'off',
       },
     },
+    eslintVitestConfig,
+    eslintTurboConfig,
   ],
 })

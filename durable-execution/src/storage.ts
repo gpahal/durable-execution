@@ -1,13 +1,24 @@
+import { Context, Effect } from 'effect'
+
 import { createMutex, type Mutex } from '@gpahal/std/promises'
 
 import { DurableExecutionError, type DurableExecutionErrorStorageValue } from './errors'
 import type { SerializerInternal } from './serializer'
 import {
+  type CancelledTaskExecution,
+  type CompletedTaskExecution,
+  type FailedTaskExecution,
+  type FinalizeFailedTaskExecution,
   type ParentTaskExecutionSummary,
+  type ReadyTaskExecution,
+  type RunningTaskExecution,
   type TaskExecution,
   type TaskExecutionStatus,
   type TaskExecutionSummary,
   type TaskRetryOptions,
+  type TimedOutTaskExecution,
+  type WaitingForChildrenTaskExecution,
+  type WaitingForFinalizeTaskExecution,
 } from './task'
 
 /**
@@ -31,17 +42,23 @@ import {
  * ## Required Database Indexes
  *
  * For optimal performance, create these indexes in your storage backend:
- * - uniqueIndex(executionId)
- * - uniqueIndex(sleepingTaskUniqueId)
- * - index(status, startAt)
- * - index(status, onChildrenFinishedProcessingStatus, activeChildrenCount, updatedAt)
- * - index(closeStatus, updatedAt)
- * - index(status, isSleepingTask, expiresAt)
- * - index(onChildrenFinishedProcessingExpiresAt)
- * - index(closeExpiresAt)
- * - index(executorId, needsPromiseCancellation, updatedAt)
- * - index(parent.executionId, isFinished)
- * - index(isFinished, closeStatus, updatedAt)
+ *
+ * - **Unique Indexes**:
+ *   - `uniqueIndex(executionId)`
+ *   - `uniqueIndex(sleepingTaskUniqueId)` - sparse/partial index where not null
+ *
+ *  - **Non-unique Indexes (order matters for performance)**:
+ *   - `index(status, startAt)` - for processing ready task executions
+ *   - `index(status, onChildrenFinishedProcessingStatus, activeChildrenCount, updatedAt)` - for
+ *     processing parent task executions when children are finished processing
+ *   - `index(closeStatus, updatedAt)` - for task execution closure handling
+ *   - `index(status, isSleepingTask, expiresAt)` - for task execution timeout handling
+ *   - `index(onChildrenFinishedProcessingExpiresAt)` - for recovery during processing parent task
+ *     executions when children are finished processing
+ *   - `index(closeExpiresAt)` - for task execution closure handling recovery
+ *   - `index(executorId, needsPromiseCancellation, updatedAt)` - for task execution cancellation
+ *   - `index(parent.executionId, isFinished)` - for child task execution queries
+ *   - `index(isFinished, closeStatus, updatedAt)` - for finished task execution cleanup
  *
  * ## Available Implementations
  *
@@ -55,15 +72,16 @@ import {
  * ```ts
  * // Custom storage implementation
  * class MongoDBStorage implements TaskExecutionsStorage {
- *   async insert(executions: TaskExecutionStorageValue[]) {
+ *   async insertMany(executions: ReadonlyArray<TaskExecutionStorageValue>) {
  *     await this.collection.insertMany(executions)
  *   }
  *
- *   async getById(executionId: string) {
- *     const doc = await this.collection.findOne({
- *       execution_id: executionId
- *     })
- *     return taskExecutionStorageValueToDBValue(doc)
+ *   async getManyById(requests: ReadonlyArray<{executionId: string}>) {
+ *     const ids = requests.map(r => r.executionId)
+ *     const docs = await this.collection.find({ executionId: { $in: ids } })
+ *     return requests.map(req =>
+ *       docs.find(doc => doc.executionId === req.executionId) || undefined
+ *     )
  *   }
  *
  *   // ... implement other methods
@@ -332,6 +350,16 @@ export type TaskExecutionsStorage = {
 }
 
 /**
+ * Service for the task executions storage.
+ *
+ * @category Storage
+ */
+export class TaskExecutionsStorageService extends Context.Tag('TaskExecutionsStorageService')<
+  TaskExecutionsStorageService,
+  TaskExecutionsStorage
+>() {}
+
+/**
  * Complete storage representation of a task execution including all metadata, relationships and
  * state tracking fields.
  *
@@ -535,6 +563,36 @@ export type TaskExecutionOnChildrenFinishedProcessingStatus = 'idle' | 'processi
  */
 export type TaskExecutionCloseStatus = 'idle' | 'ready' | 'closing' | 'closed'
 
+/**
+ * Creates a new task execution storage record with proper initial state.
+ *
+ * This factory function initializes all required fields for a task execution record and handles
+ * the different initialization logic for sleeping vs regular tasks.
+ *
+ * ## Key Initialization Logic
+ *
+ * - **Regular tasks**: Start in `ready` status, no expiration time
+ * - **Sleeping tasks**: Start in `running` status with expiration time set
+ * - **Start timing**: `startAt` is delayed by `sleepMsBeforeRun` for rate limiting
+ * - **State tracking**: All process states start as `idle`
+ *
+ * @param params - Task execution creation parameters
+ * @param params.now - Current timestamp in milliseconds
+ * @param params.root - Root task execution summary (optional)
+ * @param params.parent - Parent task execution summary (optional)
+ * @param params.taskId - Unique identifier for the task type
+ * @param params.executionId - Unique identifier for this execution
+ * @param params.sleepingTaskUniqueId - Unique identifier for sleeping tasks (optional)
+ * @param params.retryOptions - Retry configuration for the task
+ * @param params.sleepMsBeforeRun - Delay before execution starts (milliseconds)
+ * @param params.timeoutMs - Maximum execution time (milliseconds)
+ * @param params.areChildrenSequential - Whether child tasks should run sequentially
+ * @param params.input - Serialized input data for the task
+ * @returns Initialized task execution storage value
+ *
+ * @category Storage
+ * @internal
+ */
 export function createTaskExecutionStorageValue({
   now,
   root,
@@ -573,9 +631,12 @@ export function createTaskExecutionStorageValue({
     timeoutMs,
     areChildrenSequential: areChildrenSequential ?? false,
     input,
+    // Sleeping tasks start as 'running' (waiting for external wakeup)
+    // Regular tasks start as 'ready' (waiting for executor to pick them up)
     status: isSleepingTask ? 'running' : 'ready',
     isFinished: false,
     retryAttempts: 0,
+    // Delay execution by sleepMsBeforeRun
     startAt: now + sleepMsBeforeRun,
     activeChildrenCount: 0,
     onChildrenFinishedProcessingStatus: 'idle',
@@ -584,9 +645,14 @@ export function createTaskExecutionStorageValue({
     createdAt: now,
     updatedAt: now,
   }
+
+  // Only sleeping tasks have expiration times on creation (for timeout handling)
+  // Other tasks have expiration times set on start
   if (isSleepingTask) {
     value.expiresAt = now + sleepMsBeforeRun + timeoutMs
+    value.startedAt = now
   }
+
   return value
 }
 
@@ -695,12 +761,14 @@ export function applyTaskExecutionStorageUpdate(
  *
  * @category Storage
  */
-export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
+export const convertTaskExecutionStorageValueToTaskExecution = Effect.fn(function* <TOutput>(
   execution: TaskExecutionStorageValue,
   serializer: SerializerInternal,
-): TaskExecution<TOutput> {
-  const input = serializer.deserialize(execution.input)
-  const output = execution.output ? serializer.deserialize<TOutput>(execution.output) : undefined
+) {
+  const input = yield* serializer.deserialize(execution.input)
+  const output = execution.output
+    ? yield* serializer.deserialize<TOutput>(execution.output)
+    : undefined
 
   switch (execution.status) {
     case 'ready': {
@@ -721,7 +789,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         startAt: new Date(execution.startAt),
         createdAt: new Date(execution.createdAt),
         updatedAt: new Date(execution.updatedAt),
-      }
+      } satisfies ReadyTaskExecution as TaskExecution<TOutput>
     }
     case 'running': {
       return {
@@ -744,7 +812,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         expiresAt: new Date(execution.expiresAt!),
         createdAt: new Date(execution.createdAt),
         updatedAt: new Date(execution.updatedAt),
-      }
+      } satisfies RunningTaskExecution as TaskExecution<TOutput>
     }
     case 'failed': {
       return {
@@ -767,7 +835,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         finishedAt: new Date(execution.finishedAt!),
         createdAt: new Date(execution.createdAt),
         updatedAt: new Date(execution.updatedAt),
-      }
+      } satisfies FailedTaskExecution as TaskExecution<TOutput>
     }
     case 'timed_out': {
       return {
@@ -790,7 +858,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         finishedAt: new Date(execution.finishedAt!),
         createdAt: new Date(execution.createdAt),
         updatedAt: new Date(execution.updatedAt),
-      }
+      } satisfies TimedOutTaskExecution as TaskExecution<TOutput>
     }
     case 'waiting_for_children': {
       return {
@@ -814,7 +882,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         activeChildrenCount: execution.activeChildrenCount,
         createdAt: new Date(execution.createdAt),
         updatedAt: new Date(execution.updatedAt),
-      }
+      } satisfies WaitingForChildrenTaskExecution as TaskExecution<TOutput>
     }
     case 'waiting_for_finalize': {
       return {
@@ -840,7 +908,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         finalize: execution.finalize!,
         createdAt: new Date(execution.createdAt),
         updatedAt: new Date(execution.updatedAt),
-      }
+      } satisfies WaitingForFinalizeTaskExecution as TaskExecution<TOutput>
     }
     case 'finalize_failed': {
       return {
@@ -868,7 +936,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         finalize: execution.finalize!,
         createdAt: new Date(execution.createdAt),
         updatedAt: new Date(execution.updatedAt),
-      }
+      } satisfies FinalizeFailedTaskExecution as TaskExecution<TOutput>
     }
     case 'completed': {
       return {
@@ -900,7 +968,7 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         finalize: execution.finalize,
         createdAt: new Date(execution.createdAt),
         updatedAt: new Date(execution.updatedAt),
-      }
+      } satisfies CompletedTaskExecution<TOutput> as TaskExecution<TOutput>
     }
     case 'cancelled': {
       return {
@@ -933,14 +1001,18 @@ export function convertTaskExecutionStorageValueToTaskExecution<TOutput>(
         finalize: execution.finalize,
         createdAt: new Date(execution.createdAt),
         updatedAt: new Date(execution.updatedAt),
-      }
+      } satisfies CancelledTaskExecution as TaskExecution<TOutput>
     }
     default: {
-      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-      throw DurableExecutionError.nonRetryable(`Invalid task execution status: ${execution.status}`)
+      return yield* Effect.fail(
+        DurableExecutionError.nonRetryable(
+          // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+          `Invalid task execution status [status=${execution.status}]`,
+        ),
+      )
     }
   }
-}
+})
 
 /**
  * Wraps a {@link TaskExecutionsStorage} and makes all operations atomic by protecting them with a

@@ -1,4 +1,6 @@
-import { createSuperjsonSerializer, SerializerInternal } from '../src/serializer'
+import { Effect } from 'effect'
+
+import { makeSerializerInternal, type SerializerInternal } from '../src/serializer'
 import {
   convertTaskExecutionStorageValueToTaskExecution,
   TaskExecutionsStorageWithMutex,
@@ -384,15 +386,24 @@ describe('getTaskExecutionStorageUpdate', () => {
 describe('convertTaskExecutionStorageValueToTaskExecution', () => {
   let now: number
   let nowDate: Date
-  let serializer: SerializerInternal
+  let serializerInternal: SerializerInternal
+  let serializer: {
+    serialize: <T>(value: T) => Promise<string>
+    deserialize: <T>(value: string) => Promise<T>
+  }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     now = Date.now()
     nowDate = new Date(now)
-    serializer = new SerializerInternal(createSuperjsonSerializer())
+    serializerInternal = await Effect.runPromise(makeSerializerInternal)
+    serializer = {
+      serialize: <T>(value: T) => Effect.runPromise(serializerInternal.serialize(value)),
+      deserialize: <T>(value: string) =>
+        Effect.runPromise(serializerInternal.deserialize<T>(value)),
+    }
   })
 
-  it('should handle ready execution', () => {
+  it('should handle ready execution', async () => {
     const taskExecutionStorageValue: TaskExecutionStorageValue = {
       root: {
         taskId: 'rootTaskId',
@@ -414,7 +425,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       areChildrenSequential: false,
-      input: serializer.serialize({ name: 'test' }),
+      input: await serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'ready',
       isFinished: false,
@@ -428,9 +439,11 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       updatedAt: now,
     }
 
-    const taskExecution = convertTaskExecutionStorageValueToTaskExecution(
-      taskExecutionStorageValue,
-      serializer,
+    const taskExecution = await Effect.runPromise(
+      convertTaskExecutionStorageValueToTaskExecution(
+        taskExecutionStorageValue,
+        serializerInternal,
+      ),
     )
     expect(taskExecution.root).toEqual({
       taskId: 'rootTaskId',
@@ -459,7 +472,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.updatedAt).toStrictEqual(nowDate)
   })
 
-  it('should handle running execution', () => {
+  it('should handle running execution', async () => {
     const taskExecutionStorageValue: TaskExecutionStorageValue = {
       root: {
         taskId: 'rootTaskId',
@@ -481,7 +494,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       areChildrenSequential: false,
-      input: serializer.serialize({ name: 'test' }),
+      input: await serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'running',
       isFinished: false,
@@ -498,9 +511,11 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       expiresAt: now,
     }
 
-    const taskExecution = convertTaskExecutionStorageValueToTaskExecution(
-      taskExecutionStorageValue,
-      serializer,
+    const taskExecution = await Effect.runPromise(
+      convertTaskExecutionStorageValueToTaskExecution(
+        taskExecutionStorageValue,
+        serializerInternal,
+      ),
     )
     expect(taskExecution.root).toEqual({
       taskId: 'rootTaskId',
@@ -531,7 +546,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.expiresAt).toStrictEqual(nowDate)
   })
 
-  it('should handle failed execution', () => {
+  it('should handle failed execution', async () => {
     const taskExecutionStorageValue: TaskExecutionStorageValue = {
       root: {
         taskId: 'rootTaskId',
@@ -553,7 +568,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       areChildrenSequential: false,
-      input: serializer.serialize({ name: 'test' }),
+      input: await serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'failed',
       isFinished: true,
@@ -569,17 +584,19 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       startedAt: now,
       expiresAt: now,
       error: {
-        message: 'test_error_message',
         errorType: 'generic',
+        message: 'test_error_message',
         isRetryable: true,
         isInternal: false,
       },
       finishedAt: now,
     }
 
-    const taskExecution = convertTaskExecutionStorageValueToTaskExecution(
-      taskExecutionStorageValue,
-      serializer,
+    const taskExecution = await Effect.runPromise(
+      convertTaskExecutionStorageValueToTaskExecution(
+        taskExecutionStorageValue,
+        serializerInternal,
+      ),
     )
     expect(taskExecution.root).toEqual({
       taskId: 'rootTaskId',
@@ -603,8 +620,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.status).toBe('failed')
     assert(taskExecution.status === 'failed')
     expect(taskExecution.error).toEqual({
-      message: 'test_error_message',
       errorType: 'generic',
+      message: 'test_error_message',
       isRetryable: true,
       isInternal: false,
     })
@@ -616,7 +633,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.finishedAt).toStrictEqual(nowDate)
   })
 
-  it('should handle failed execution', () => {
+  it('should handle timed out execution', async () => {
     const taskExecutionStorageValue: TaskExecutionStorageValue = {
       root: {
         taskId: 'rootTaskId',
@@ -638,7 +655,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       areChildrenSequential: false,
-      input: serializer.serialize({ name: 'test' }),
+      input: await serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'timed_out',
       isFinished: true,
@@ -654,17 +671,19 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       startedAt: now,
       expiresAt: now,
       error: {
-        message: 'test_error_message',
         errorType: 'timed_out',
+        message: 'test_error_message',
         isRetryable: true,
         isInternal: false,
       },
       finishedAt: now,
     }
 
-    const taskExecution = convertTaskExecutionStorageValueToTaskExecution(
-      taskExecutionStorageValue,
-      serializer,
+    const taskExecution = await Effect.runPromise(
+      convertTaskExecutionStorageValueToTaskExecution(
+        taskExecutionStorageValue,
+        serializerInternal,
+      ),
     )
     expect(taskExecution.root).toEqual({
       taskId: 'rootTaskId',
@@ -688,8 +707,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.status).toBe('timed_out')
     assert(taskExecution.status === 'timed_out')
     expect(taskExecution.error).toEqual({
-      message: 'test_error_message',
       errorType: 'timed_out',
+      message: 'test_error_message',
       isRetryable: true,
       isInternal: false,
     })
@@ -701,7 +720,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.finishedAt).toStrictEqual(nowDate)
   })
 
-  it('should handle waiting_for_children execution', () => {
+  it('should handle waiting_for_children execution', async () => {
     const taskExecutionStorageValue: TaskExecutionStorageValue = {
       root: {
         taskId: 'rootTaskId',
@@ -723,7 +742,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       areChildrenSequential: false,
-      input: serializer.serialize({ name: 'test' }),
+      input: await serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'waiting_for_children',
       isFinished: false,
@@ -746,9 +765,11 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       ],
     }
 
-    const taskExecution = convertTaskExecutionStorageValueToTaskExecution(
-      taskExecutionStorageValue,
-      serializer,
+    const taskExecution = await Effect.runPromise(
+      convertTaskExecutionStorageValueToTaskExecution(
+        taskExecutionStorageValue,
+        serializerInternal,
+      ),
     )
     expect(taskExecution.root).toEqual({
       taskId: 'rootTaskId',
@@ -785,7 +806,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.activeChildrenCount).toBe(1)
   })
 
-  it('should handle waiting_for_finalize execution', () => {
+  it('should handle waiting_for_finalize execution', async () => {
     const taskExecutionStorageValue: TaskExecutionStorageValue = {
       root: {
         taskId: 'rootTaskId',
@@ -807,7 +828,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       areChildrenSequential: false,
-      input: serializer.serialize({ name: 'test' }),
+      input: await serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'waiting_for_finalize',
       isFinished: false,
@@ -834,9 +855,11 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       },
     }
 
-    const taskExecution = convertTaskExecutionStorageValueToTaskExecution(
-      taskExecutionStorageValue,
-      serializer,
+    const taskExecution = await Effect.runPromise(
+      convertTaskExecutionStorageValueToTaskExecution(
+        taskExecutionStorageValue,
+        serializerInternal,
+      ),
     )
     expect(taskExecution.root).toEqual({
       taskId: 'rootTaskId',
@@ -877,7 +900,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     })
   })
 
-  it('should handle finalize_failed execution', () => {
+  it('should handle finalize_failed execution', async () => {
     const taskExecutionStorageValue: TaskExecutionStorageValue = {
       root: {
         taskId: 'rootTaskId',
@@ -899,7 +922,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       areChildrenSequential: false,
-      input: serializer.serialize({ name: 'test' }),
+      input: await serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'finalize_failed',
       isFinished: true,
@@ -925,17 +948,19 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
         executionId: 'finalizeExecutionId',
       },
       error: {
-        message: 'test_error_message',
         errorType: 'generic',
+        message: 'test_error_message',
         isRetryable: true,
         isInternal: false,
       },
       finishedAt: now,
     }
 
-    const taskExecution = convertTaskExecutionStorageValueToTaskExecution(
-      taskExecutionStorageValue,
-      serializer,
+    const taskExecution = await Effect.runPromise(
+      convertTaskExecutionStorageValueToTaskExecution(
+        taskExecutionStorageValue,
+        serializerInternal,
+      ),
     )
     expect(taskExecution.root).toEqual({
       taskId: 'rootTaskId',
@@ -959,8 +984,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.status).toBe('finalize_failed')
     assert(taskExecution.status === 'finalize_failed')
     expect(taskExecution.error).toEqual({
-      message: 'test_error_message',
       errorType: 'generic',
+      message: 'test_error_message',
       isRetryable: true,
       isInternal: false,
     })
@@ -983,7 +1008,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.finishedAt).toStrictEqual(nowDate)
   })
 
-  it('should handle completed execution', () => {
+  it('should handle completed execution', async () => {
     const taskExecutionStorageValue: TaskExecutionStorageValue = {
       root: {
         taskId: 'rootTaskId',
@@ -1005,7 +1030,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       areChildrenSequential: false,
-      input: serializer.serialize({ name: 'test' }),
+      input: await serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'completed',
       isFinished: true,
@@ -1030,13 +1055,15 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
         taskId: 'finalizeTaskId',
         executionId: 'finalizeExecutionId',
       },
-      output: serializer.serialize({ output_name: 'test_output' }),
+      output: await serializer.serialize({ output_name: 'test_output' }),
       finishedAt: now,
     }
 
-    const taskExecution = convertTaskExecutionStorageValueToTaskExecution(
-      taskExecutionStorageValue,
-      serializer,
+    const taskExecution = await Effect.runPromise(
+      convertTaskExecutionStorageValueToTaskExecution(
+        taskExecutionStorageValue,
+        serializerInternal,
+      ),
     )
     expect(taskExecution.root).toEqual({
       taskId: 'rootTaskId',
@@ -1079,7 +1106,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.finishedAt).toStrictEqual(nowDate)
   })
 
-  it('should handle cancelled execution', () => {
+  it('should handle cancelled execution', async () => {
     const taskExecutionStorageValue: TaskExecutionStorageValue = {
       root: {
         taskId: 'rootTaskId',
@@ -1101,7 +1128,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       areChildrenSequential: false,
-      input: serializer.serialize({ name: 'test' }),
+      input: await serializer.serialize({ name: 'test' }),
       executorId: 'de_executor_id',
       status: 'cancelled',
       isFinished: true,
@@ -1127,17 +1154,19 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
         executionId: 'finalizeExecutionId',
       },
       error: {
-        message: 'test_error_message',
         errorType: 'cancelled',
+        message: 'test_error_message',
         isRetryable: false,
         isInternal: false,
       },
       finishedAt: now,
     }
 
-    const taskExecution = convertTaskExecutionStorageValueToTaskExecution(
-      taskExecutionStorageValue,
-      serializer,
+    const taskExecution = await Effect.runPromise(
+      convertTaskExecutionStorageValueToTaskExecution(
+        taskExecutionStorageValue,
+        serializerInternal,
+      ),
     )
     expect(taskExecution.root).toEqual({
       taskId: 'rootTaskId',
@@ -1161,8 +1190,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.status).toBe('cancelled')
     assert(taskExecution.status === 'cancelled')
     expect(taskExecution.error).toEqual({
-      message: 'test_error_message',
       errorType: 'cancelled',
+      message: 'test_error_message',
       isRetryable: false,
       isInternal: false,
     })
@@ -1185,7 +1214,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.finishedAt).toStrictEqual(nowDate)
   })
 
-  it('should handle invalid execution status', () => {
+  it('should handle invalid execution status', async () => {
     const taskExecutionStorageValue: TaskExecutionStorageValue = {
       root: {
         taskId: 'rootTaskId',
@@ -1207,7 +1236,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       sleepMsBeforeRun: 0,
       timeoutMs: 0,
       areChildrenSequential: false,
-      input: serializer.serialize({ name: 'test' }),
+      input: await serializer.serialize({ name: 'test' }),
       // @ts-expect-error - Testing invalid input
       status: 'invalid_status',
       retryAttempts: 0,
@@ -1220,9 +1249,14 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       updatedAt: now,
     }
 
-    expect(() =>
-      convertTaskExecutionStorageValueToTaskExecution(taskExecutionStorageValue, serializer),
-    ).toThrow('Invalid task execution status: invalid_status')
+    await expect(
+      Effect.runPromise(
+        convertTaskExecutionStorageValueToTaskExecution(
+          taskExecutionStorageValue,
+          serializerInternal,
+        ),
+      ),
+    ).rejects.toThrow('Invalid task execution status [status=invalid_status]')
   })
 })
 

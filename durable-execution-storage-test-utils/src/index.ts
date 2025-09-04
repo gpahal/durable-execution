@@ -17,6 +17,7 @@ import {
   type TaskExecutionSummary,
   type TaskRetryOptions,
 } from 'durable-execution'
+import { Option } from 'effect'
 import { customAlphabet } from 'nanoid'
 
 import { isObject } from '@gpahal/std/objects'
@@ -66,6 +67,9 @@ import { sleep } from '@gpahal/std/promises'
  * @param options.storageCleanup - Optional cleanup function to run after tests complete (e.g., to
  *   remove test database)
  * @param options.enableStorageBatching - Whether to enable storage batching.
+ * @param options.storageBackgroundBatchingProcessIntraBatchSleepMs - The sleep duration between
+ *   background batching process iterations. Only applicable if storage batching is enabled. If not
+ *   provided, defaults to 10ms.
  * @throws Will throw if any storage operation fails validation or doesn't meet ACID requirements
  */
 export async function runStorageTest(
@@ -73,20 +77,20 @@ export async function runStorageTest(
   {
     storageCleanup,
     enableStorageBatching = false,
-    storageBatchingBackgroundProcessIntraBatchSleepMs = 10,
+    storageBackgroundBatchingProcessIntraBatchSleepMs = 10,
   }: {
     storageCleanup?: () => void | Promise<void>
     enableStorageBatching?: boolean
-    storageBatchingBackgroundProcessIntraBatchSleepMs?: number
+    storageBackgroundBatchingProcessIntraBatchSleepMs?: number
   } = {},
 ) {
-  const executor = new DurableExecutor(storage, {
+  const executor = await DurableExecutor.make(storage, {
     logLevel: 'error',
     backgroundProcessIntraBatchSleepMs: 50,
     enableStorageBatching,
-    storageBatchingBackgroundProcessIntraBatchSleepMs,
+    storageBackgroundBatchingProcessIntraBatchSleepMs,
   })
-  executor.start()
+  await executor.start()
 
   try {
     try {
@@ -346,8 +350,8 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     value = 10
   }, 1000)
 
-  const pollTask = executor.task({
-    id: 'poll',
+  const iterationTask = executor.task({
+    id: 'iteration',
     sleepMsBeforeRun: 100,
     timeoutMs: 1000,
     run: () => {
@@ -361,7 +365,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
           }
     },
   })
-  const pollingTask = executor.pollingTask('polling', pollTask, 20, 100)
+  const loopingTask = executor.loopingTask('looping', iterationTask, 20)
 
   const sleepingTask = executor.sleepingTask<string>({
     id: 'test',
@@ -420,7 +424,7 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
     parentTaskWithFailingFinalizeTask,
   )
   const concurrentParentTaskHandle = await executor.enqueueTask(concurrentParentTask)
-  const pollingTaskHandle = await executor.enqueueTask(pollingTask)
+  const loopingTaskHandle = await executor.enqueueTask(loopingTask)
   const parentTaskWithSleepingTaskHandle = await executor.enqueueTask(parentTaskWithSleepingTask)
   const closeTestTaskHandle = await executor.enqueueTask(closeTestParentTask)
 
@@ -550,23 +554,23 @@ async function runDurableExecutorTest(executor: DurableExecutor, storage: TaskEx
   expect(concurrentParentTaskExecution.waitingForChildrenStartedAt).toBeInstanceOf(Date)
   expect(concurrentParentTaskExecution.waitingForFinalizeStartedAt).toBeUndefined()
 
-  console.log('=> Waiting for polling task')
-  const pollingTaskExecution = await pollingTaskHandle.waitAndGetFinishedExecution({
+  console.log('=> Waiting for looping task')
+  const loopingTaskExecution = await loopingTaskHandle.waitAndGetFinishedExecution({
     pollingIntervalMs: 250,
   })
-  expect(pollingTaskExecution.status).toBe('completed')
-  assert(pollingTaskExecution.status === 'completed')
-  expect(pollingTaskExecution.taskId).toBe('polling')
-  expect(pollingTaskExecution.output).toBeDefined()
-  expect(pollingTaskExecution.output.isSuccess).toBe(true)
-  assert(pollingTaskExecution.output.isSuccess)
-  expect(pollingTaskExecution.output.output).toBe(10)
-  expect(pollingTaskExecution.startedAt).toBeInstanceOf(Date)
-  expect(pollingTaskExecution.waitingForChildrenStartedAt).toBeInstanceOf(Date)
-  expect(pollingTaskExecution.waitingForFinalizeStartedAt).toBeInstanceOf(Date)
-  expect(pollingTaskExecution.finishedAt).toBeInstanceOf(Date)
-  expect(pollingTaskExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
-    pollingTaskExecution.startedAt.getTime(),
+  expect(loopingTaskExecution.status).toBe('completed')
+  assert(loopingTaskExecution.status === 'completed')
+  expect(loopingTaskExecution.taskId).toBe('looping')
+  expect(loopingTaskExecution.output).toBeDefined()
+  expect(loopingTaskExecution.output.isSuccess).toBe(true)
+  assert(loopingTaskExecution.output.isSuccess)
+  expect(loopingTaskExecution.output.output).toBe(10)
+  expect(loopingTaskExecution.startedAt).toBeInstanceOf(Date)
+  expect(loopingTaskExecution.waitingForChildrenStartedAt).toBeInstanceOf(Date)
+  expect(loopingTaskExecution.waitingForFinalizeStartedAt).toBeInstanceOf(Date)
+  expect(loopingTaskExecution.finishedAt).toBeInstanceOf(Date)
+  expect(loopingTaskExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+    loopingTaskExecution.startedAt.getTime(),
   )
 
   console.log('=> Waiting for parent task with sleeping task')
@@ -2520,18 +2524,17 @@ class TaskExecutionsStorageWrapper implements TaskExecutionsStorage {
  *   remove test database)
  * @param options.storageSlowdownMs - Optional slowdown factor for storage operations.
  * @param options.executorsCount - Number of executors to run in parallel
- * @param options.backgroundProcessesCount - Number of background processes to run in parallel
  * @param options.enableStorageBatching - Whether to enable storage batching. If not provided,
  *   defaults to false.
- * @param options.storageBatchingBackgroundProcessIntraBatchSleepMs - The sleep duration between
- *   batches of storage operations. Only applicable if storage batching is enabled. If not
+ * @param options.storageBackgroundBatchingProcessIntraBatchSleepMs - The sleep duration between
+ *   background batching process iterations. Only applicable if storage batching is enabled. If not
  *   provided, defaults to 10ms.
  * @param options.totalIterations - Number of iterations to run the benchmark for. If not provided,
  *   defaults to 2.
  * @param options.childTasksCount - Number of child tasks to run in parallel
  * @param options.parentTasksCount - Number of parent tasks to run in parallel
  * @param options.sequentialTasksCount - Number of sequential tasks to run in parallel
- * @param options.pollingTasksCount - Number of polling tasks to run in parallel
+ * @param options.loopingTasksCount - Number of looping tasks to run in parallel
  */
 export async function runStorageBench<TStorage extends TaskExecutionsStorage>(
   name: string,
@@ -2540,26 +2543,24 @@ export async function runStorageBench<TStorage extends TaskExecutionsStorage>(
     storageCleanup,
     storageSlowdownMs = 0,
     executorsCount = 1,
-    backgroundProcessesCount = 3,
     enableStorageBatching = false,
-    storageBatchingBackgroundProcessIntraBatchSleepMs = 10,
+    storageBackgroundBatchingProcessIntraBatchSleepMs = 10,
     totalIterations = 2,
     childTasksCount = 50,
     parentTasksCount = 100,
     sequentialTasksCount = 100,
-    pollingTasksCount = 100,
+    loopingTasksCount = 100,
   }: {
     storageCleanup?: (storage: TStorage) => void | Promise<void>
     storageSlowdownMs?: number
     executorsCount?: number
-    backgroundProcessesCount?: number
     enableStorageBatching?: boolean
-    storageBatchingBackgroundProcessIntraBatchSleepMs?: number
+    storageBackgroundBatchingProcessIntraBatchSleepMs?: number
     totalIterations?: number
     childTasksCount?: number
     parentTasksCount?: number
     sequentialTasksCount?: number
-    pollingTasksCount?: number
+    loopingTasksCount?: number
   } = {},
 ) {
   if (executorsCount < 1) {
@@ -2637,21 +2638,21 @@ export async function runStorageBench<TStorage extends TaskExecutionsStorage>(
           ? storages.map((storage) => new TaskExecutionsStorageWrapper(storage, storageSlowdownMs))
           : (storages as Array<TaskExecutionsStorage>)
 
-      const executors = Array.from(
-        { length: executorsCount },
-        (_, idx) =>
-          new DurableExecutor(finalStorages[idx]!, {
+      const executors = await Promise.all(
+        Array.from({ length: executorsCount }, (_, idx) =>
+          DurableExecutor.make(finalStorages[idx]!, {
             logLevel: 'error',
             enableStorageBatching,
             enableStorageStats: true,
-            storageBatchingBackgroundProcessIntraBatchSleepMs,
+            storageBackgroundBatchingProcessIntraBatchSleepMs,
           }),
+        ),
       )
       activeExecutors = executors
 
       let parentTask: Task<number, string>
       let sequentialTask: Task<string, string>
-      let pollingTask: Task<string, { isSuccess: false } | { isSuccess: true; output: string }>
+      let loopingTask: Task<string, { isSuccess: false } | { isSuccess: true; output: string }>
       for (const executor of executors) {
         const childTask = executor.task({
           id: 'child',
@@ -2724,83 +2725,105 @@ export async function runStorageBench<TStorage extends TaskExecutionsStorage>(
           value = 1
         }, 1000)
 
-        const pollTask = executor.task({
-          id: 'poll',
+        const iterationTask = executor.task({
+          id: 'iteration',
           timeoutMs: 60_000,
           run: async (ctx, input: string) => {
             await sleep(1)
             if (value === 0) {
               return { isDone: false } as { isDone: false }
             }
-            return { isDone: true, output: `poll_output_${input}` } as {
+            return { isDone: true, output: `it_output_${input}` } as {
               isDone: true
               output: string
             }
           },
         })
-        pollingTask = executor.pollingTask('polling', pollTask, 1000, 100)
+        loopingTask = executor.loopingTask('looping', iterationTask, 1000, 100)
       }
 
       for (const executor of executors) {
-        for (let i = 0; i < backgroundProcessesCount; i++) {
-          executor.start()
-        }
+        await executor.start()
       }
 
-      await sleep(2500)
+      await sleep(1000)
       const iterationName = i === 0 ? 'warmup iteration' : `iteration ${i}`
       console.log(`=> Running ${iterationName} for ${name} storage`)
       try {
         for (const storage of storages) {
           await storage.deleteAll()
         }
+
+        await sleep(2500)
         const startTime = performance.now()
         await runDurableExecutorBench(
           executors[0]!,
           parentTask!,
           sequentialTask!,
-          pollingTask!,
+          loopingTask!,
           parentTasksCount,
           sequentialTasksCount,
-          pollingTasksCount,
+          loopingTasksCount,
         )
         const endTime = performance.now()
 
-        const finalCallsDurationsStats = new Map<
+        const finalStorageMetrics = new Map<
           string,
-          { callsCount: number; meanDurationMs: number }
-        >()
-        for (const [i, executor] of executors.entries()) {
-          const callsDurationsStats = executor.getStorageCallsDurationsStats()
-          for (const [key, value] of callsDurationsStats.entries()) {
-            if (!finalCallsDurationsStats.has(key)) {
-              finalCallsDurationsStats.set(key, { callsCount: 0, meanDurationMs: 0 })
-            }
-            const finalCallsDurationsStatsValue = finalCallsDurationsStats.get(key)!
-            const prevCallsCount = finalCallsDurationsStatsValue.callsCount
-            const prevMeanDurationMs = finalCallsDurationsStatsValue.meanDurationMs
-            finalCallsDurationsStatsValue.callsCount = prevCallsCount + value.callsCount
-            finalCallsDurationsStatsValue.meanDurationMs =
-              (prevMeanDurationMs * prevCallsCount + value.meanDurationMs * value.callsCount) /
-              (prevCallsCount + value.callsCount)
+          {
+            count: number
+            min: number
+            max: number
+            quantiles: Array<readonly [number, Option.Option<number>]>
           }
+        >()
+        for (const executor of executors) {
+          const storageMetrics = await executor.getStorageMetrics()
+          for (const metric of storageMetrics) {
+            if (!finalStorageMetrics.has(metric.processName)) {
+              finalStorageMetrics.set(metric.processName, {
+                count: metric.count,
+                min: metric.min,
+                max: metric.max,
+                quantiles: [...metric.quantiles],
+              })
+            } else {
+              const prevMetric = finalStorageMetrics.get(metric.processName)!
+              finalStorageMetrics.set(metric.processName, {
+                count: prevMetric.count + metric.count,
+                min: Math.min(prevMetric.min, metric.min),
+                max: Math.max(prevMetric.max, metric.max),
+                quantiles: prevMetric.quantiles.map(([quantile, value], index) => {
+                  const currValue = metric.quantiles[index]![1]
 
-          const perSecondCallsCountsStats = executor.getStoragePerSecondCallsCountsStats()
-          console.log(
-            `=> Per second call counts stats for ${name} storage for executor ${i + 1}:\n      total: ${perSecondCallsCountsStats.totalCallsCount}\n       mean: ${perSecondCallsCountsStats.meanCallsCount}\n        max: ${perSecondCallsCountsStats.maxCallsCount}`,
-          )
+                  return [
+                    quantile,
+                    Option.isNone(value)
+                      ? currValue
+                      : Option.isNone(currValue)
+                        ? value
+                        : Option.some(
+                            (prevMetric.count * value.value + metric.count * currValue.value) /
+                              (prevMetric.count + metric.count),
+                          ),
+                  ]
+                }),
+              })
+            }
+          }
         }
 
-        const timingStatsArr = [...finalCallsDurationsStats.entries()].map(([key, value]) => ({
+        const storageMetricsArr = [...finalStorageMetrics.entries()].map(([key, value]) => ({
           key,
-          callsCount: value.callsCount,
-          meanDurationMs: value.meanDurationMs,
+          count: value.count,
+          min: value.min,
+          max: value.max,
+          quantiles: value.quantiles,
         }))
-        timingStatsArr.sort((a, b) => b.callsCount - a.callsCount)
-        console.log(`=> Timing stats for ${name} storage:`)
-        for (const timingStat of timingStatsArr) {
+        storageMetricsArr.sort((a, b) => b.count - a.count)
+        console.log(`=> Storage metrics for ${name} storage:`)
+        for (const storageMetric of storageMetricsArr) {
           console.log(
-            `  ${timingStat.key}:\n    [${timingStat.callsCount}] ${timingStat.meanDurationMs.toFixed(2)}ms`,
+            `  ${storageMetric.key}:\n    [${storageMetric.count}] min=${storageMetric.min.toFixed(2)}ms max=${storageMetric.max.toFixed(2)}ms quantiles=${storageMetric.quantiles.map(([quantile, value]) => `[${quantile}] ${Option.isNone(value) ? 'N/A' : `${value.value.toFixed(2)}ms`}`).join(', ')}`,
           )
         }
 
@@ -2847,10 +2870,10 @@ async function runDurableExecutorBench(
   executor: DurableExecutor,
   parentTask: Task<number, string>,
   sequentialTask: Task<string, string>,
-  pollingTask: Task<string, { isSuccess: false } | { isSuccess: true; output: string }>,
+  loopingTask: Task<string, { isSuccess: false } | { isSuccess: true; output: string }>,
   parentTasksCount: number,
   sequentialTasksCount: number,
-  pollingTasksCount: number,
+  loopingTasksCount: number,
 ) {
   console.log('=> Enqueuing tasks')
   const handles = await Promise.all([
@@ -2860,19 +2883,20 @@ async function runDurableExecutorBench(
     ...Array.from({ length: sequentialTasksCount }, async () => {
       return await executor.enqueueTask(sequentialTask, 'test')
     }),
-    ...Array.from({ length: pollingTasksCount }, async () => {
-      return await executor.enqueueTask(pollingTask, 'test')
+    ...Array.from({ length: loopingTasksCount }, async () => {
+      return await executor.enqueueTask(loopingTask, 'test')
     }),
   ])
 
-  const timings: {
+  const queueWaitDurations: Array<number> = []
+  const durations: {
     parent: Array<number>
     sequential: Array<number>
-    polling: Array<number>
+    looping: Array<number>
   } = {
     parent: [],
     sequential: [],
-    polling: [],
+    looping: [],
   }
 
   console.log('=> Waiting for tasks')
@@ -2888,19 +2912,20 @@ async function runDurableExecutorBench(
       throw new Error('Final execution status is not completed')
     }
 
+    queueWaitDurations.push(finalExecution.startedAt.getTime() - finalExecution.startAt.getTime())
     const durationMs = finalExecution.finishedAt.getTime() - finalExecution.startedAt.getTime()
     if (finalExecution.output === 'finalize_output') {
-      timings.parent.push(durationMs)
+      durations.parent.push(durationMs)
     } else if (
       finalExecution.output === 'single_output_single_output_single_output_single_output_test'
     ) {
-      timings.sequential.push(durationMs)
+      durations.sequential.push(durationMs)
     } else if (
       isObject(finalExecution.output) &&
       finalExecution.output.isSuccess &&
-      finalExecution.output.output === 'poll_output_test'
+      finalExecution.output.output === 'it_output_test'
     ) {
-      timings.polling.push(durationMs)
+      durations.looping.push(durationMs)
     } else {
       console.error(`=> Final execution output is incorrect: ${JSON.stringify(finalExecution)}`)
       throw new Error('Final execution output is not finalize_output')
@@ -2909,19 +2934,23 @@ async function runDurableExecutorBench(
     finishedCount++
     if (finishedCount % 50 === 0) {
       console.log(
-        `=> ${finishedCount}/${parentTasksCount + sequentialTasksCount + pollingTasksCount} tasks finished`,
+        `=> ${finishedCount}/${parentTasksCount + sequentialTasksCount + loopingTasksCount} tasks finished`,
       )
     }
   }
 
-  const parentTimingMeanMs = timings.parent.reduce((a, b) => a + b, 0) / timings.parent.length
-  const sequentialTimingMeanMs =
-    timings.sequential.reduce((a, b) => a + b, 0) / timings.sequential.length
-  const pollingTimingMeanMs = timings.polling.reduce((a, b) => a + b, 0) / timings.polling.length
+  const queueWaitMeanDurationMs =
+    queueWaitDurations.reduce((a, b) => a + b, 0) / queueWaitDurations.length
+  const parentMeanDurationMs = durations.parent.reduce((a, b) => a + b, 0) / durations.parent.length
+  const sequentialMeanDurationMs =
+    durations.sequential.reduce((a, b) => a + b, 0) / durations.sequential.length
+  const loopingMeanDurationMs =
+    durations.looping.reduce((a, b) => a + b, 0) / durations.looping.length
 
-  console.log(`=> Parent timing mean: ${parentTimingMeanMs.toFixed(2)}ms`)
-  console.log(`=> Sequential timing mean: ${sequentialTimingMeanMs.toFixed(2)}ms`)
-  console.log(`=> Polling timing mean: ${pollingTimingMeanMs.toFixed(2)}ms`)
+  console.log(`=> Queue wait mean duration: ${queueWaitMeanDurationMs.toFixed(2)}ms`)
+  console.log(`=> Parent mean duration: ${parentMeanDurationMs.toFixed(2)}ms`)
+  console.log(`=> Sequential mean duration: ${sequentialMeanDurationMs.toFixed(2)}ms`)
+  console.log(`=> Looping mean duration: ${loopingMeanDurationMs.toFixed(2)}ms`)
   console.log('=> Completed tasks')
 }
 

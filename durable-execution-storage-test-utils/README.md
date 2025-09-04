@@ -90,7 +90,7 @@ scenarios.
   - `storageCleanup?: () => void | Promise<void>` - Cleanup function called after tests complete
     (default: no cleanup)
   - `enableStorageBatching?: boolean` - Whether to enable storage batching (default: false)
-  - `storageBatchingBackgroundProcessIntraBatchSleepMs?: number` - Artificial delay to add to
+  - `storageBackgroundBatchingProcessIntraBatchSleepMs?: number` - Artificial delay to add to
     storage batching operations (default: 10ms)
 
 **Features tested:**
@@ -133,9 +133,8 @@ workloads.
     called after benchmark completes (default: no cleanup)
   - `storageSlowdownMs?: number` - Artificial delay to add to storage operations (default: 0)
   - `executorsCount?: number` - Number of concurrent executors to run (default: 1)
-  - `backgroundProcessesCount?: number` - Number of background processes per executor (default: 3)
   - `enableStorageBatching?: boolean` - Whether to enable storage batching. (default: false)
-  - `storageBatchingBackgroundProcessIntraBatchSleepMs?: number` - Artificial delay to add to
+  - `storageBackgroundBatchingProcessIntraBatchSleepMs?: number` - Artificial delay to add to
     storage batching operations (default: 10ms)
   - `childTasksCount?: number` - Number of child tasks per parent task (default: 50)
   - `parentTasksCount?: number` - Number of parent tasks to create (default: 100)

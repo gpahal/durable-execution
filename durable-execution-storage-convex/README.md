@@ -104,7 +104,7 @@ const storage = new ConvexTaskExecutionsStorage(
 )
 
 // Create and use the executor
-const executor = new DurableExecutor(storage)
+const executor = await DurableExecutor.make(storage)
 
 // Create a task
 const task = executor.task({
@@ -123,7 +123,7 @@ async function main() {
 }
 
 // Start the durable executor
-executor.start()
+await executor.start()
 
 // Run main
 await main()

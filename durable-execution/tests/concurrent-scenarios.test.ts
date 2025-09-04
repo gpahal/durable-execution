@@ -7,18 +7,18 @@ describe('concurrentScenarios', () => {
   let executor1: DurableExecutor
   let executor2: DurableExecutor
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
-    executor1 = new DurableExecutor(storage, {
+    executor1 = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor2 = new DurableExecutor(storage, {
+    executor2 = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor1.start()
-    executor2.start()
+    await executor1.start()
+    await executor2.start()
   })
 
   afterEach(async () => {

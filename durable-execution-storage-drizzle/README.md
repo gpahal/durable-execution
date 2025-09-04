@@ -52,7 +52,7 @@ const taskExecutionsTable = createPgTaskExecutionsTable()
 const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable)
 
 // Create and use the executor
-const executor = new DurableExecutor(storage)
+const executor = await DurableExecutor.make(storage)
 
 // Create a task
 const task = executor.task({
@@ -71,7 +71,7 @@ async function main() {
 }
 
 // Start the durable executor
-executor.start()
+await executor.start()
 
 // Run main
 await main()
@@ -104,7 +104,7 @@ const storage = createMySqlTaskExecutionsStorage(
 )
 
 // Create and use the executor
-const executor = new DurableExecutor(storage)
+const executor = await DurableExecutor.make(storage)
 
 // Create a task
 const task = executor.task({
@@ -123,7 +123,7 @@ async function main() {
 }
 
 // Start the durable executor
-executor.start()
+await executor.start()
 
 // Run main
 await main()
@@ -152,7 +152,7 @@ const taskExecutionsTable = createSQLiteTaskExecutionsTable()
 const storage = createSQLiteTaskExecutionsStorage(db, taskExecutionsTable)
 
 // Create and use the executor
-const executor = new DurableExecutor(storage)
+const executor = await DurableExecutor.make(storage)
 
 // Create a task
 const task = executor.task({
@@ -171,7 +171,7 @@ async function main() {
 }
 
 // Start the durable executor
-executor.start()
+await executor.start()
 
 // Run main
 await main()

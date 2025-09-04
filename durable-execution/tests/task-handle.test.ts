@@ -1,23 +1,18 @@
 import { sleep } from '@gpahal/std/promises'
 
-import {
-  createCancelSignal,
-  createTimeoutCancelSignal,
-  DurableExecutor,
-  InMemoryTaskExecutionsStorage,
-} from '../src'
+import { DurableExecutor, InMemoryTaskExecutionsStorage } from '../src'
 
 describe('taskHandle', () => {
   let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
-    executor = new DurableExecutor(storage, {
+    executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.start()
+    await executor.start()
   })
 
   afterEach(async () => {
@@ -30,16 +25,15 @@ describe('taskHandle', () => {
     await expect(
       executor.getTaskExecutionHandle(
         {
+          taskType: 'task',
           id: 'invalid',
           retryOptions: { maxAttempts: 1 },
           sleepMsBeforeRun: 0,
           timeoutMs: 10_000,
-          isSleepingTask: false,
-          areChildrenSequential: false,
         },
         'invalid',
       ),
-    ).rejects.toThrow('Task invalid not found')
+    ).rejects.toThrow('Task not found [taskId=invalid]')
   })
 
   it('should handle correct execution id', async () => {
@@ -55,10 +49,10 @@ describe('taskHandle', () => {
     })
 
     const originalHandle = await executor.enqueueTask(task)
-    const executionId = originalHandle.getExecutionId()
+    const executionId = originalHandle.executionId
     const handle = await executor.getTaskExecutionHandle(task, executionId)
-    expect(handle.getTaskId()).toBe('test')
-    expect(handle.getExecutionId()).toBeDefined()
+    expect(handle.taskId).toBe('test')
+    expect(handle.executionId).toBeDefined()
 
     await sleep(250)
     const execution = await handle.getExecution()
@@ -78,31 +72,8 @@ describe('taskHandle', () => {
     })
 
     await expect(executor.getTaskExecutionHandle(task, 'invalid')).rejects.toThrow(
-      'Task execution invalid not found',
+      'Task execution not found [executionId=invalid]',
     )
-  })
-
-  it('should handle wait and get finished task execution with cancelled signal', async () => {
-    const task = executor.task({
-      id: 'test',
-      timeoutMs: 1000,
-      run: async () => {
-        await sleep(1)
-        return 'test'
-      },
-    })
-
-    const originalHandle = await executor.enqueueTask(task)
-    const executionId = originalHandle.getExecutionId()
-    const handle = await executor.getTaskExecutionHandle(task, executionId)
-    expect(handle.getTaskId()).toBe('test')
-    expect(handle.getExecutionId()).toBeDefined()
-
-    const [cancelSignal, cancel] = createCancelSignal()
-    cancel()
-    await expect(
-      handle.waitAndGetFinishedExecution({ signal: cancelSignal, pollingIntervalMs: 100 }),
-    ).rejects.toThrow('Task execution cancelled')
   })
 
   it('should handle wait and get finished task execution with cancelled abort signal', async () => {
@@ -116,10 +87,10 @@ describe('taskHandle', () => {
     })
 
     const originalHandle = await executor.enqueueTask(task)
-    const executionId = originalHandle.getExecutionId()
+    const executionId = originalHandle.executionId
     const handle = await executor.getTaskExecutionHandle(task, executionId)
-    expect(handle.getTaskId()).toBe('test')
-    expect(handle.getExecutionId()).toBeDefined()
+    expect(handle.taskId).toBe('test')
+    expect(handle.executionId).toBeDefined()
 
     const abortController = new AbortController()
     abortController.abort()
@@ -142,10 +113,10 @@ describe('taskHandle', () => {
     })
 
     const originalHandle = await executor.enqueueTask(task)
-    const executionId = originalHandle.getExecutionId()
+    const executionId = originalHandle.executionId
     const handle = await executor.getTaskExecutionHandle(task, executionId)
-    expect(handle.getTaskId()).toBe('test')
-    expect(handle.getExecutionId()).toBeDefined()
+    expect(handle.taskId).toBe('test')
+    expect(handle.executionId).toBeDefined()
 
     const abortController = new AbortController()
     setTimeout(() => {
@@ -159,7 +130,7 @@ describe('taskHandle', () => {
     ).rejects.toThrow('Task execution cancelled')
   })
 
-  it('should handle wait and get finished task execution with cancel signal after finishing', async () => {
+  it('should handle wait and get finished task execution with abort signal after finishing', async () => {
     const task = executor.task({
       id: 'test',
       timeoutMs: 1000,
@@ -170,40 +141,52 @@ describe('taskHandle', () => {
     })
 
     const originalHandle = await executor.enqueueTask(task)
-    const executionId = originalHandle.getExecutionId()
+    const executionId = originalHandle.executionId
     const handle = await executor.getTaskExecutionHandle(task, executionId)
-    expect(handle.getTaskId()).toBe('test')
-    expect(handle.getExecutionId()).toBeDefined()
+    expect(handle.taskId).toBe('test')
+    expect(handle.executionId).toBeDefined()
 
-    const [cancelSignal, clearTimeout] = createTimeoutCancelSignal(10_000)
+    const abortController = new AbortController()
+    const timeout = setTimeout(() => {
+      abortController.abort()
+    }, 10_000)
     await sleep(1000)
     await expect(
-      handle.waitAndGetFinishedExecution({ signal: cancelSignal, pollingIntervalMs: 100 }),
+      handle.waitAndGetFinishedExecution({
+        signal: abortController.signal,
+        pollingIntervalMs: 100,
+      }),
     ).resolves.toBeDefined()
-    clearTimeout()
+    clearTimeout(timeout)
   })
 
-  it('should handle wait and get finished task execution with cancel signal before finishing', async () => {
+  it('should handle wait and get finished task execution with abort signal before finishing', async () => {
     const task = executor.task({
       id: 'test',
       timeoutMs: 5000,
       run: async () => {
-        await sleep(1000)
+        await sleep(2500)
         return 'test'
       },
     })
 
     const originalHandle = await executor.enqueueTask(task)
-    const executionId = originalHandle.getExecutionId()
+    const executionId = originalHandle.executionId
     const handle = await executor.getTaskExecutionHandle(task, executionId)
-    expect(handle.getTaskId()).toBe('test')
-    expect(handle.getExecutionId()).toBeDefined()
+    expect(handle.taskId).toBe('test')
+    expect(handle.executionId).toBeDefined()
 
-    const [cancelSignal, clearTimeout] = createTimeoutCancelSignal(1000)
+    const abortController = new AbortController()
+    const timeout = setTimeout(() => {
+      abortController.abort()
+    }, 250)
     await expect(
-      handle.waitAndGetFinishedExecution({ signal: cancelSignal, pollingIntervalMs: 100 }),
+      handle.waitAndGetFinishedExecution({
+        signal: abortController.signal,
+        pollingIntervalMs: 100,
+      }),
     ).rejects.toThrow('Task execution cancelled')
-    clearTimeout()
+    clearTimeout(timeout)
   })
 
   it('should handle invalid sleeping task unique id', async () => {

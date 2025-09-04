@@ -19,10 +19,10 @@ async function main() {
   process.on('SIGINT', onCrash)
   process.on('SIGTERM', onCrash)
 
-  const executor = new DurableExecutor(storage, {
+  const executor = await DurableExecutor.make(storage, {
     backgroundProcessIntraBatchSleepMs: 50,
   })
-  executor.start()
+  await executor.start()
 
   try {
     const task = executor.task({

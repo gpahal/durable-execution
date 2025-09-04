@@ -51,7 +51,6 @@ async function benchConvex() {
           return storage
         },
         {
-          backgroundProcessesCount: 1,
           enableStorageBatching: true,
         },
       )

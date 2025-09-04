@@ -1,4 +1,8 @@
-import { CustomError } from '@gpahal/std/errors'
+/* eslint-disable unicorn/throw-new-error */
+
+import { Cause, Schema } from 'effect'
+
+import { getErrorMessage } from '@gpahal/std/errors'
 
 /**
  * Classification of durable execution errors for appropriate handling.
@@ -13,7 +17,7 @@ import { CustomError } from '@gpahal/std/errors'
 export type DurableExecutionErrorType = 'generic' | 'not_found' | 'timed_out' | 'cancelled'
 
 /**
- * Base error class for all durable execution failures with retry control.
+ * Generic error class for all durable execution failures with retry control.
  *
  * This error class provides fine-grained control over error handling behavior
  * through the `isRetryable` flag. Tasks can throw specific error types to
@@ -28,9 +32,9 @@ export type DurableExecutionErrorType = 'generic' | 'not_found' | 'timed_out' | 
  *
  * ## Factory Methods
  *
+ * - `new DurableExecutionError()`: For generic retry behavior
  * - `DurableExecutionError.retryable()`: For transient failures (network issues, etc.)
  * - `DurableExecutionError.nonRetryable()`: For permanent failures (validation errors, etc.)
- * - `DurableExecutionError.any()`: For conditional retry behavior
  *
  * @example
  * ```ts
@@ -43,16 +47,24 @@ export type DurableExecutionErrorType = 'generic' | 'not_found' | 'timed_out' | 
  *       if (error.status === 429) {
  *         // Rate limited - retry with backoff
  *         if (ctx.attempt < 3) {
- *           throw DurableExecutionError.retryable('Rate limited, will retry')
+ *           throw DurableExecutionError.retryable('Rate limited, will retry', {
+ *             cause: error
+ *           })
  *         } else {
- *           throw DurableExecutionError.nonRetryable('Rate limited multiple times, will not retry')
+ *           throw DurableExecutionError.nonRetryable('Rate limited multiple times, will not retry', {
+ *             cause: error
+ *           })
  *         }
  *       } else if (error.status === 400) {
  *         // Bad request - don't retry
- *         throw DurableExecutionError.nonRetryable('Invalid request data')
+ *         throw DurableExecutionError.nonRetryable('Invalid request data', {
+ *           cause: error
+ *         })
  *       } else {
- *         // Unknown error - retry
- *         throw DurableExecutionError.retryable(error.message)
+ *         // Unknown error - retry and preserve original error
+ *         throw DurableExecutionError.retryable(`API call failed: ${error.message}`, {
+ *           cause: error
+ *         })
  *       }
  *     }
  *   }
@@ -61,44 +73,46 @@ export type DurableExecutionErrorType = 'generic' | 'not_found' | 'timed_out' | 
  *
  * @category Errors
  */
-export class DurableExecutionError extends CustomError {
-  /**
-   * Whether the error is retryable.
-   */
-  readonly isRetryable: boolean
-  /**
-   * Whether the error is internal.
-   */
-  readonly isInternal: boolean
-
-  /**
-   * @param message - The error message.
-   * @param options - The error options.
-   * @param options.isRetryable - Whether the error is retryable.
-   * @param options.isInternal - Whether the error is internal.
-   */
+export class DurableExecutionError extends Schema.TaggedError<DurableExecutionError>(
+  'DurableExecutionError',
+)('DurableExecutionError', {
+  message: Schema.String,
+  isRetryable: Schema.Boolean,
+  isInternal: Schema.Boolean,
+  cause: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+}) {
   constructor(
     message: string,
-    {
-      isRetryable = false,
-      isInternal = false,
-    }: { isRetryable?: boolean; isInternal?: boolean } = {},
+    options?: { isRetryable?: boolean; isInternal?: boolean; cause?: unknown },
   ) {
-    super(message)
-    this.isRetryable = isRetryable
-    this.isInternal = isInternal
+    super({
+      message,
+      isRetryable: options?.isRetryable ?? false,
+      isInternal: options?.isInternal ?? false,
+      cause: options?.cause,
+    })
   }
 
-  static retryable(message: string, isInternal = false): DurableExecutionError {
-    return new DurableExecutionError(message, { isInternal, isRetryable: true })
+  static retryable(
+    message: string,
+    options?: { isInternal?: boolean; cause?: unknown },
+  ): DurableExecutionError {
+    return new DurableExecutionError(message, {
+      isRetryable: true,
+      isInternal: options?.isInternal ?? false,
+      cause: options?.cause,
+    })
   }
 
-  static nonRetryable(message: string, isInternal = false): DurableExecutionError {
-    return new DurableExecutionError(message, { isInternal, isRetryable: false })
-  }
-
-  static any(message: string, isRetryable = false, isInternal = false): DurableExecutionError {
-    return new DurableExecutionError(message, { isInternal, isRetryable })
+  static nonRetryable(
+    message: string,
+    options?: { isInternal?: boolean; cause?: unknown },
+  ): DurableExecutionError {
+    return new DurableExecutionError(message, {
+      isRetryable: false,
+      isInternal: options?.isInternal ?? false,
+      cause: options?.cause,
+    })
   }
 
   getErrorType(): DurableExecutionErrorType {
@@ -107,7 +121,8 @@ export class DurableExecutionError extends CustomError {
 }
 
 /**
- * Error thrown when attempting to access a task or execution that doesn't exist.
+ * Error thrown when attempting to access a task, execution, or another resource that doesn't
+ * exist.
  *
  * This error is automatically non-retryable since missing resources won't appear by retrying the
  * operation.
@@ -131,11 +146,8 @@ export class DurableExecutionError extends CustomError {
  * @category Errors
  */
 export class DurableExecutionNotFoundError extends DurableExecutionError {
-  /**
-   * @param message - The error message.
-   */
-  constructor(message: string) {
-    super(message, { isRetryable: false, isInternal: false })
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, { isRetryable: false, isInternal: false, cause: options?.cause })
   }
 
   override getErrorType(): DurableExecutionErrorType {
@@ -190,8 +202,12 @@ export class DurableExecutionTimedOutError extends DurableExecutionError {
   /**
    * @param message - The error message.
    */
-  constructor(message?: string) {
-    super(message ?? 'Task execution timed out', { isRetryable: true, isInternal: false })
+  constructor(message?: string, options?: { cause?: unknown }) {
+    super(message ?? 'Task execution timed out', {
+      isRetryable: true,
+      isInternal: false,
+      cause: options?.cause,
+    })
   }
 
   override getErrorType(): DurableExecutionErrorType {
@@ -216,8 +232,8 @@ export class DurableExecutionTimedOutError extends DurableExecutionError {
  *   id: 'cancellableWork',
  *   run: async (ctx, input) => {
  *     for (let i = 0; i < 100; i++) {
- *       // Check for shutdown periodically
- *       if (ctx.shutdownSignal.isCancelled()) {
+ *       // Check for shutdown or abort signal periodically
+ *       if (ctx.shutdownSignal.aborted || ctx.abortSignal.aborted) {
  *         // Clean up resources
  *         await cleanup()
  *         throw new DurableExecutionCancelledError('Work was cancelled')
@@ -241,13 +257,143 @@ export class DurableExecutionCancelledError extends DurableExecutionError {
   /**
    * @param message - The error message.
    */
-  constructor(message?: string) {
-    super(message ?? 'Task execution cancelled', { isRetryable: false, isInternal: false })
+  constructor(message?: string, options?: { cause?: unknown }) {
+    super(message ?? 'Task execution cancelled', {
+      isRetryable: false,
+      isInternal: false,
+      cause: options?.cause,
+    })
   }
 
   override getErrorType(): DurableExecutionErrorType {
     return 'cancelled'
   }
+}
+
+/**
+ * Converts any error into a standardized {@link DurableExecutionError}.
+ *
+ * This utility function normalizes error handling across the durable execution system by
+ * converting any thrown error into a DurableExecutionError while preserving important error
+ * metadata and behavior.
+ *
+ * ## Conversion Behavior
+ *
+ * - **DurableExecutionError**: Preserves original error type and metadata, optionally adding prefix
+ * - **Other errors**: Wrapped in DurableExecutionError with configurable retry behavior
+ * - **Error messages**: Optionally prefixed for context (e.g., "Task failed: original message")
+ *
+ * @param error - The error to convert. The error can be of any type.
+ * @param options - Options for the conversion process.
+ * @param options.isRetryable - Override retry behavior. Defaults to true for unknown errors.
+ * @param options.isInternal - Override internal flag. Defaults to false for unknown errors.
+ * @param options.prefix - Optional prefix to add to the error message.
+ * @returns A DurableExecutionError with appropriate metadata and behavior.
+ *
+ * @example
+ * ```ts
+ * // Convert network error with retry behavior
+ * try {
+ *   await fetch(url)
+ * } catch (error) {
+ *   throw convertErrorToDurableExecutionError(error, {
+ *     isRetryable: true,
+ *     prefix: 'API call failed'
+ *   })
+ * }
+ *
+ * // Convert validation error without retry
+ * throw convertErrorToDurableExecutionError(validationError, {
+ *   isRetryable: false,
+ *   prefix: 'Input validation failed'
+ * })
+ * ```
+ *
+ * @category Errors
+ * @internal
+ */
+export function convertErrorToDurableExecutionError(
+  error: unknown,
+  {
+    isRetryable,
+    isInternal,
+    prefix,
+  }: { isRetryable?: boolean; isInternal?: boolean; prefix?: string } = {},
+): DurableExecutionError {
+  if (error instanceof DurableExecutionError) {
+    const newMessage = prefix ? `${prefix}: ${error.message}` : error.message
+    return error instanceof DurableExecutionNotFoundError
+      ? new DurableExecutionNotFoundError(newMessage, { cause: error.cause })
+      : error instanceof DurableExecutionTimedOutError
+        ? new DurableExecutionTimedOutError(newMessage, { cause: error.cause })
+        : error instanceof DurableExecutionCancelledError
+          ? new DurableExecutionCancelledError(newMessage, { cause: error.cause })
+          : new DurableExecutionError(newMessage, {
+              isRetryable: isRetryable != null ? isRetryable : error.isRetryable,
+              isInternal: isInternal != null ? isInternal : error.isInternal,
+              cause: error.cause,
+            })
+  }
+  return new DurableExecutionError(
+    prefix ? `${prefix}: ${getErrorMessage(error)}` : getErrorMessage(error),
+    {
+      isRetryable: isRetryable != null ? isRetryable : true,
+      isInternal: isInternal != null ? isInternal : false,
+      cause: error,
+    },
+  )
+}
+
+/**
+ * Converts an effect `Cause` into a {@link DurableExecutionError}.
+ *
+ * This function handles the conversion of effect framework's Cause type (which represents various
+ * failure scenarios) into standardized DurableExecutionError instances. It properly handles
+ * different cause types including failures, defects, interruptions, and composite errors.
+ *
+ * ## Cause Type Handling
+ *
+ * - **Empty**: Unknown error (non-retryable)
+ * - **Fail**: Regular failure (converted via {@link convertErrorToDurableExecutionError})
+ * - **Die**: Defect/crash (converted via {@link convertErrorToDurableExecutionError})
+ * - **Interrupt**: Fiber interruption (non-retryable)
+ * - **Sequential/Parallel**: Multiple errors combined into single error message (non-retryable)
+ *
+ * @example
+ * ```ts
+ * // Used internally when Effect operations fail
+ * const effect = Effect.fail(new Error('Something went wrong'))
+ * const exit = await Effect.runPromiseExit(effect)
+ *
+ * if (Exit.isFailure(exit)) {
+ *   const durableError = convertCauseToDurableExecutionError(exit.cause)
+ *   throw durableError
+ * }
+ * ```
+ *
+ * @param cause - The effect `Cause` to convert.
+ * @returns A DurableExecutionError with appropriate error type and behavior.
+ *
+ * @category Errors
+ * @internal
+ */
+export function convertCauseToDurableExecutionError(
+  cause: Cause.Cause<unknown>,
+): DurableExecutionError {
+  return Cause.reduceWithContext(cause, void 0, {
+    emptyCase: () => DurableExecutionError.nonRetryable('Unknown error'),
+    failCase: (_, error) => convertErrorToDurableExecutionError(error),
+    dieCase: (_, defect) => convertErrorToDurableExecutionError(defect),
+    interruptCase: (_) => DurableExecutionError.nonRetryable(`Fiber interrupted`),
+    sequentialCase: (_, left, right) =>
+      DurableExecutionError.nonRetryable(
+        `Multiple errors:\n${getErrorMessage(left)}\n${getErrorMessage(right)}`,
+      ),
+    parallelCase: (_, left, right) =>
+      DurableExecutionError.nonRetryable(
+        `Multiple errors:\n${getErrorMessage(left)}\n${getErrorMessage(right)}`,
+      ),
+  })
 }
 
 /**
@@ -262,9 +408,9 @@ export class DurableExecutionCancelledError extends DurableExecutionError {
  */
 export type DurableExecutionErrorStorageValue = {
   errorType: DurableExecutionErrorType
+  message: string
   isRetryable: boolean
   isInternal: boolean
-  message: string
 }
 
 export function convertDurableExecutionErrorToStorageValue(
@@ -272,8 +418,8 @@ export function convertDurableExecutionErrorToStorageValue(
 ): DurableExecutionErrorStorageValue {
   return {
     errorType: error.getErrorType(),
+    message: error.message,
     isRetryable: error.isRetryable,
     isInternal: error.isInternal,
-    message: error.message,
   }
 }

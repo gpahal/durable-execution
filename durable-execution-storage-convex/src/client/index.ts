@@ -564,7 +564,7 @@ export type BatchRequest<T, R> = {
 }
 
 /**
- * A schema for the options of the Convex task executions storage.
+ * Schema for the options for the Convex task executions storage.
  */
 export const ConvexTaskExecutionsStorageOptionsSchema = Schema.Struct({
   totalShards: Schema.Int.pipe(

@@ -25,13 +25,13 @@ describe('server', () => {
   let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
-    executor = new DurableExecutor(storage, {
+    executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.start()
+    await executor.start()
   })
 
   afterEach(async () => {
@@ -102,7 +102,7 @@ describe('server', () => {
 
     await expect(
       client.getTaskExecution({ taskId: 'add1', executionId: 'invalid' }),
-    ).rejects.toThrow('Task execution invalid not found')
+    ).rejects.toThrow('Task execution not found [executionId=invalid]')
   })
 
   it('should wakeup sleeping task execution', async () => {
@@ -163,7 +163,7 @@ describe('server', () => {
           output: 'sleeping_output',
         },
       }),
-    ).rejects.toThrow('Sleeping task execution invalid not found')
+    ).rejects.toThrow('Sleeping task execution not found [sleepingTaskUniqueId=invalid]')
   })
 
   it('should handle invalid task id to wakeup sleeping task execution', async () => {
@@ -444,7 +444,7 @@ describe('server', () => {
     const client = createRouterClient(router, { context: {} })
 
     vi.spyOn(executor, 'enqueueTask').mockRejectedValueOnce(
-      DurableExecutionError.retryable('Database connection failed', true),
+      DurableExecutionError.retryable('Database connection failed', { isInternal: true }),
     )
 
     await expect(client.enqueueTask({ taskId: 'add1', input: { n: 0 } })).rejects.toThrow(
@@ -547,13 +547,13 @@ describe('convertProcedureClientToTask', () => {
   let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
-    executor = new DurableExecutor(storage, {
+    executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.start()
+    await executor.start()
   })
 
   afterEach(async () => {

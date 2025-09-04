@@ -1,6 +1,7 @@
 {
   "$schema": "https://turborepo.com/schema.json",
   "ui": "tui",
+  "globalEnv": ["ENV", "NODE_ENV", "VITE_CONVEX_URL"],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

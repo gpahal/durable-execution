@@ -2,9 +2,6 @@ import { sleep } from '@gpahal/std/promises'
 
 import {
   childTask,
-  DurableExecutionCancelledError,
-  DurableExecutionError,
-  DurableExecutionNotFoundError,
   DurableExecutor,
   InMemoryTaskExecutionsStorage,
   type ParentTaskOptions,
@@ -16,14 +13,14 @@ describe('executor', () => {
   let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
-    executor = new DurableExecutor(storage, {
+    executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
       enableStorageStats: true,
     })
-    executor.start()
+    await executor.start()
   })
 
   afterEach(async () => {
@@ -32,15 +29,14 @@ describe('executor', () => {
     }
   })
 
-  it('should throw with invalid durable executor options', () => {
-    expect(
-      () =>
-        new DurableExecutor(storage, {
-          logLevel: 'error',
-          // @ts-expect-error - Testing invalid input
-          maxSerializedInputDataSize: 'invalid',
-        }),
-    ).toThrow('Invalid options')
+  it('should throw with invalid durable executor options', async () => {
+    await expect(
+      DurableExecutor.make(storage, {
+        logLevel: 'error',
+        // @ts-expect-error - Testing invalid input
+        maxSerializedInputDataSize: 'invalid',
+      }),
+    ).rejects.toThrow('Invalid options')
   })
 
   it('should throw if shutdown', async () => {
@@ -64,7 +60,7 @@ describe('executor', () => {
       run: async (ctx: TaskRunContext) => {
         executionCount++
         await sleep(1000)
-        if (ctx.shutdownSignal.isCancelled()) {
+        if (ctx.shutdownSignal.aborted) {
           return 'test cancelled'
         }
         executionCount++
@@ -84,7 +80,9 @@ describe('executor', () => {
     expect(executionCount).toBe(1)
     await executor.shutdown()
 
-    execution = await handle.getExecution()
+    execution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
     expect(executionCount).toBe(1)
     expect(execution.status).toBe('completed')
     expect(execution.status).toBe('completed')
@@ -95,6 +93,40 @@ describe('executor', () => {
     expect(execution.startedAt).toBeInstanceOf(Date)
     expect(execution.finishedAt).toBeInstanceOf(Date)
     expect(execution.finishedAt.getTime()).toBeGreaterThanOrEqual(execution.startedAt.getTime())
+  })
+
+  it('should handle custom serializer', async () => {
+    await executor.shutdown()
+
+    executor = await DurableExecutor.make(storage, {
+      logLevel: 'error',
+      serializer: {
+        serialize: <T>(_: T) => {
+          return 'test'
+        },
+        deserialize: <T>(value: string) => {
+          return value as T
+        },
+      },
+    })
+    await executor.start()
+
+    const task = executor.task({
+      id: 'test',
+      timeoutMs: 1000,
+      run: () => {
+        return 'random'
+      },
+    })
+
+    const handle = await executor.enqueueTask(task)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.output).toBe('test')
   })
 
   it('should handle unknown task', async () => {
@@ -108,12 +140,12 @@ describe('executor', () => {
     })
 
     await executor.shutdown()
-    executor = new DurableExecutor(storage, {
+    executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
     })
-    executor.start()
+    await executor.start()
 
-    await expect(executor.enqueueTask(task)).rejects.toThrow('Task test not found')
+    await expect(executor.enqueueTask(task)).rejects.toThrow('Task not found [taskId=test]')
   })
 
   it('should handle duplicate task ids', () => {
@@ -133,76 +165,31 @@ describe('executor', () => {
           return 'test'
         },
       }),
-    ).toThrow('Task test already exists')
+    ).toThrow('Task with given id already exists [taskId=test]')
   })
 
-  it('should handle invalid options', () => {
-    expect(() => {
-      new DurableExecutor(storage, {
+  it('should handle invalid options', async () => {
+    await expect(
+      DurableExecutor.make(storage, {
         logLevel: 'error',
         // @ts-expect-error - Testing invalid input
         maxSerializedInputDataSize: 'invalid',
-      })
-    }).toThrow('Invalid options')
-  })
-
-  it('should disable debug logging when logLevel is info', () => {
-    let executionCount = 0
-    const logger = {
-      debug: () => {
-        executionCount++
-      },
-      info: () => {
-        // Do nothing
-      },
-      error: () => {
-        // Do nothing
-      },
-    }
-
-    let executor = new DurableExecutor(storage, {
-      logger,
-      logLevel: 'info',
-    })
-    executor.task({
-      id: 'test',
-      timeoutMs: 1000,
-      run: () => {
-        return 'test'
-      },
-    })
-
-    expect(executor).toBeDefined()
-    expect(executionCount).toBe(0)
-
-    executor = new DurableExecutor(storage, {
-      logger,
-      logLevel: 'debug',
-    })
-    executor.task({
-      id: 'test',
-      timeoutMs: 1000,
-      run: () => {
-        return 'test'
-      },
-    })
-
-    expect(executor).toBeDefined()
-    expect(executionCount).toBe(1)
+      }),
+    ).rejects.toThrow('Invalid options')
   })
 
   it('should throw when enqueuing unknown task', async () => {
     await expect(async () => {
       // @ts-expect-error - Testing invalid input
       await executor.enqueueTask({ id: 'unknown' })
-    }).rejects.toThrow(DurableExecutionNotFoundError)
+    }).rejects.toThrow('not found')
   })
 
   it('should throw when getting handle for unknown task', async () => {
     await expect(async () => {
       // @ts-expect-error - Testing invalid input
       await executor.getTaskExecutionHandle('unknown', 'some-execution-id')
-    }).rejects.toThrow(DurableExecutionNotFoundError)
+    }).rejects.toThrow('not found')
   })
 
   it('should throw when getting handle for non-existent execution', async () => {
@@ -214,7 +201,7 @@ describe('executor', () => {
 
     await expect(async () => {
       await executor.getTaskExecutionHandle(testTask, 'non-existent-execution-id')
-    }).rejects.toThrow(DurableExecutionNotFoundError)
+    }).rejects.toThrow('not found')
   })
 
   it('should throw when getting handle for execution belonging to different task', async () => {
@@ -235,7 +222,7 @@ describe('executor', () => {
 
     await expect(async () => {
       await executor.getTaskExecutionHandle(testTask2, execution1.executionId)
-    }).rejects.toThrow(DurableExecutionNotFoundError)
+    }).rejects.toThrow('belongs to another task')
   })
 
   it('should throw when getting execution for non-existent execution', async () => {
@@ -250,14 +237,14 @@ describe('executor', () => {
       pollingIntervalMs: 100,
     })
 
-    await storage.deleteById({ executionId: handle.getExecutionId() })
+    await storage.deleteById({ executionId: handle.executionId })
 
-    await expect(handle.getExecution()).rejects.toThrow(DurableExecutionNotFoundError)
+    await expect(handle.getExecution()).rejects.toThrow('not found')
     await expect(
       handle.waitAndGetFinishedExecution({
         pollingIntervalMs: 100,
       }),
-    ).rejects.toThrow(DurableExecutionNotFoundError)
+    ).rejects.toThrow('not found')
   })
 
   it('should handle shutdown idempotently', async () => {
@@ -276,11 +263,11 @@ describe('executor', () => {
 
     await expect(async () => {
       await executor.enqueueTask(testTask)
-    }).rejects.toThrow(DurableExecutionError)
+    }).rejects.toThrow('Durable executor shutdown')
 
     await expect(async () => {
       await executor.getTaskExecutionHandle(testTask, 'some-id')
-    }).rejects.toThrow(DurableExecutionError)
+    }).rejects.toThrow('Durable executor shutdown')
   })
 
   it('should handle storage insert failures during task enqueueing', async () => {
@@ -292,10 +279,10 @@ describe('executor', () => {
       throw new Error('Storage insert failed')
     }
 
-    const failingExecutor = new DurableExecutor(failingStorage, {
+    const failingExecutor = await DurableExecutor.make(failingStorage, {
       logLevel: 'error',
     })
-    failingExecutor.start()
+    await failingExecutor.start()
 
     const testTask = failingExecutor.task({
       id: 'test',
@@ -333,11 +320,11 @@ describe('executor', () => {
       return originalUpdateManyById(...args)
     }
 
-    const failingExecutor = new DurableExecutor(failingStorage, {
+    const failingExecutor = await DurableExecutor.make(failingStorage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    failingExecutor.start()
+    await failingExecutor.start()
 
     const testTask = failingExecutor.task({
       id: 'test',
@@ -372,10 +359,10 @@ describe('executor', () => {
       return originalGetManyById(...args)
     }
 
-    const failingExecutor = new DurableExecutor(failingStorage, {
+    const failingExecutor = await DurableExecutor.make(failingStorage, {
       logLevel: 'error',
     })
-    failingExecutor.start()
+    await failingExecutor.start()
 
     const testTask = failingExecutor.task({
       id: 'test',
@@ -400,17 +387,17 @@ describe('executor', () => {
   it('should handle race condition with duplicate task execution pickup', async () => {
     const testStorage = new InMemoryTaskExecutionsStorage()
 
-    const executor1 = new DurableExecutor(testStorage, {
+    const executor1 = await DurableExecutor.make(testStorage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    const executor2 = new DurableExecutor(testStorage, {
+    const executor2 = await DurableExecutor.make(testStorage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
 
-    executor1.start()
-    executor2.start()
+    await executor1.start()
+    await executor2.start()
 
     let executionCount = 0
     const testTask = executor1.task({
@@ -459,11 +446,11 @@ describe('executor', () => {
       return originalMethod(...args)
     }
 
-    const failingExecutor = new DurableExecutor(failingStorage, {
+    const failingExecutor = await DurableExecutor.make(failingStorage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    failingExecutor.start()
+    await failingExecutor.start()
 
     const child = failingExecutor.task({
       id: 'child',
@@ -509,11 +496,11 @@ describe('executor', () => {
       return originalMethod(...args)
     }
 
-    const failingExecutor = new DurableExecutor(failingStorage, {
+    const failingExecutor = await DurableExecutor.make(failingStorage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    failingExecutor.start()
+    await failingExecutor.start()
 
     const child = failingExecutor.task({
       id: 'child',
@@ -547,7 +534,7 @@ describe('executor', () => {
 
   it('should handle non-existent task in executor', async () => {
     await executor.shutdown()
-    executor = new DurableExecutor(storage, {
+    executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
@@ -561,18 +548,18 @@ describe('executor', () => {
     const handle = await executor.enqueueTask(task)
 
     await executor.shutdown()
-    executor = new DurableExecutor(storage, {
+    executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.start()
+    await executor.start()
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
     })
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
-    expect(finishedExecution.error?.message).toContain('Task test not found')
+    expect(finishedExecution.error?.message).toContain('Task not found [taskId=test]')
   })
 
   it('should handle non-existent parent task in executor', async () => {
@@ -612,7 +599,7 @@ describe('executor', () => {
       await sleep(500)
 
       await executor.shutdown()
-      executor = new DurableExecutor(storage, {
+      executor = await DurableExecutor.make(storage, {
         logLevel: 'error',
         backgroundProcessIntraBatchSleepMs: 50,
       })
@@ -625,14 +612,14 @@ describe('executor', () => {
       expect(execution.children).toHaveLength(1)
       expect(execution.children[0]!.taskId).toBe('child')
       expect(execution.children[0]!.executionId).toMatch(/^te_/)
-      executor.start()
+      await executor.start()
 
       const finishedExecution = await handle.waitAndGetFinishedExecution({
         pollingIntervalMs: 100,
       })
       expect(finishedExecution.status).toBe('failed')
       assert(finishedExecution.status === 'failed')
-      expect(finishedExecution.error?.message).toContain('Task parent not found')
+      expect(finishedExecution.error?.message).toContain('Task not found [taskId=parent]')
     } finally {
       storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
         originalFn
@@ -678,10 +665,11 @@ describe('executor', () => {
       await sleep(500)
 
       await executor.shutdown()
-      executor = new DurableExecutor(storage, {
+      executor = await DurableExecutor.make(storage, {
         logLevel: 'error',
         backgroundProcessIntraBatchSleepMs: 50,
       })
+      await executor.start()
       executor.task(childTaskOptions)
       executor.parentTask(parentTaskOptions)
       storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
@@ -696,7 +684,7 @@ describe('executor', () => {
 
       const childTaskExecutionId = execution.children[0]!.executionId
       await storage.deleteById({ executionId: childTaskExecutionId })
-      executor.start()
+      await executor.start()
 
       const finishedExecution = await handle.waitAndGetFinishedExecution({
         pollingIntervalMs: 100,
@@ -708,215 +696,5 @@ describe('executor', () => {
       storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
         originalFn
     }
-  })
-
-  it('should return storage timing stats', async () => {
-    const testTask = executor.task({
-      id: 'test',
-      timeoutMs: 10_000,
-      run: () => 'test result',
-    })
-
-    await executor.enqueueTask(testTask)
-    await sleep(500)
-
-    const stats = executor.getStorageCallsDurationsStats()
-    expect(stats).toBeDefined()
-    expect(typeof stats).toBe('object')
-
-    const statKeys = [...stats.keys()]
-    expect(statKeys.length).toBeGreaterThan(0)
-
-    for (const key of statKeys) {
-      expect(stats.get(key)).toBeDefined()
-      expect(typeof stats.get(key)!.callsCount).toBe('number')
-      expect(typeof stats.get(key)!.meanDurationMs).toBe('number')
-      expect(stats.get(key)!.callsCount).toBeGreaterThan(0)
-      expect(stats.get(key)!.meanDurationMs).toBeGreaterThanOrEqual(0)
-    }
-  })
-
-  it('should return storage per second call counts', async () => {
-    const testTask = executor.task({
-      id: 'test',
-      timeoutMs: 10_000,
-      run: () => 'test result',
-    })
-
-    await executor.enqueueTask(testTask)
-    await sleep(500)
-
-    const perSecondCallsCountsStats = executor.getStoragePerSecondCallsCountsStats()
-    expect(perSecondCallsCountsStats).toBeDefined()
-    expect(typeof perSecondCallsCountsStats.totalSeconds).toBe('number')
-    expect(typeof perSecondCallsCountsStats.totalCallsCount).toBe('number')
-    expect(typeof perSecondCallsCountsStats.meanCallsCount).toBe('number')
-    expect(typeof perSecondCallsCountsStats.maxCallsCount).toBe('number')
-
-    expect(perSecondCallsCountsStats.totalCallsCount).toBeGreaterThan(0)
-  })
-})
-
-class TestDurableExecutor extends DurableExecutor {
-  testRunBackgroundProcess(
-    processName: string,
-    singleBatchProcessFn: () => Promise<{ hasMore: boolean }>,
-    sleepMultiplier?: number,
-  ): Promise<void> {
-    return this.runBackgroundProcess(processName, singleBatchProcessFn, sleepMultiplier)
-  }
-}
-
-describe('runBackgroundProcess', () => {
-  let storage: InMemoryTaskExecutionsStorage
-  let executor: TestDurableExecutor
-
-  beforeEach(() => {
-    storage = new InMemoryTaskExecutionsStorage()
-    executor = new TestDurableExecutor(storage, {
-      logLevel: 'error',
-      backgroundProcessIntraBatchSleepMs: 50,
-    })
-  })
-
-  afterEach(async () => {
-    if (executor) {
-      await executor.shutdown()
-    }
-  })
-
-  it('should handle shutdown signal', async () => {
-    const promise = executor.testRunBackgroundProcess('test', () => {
-      return Promise.resolve({ hasMore: true })
-    })
-
-    await sleep(500)
-    await executor.shutdown()
-
-    await expect(promise).resolves.not.toThrow()
-  })
-
-  it('should sleep on empty results', async () => {
-    const startTimes: Array<number> = []
-    const promise = executor.testRunBackgroundProcess('test', () => {
-      startTimes.push(Date.now())
-      return Promise.resolve({ hasMore: false })
-    })
-
-    await sleep(500)
-    await executor.shutdown()
-
-    expect(startTimes.length).toBeGreaterThan(0)
-    const sleepTimes = startTimes
-      .map((startTime, index) => {
-        return index === 0 ? 0 : startTime - startTimes[index - 1]!
-      })
-      .slice(1)
-    expect(sleepTimes).toHaveLength(startTimes.length - 1)
-    expect(sleepTimes.every((sleepTime) => sleepTime > 10)).toBe(true)
-
-    await expect(promise).resolves.not.toThrow()
-  })
-
-  it('should handle consecutive errors and cancellation in background process', async () => {
-    let errorCount = 0
-    let wasShutdown = false
-
-    const promise = executor.testRunBackgroundProcess('test', () => {
-      if (wasShutdown) {
-        throw new DurableExecutionCancelledError('Shutdown requested')
-      }
-
-      errorCount++
-      if (errorCount <= 50) {
-        throw new Error(`Consecutive error ${errorCount}`)
-      }
-
-      return Promise.resolve({ hasMore: false })
-    })
-
-    await sleep(1500)
-    const shutdownPromise = executor.shutdown()
-    await sleep(100)
-    wasShutdown = true
-    await shutdownPromise
-
-    await expect(promise).resolves.not.toThrow()
-    expect(errorCount).toBeGreaterThan(5)
-  })
-
-  it('should handle background process errors without shutdown', async () => {
-    let errorCount = 0
-
-    const promise = executor.testRunBackgroundProcess('test', () => {
-      errorCount++
-      if (errorCount <= 3) {
-        throw new Error(`Background process error ${errorCount}`)
-      }
-      return Promise.resolve({ hasMore: false })
-    })
-
-    await sleep(400)
-    await executor.shutdown()
-
-    await expect(promise).resolves.not.toThrow()
-  })
-
-  it('should apply exponential backoff when consecutive errors exceed threshold', async () => {
-    let errorCount = 0
-
-    const promise = executor.testRunBackgroundProcess('test', async () => {
-      errorCount++
-      await sleep(1)
-      if (errorCount <= 10) {
-        throw new Error(`Consecutive error ${errorCount}`)
-      }
-      return { hasMore: false }
-    })
-
-    await sleep(500)
-    await executor.shutdown()
-
-    await expect(promise).resolves.not.toThrow()
-    expect(errorCount).toBeGreaterThan(5)
-  })
-
-  it('should catch and log errors in background process loop', async () => {
-    let errorLogged = false
-
-    const mockLogger = {
-      debug: () => {
-        // Do nothing
-      },
-      info: () => {
-        // Do nothing
-      },
-      error: (message: string) => {
-        if (message.includes('Error in test')) {
-          errorLogged = true
-        }
-      },
-    }
-
-    const testExecutor = new TestDurableExecutor(storage, {
-      logLevel: 'error',
-      backgroundProcessIntraBatchSleepMs: 50,
-      logger: mockLogger,
-    })
-
-    let executionCount = 0
-    const promise = testExecutor.testRunBackgroundProcess('test', () => {
-      executionCount++
-      if (executionCount === 1) {
-        throw new Error('Simulated error in background process loop')
-      }
-      return Promise.resolve({ hasMore: false })
-    })
-
-    await sleep(200)
-    await testExecutor.shutdown()
-
-    await expect(promise).resolves.not.toThrow()
-    expect(errorLogged).toBe(true)
   })
 })

@@ -1,6 +1,6 @@
 {
   "name": "durable-execution-storage-test-utils",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "description": "Test utilities for validating durable-execution storage implementations",
   "author": "Garvit Pahal <g10pahal@gmail.com>",
   "license": "MIT",
@@ -62,6 +62,7 @@
   },
   "devDependencies": {
     "@gpahal/std-node": "catalog:dev",
-    "durable-execution": "workspace:*"
+    "durable-execution": "workspace:*",
+    "effect": "catalog:dev"
   }
 }

@@ -1,8 +1,8 @@
+import { Context, Effect, Option } from 'effect'
 import superjson from 'superjson'
 
-import { getErrorMessage } from '@gpahal/std/errors'
-
 import { DurableExecutionError } from './errors'
+import { convertMaybePromiseOrEffectToEffect } from './utils'
 
 /**
  * Interface for serializing and deserializing task inputs and outputs.
@@ -25,7 +25,7 @@ import { DurableExecutionError } from './errors'
  *   deserialize: (str) => superjson.parse(str)
  * }
  *
- * const executor = new DurableExecutor(storage, {
+ * const executor = await DurableExecutor.make(storage, {
  *   serializer: customSerializer
  * })
  * ```
@@ -33,9 +33,19 @@ import { DurableExecutionError } from './errors'
  * @category Serializer
  */
 export type Serializer = {
-  serialize: <T>(value: T) => string
-  deserialize: <T>(value: string) => T
+  serialize: <T>(value: T) => string | Promise<string> | Effect.Effect<string, unknown>
+  deserialize: <T>(value: string) => T | Promise<T> | Effect.Effect<T, unknown>
 }
+
+/**
+ * Service for the serializer.
+ *
+ * @category Serializer
+ */
+export class SerializerService extends Context.Tag('SerializerService')<
+  SerializerService,
+  Serializer
+>() {}
 
 /**
  * Create a serializer using Superjson for enhanced type preservation.
@@ -67,7 +77,7 @@ export type Serializer = {
  *
  * @returns A Serializer instance using Superjson
  *
- * @see https://github.com/blitz-js/superjson for more information
+ * @see [Superjson](https://github.com/blitz-js/superjson) for more information.
  *
  * @category Serializer
  */
@@ -79,51 +89,53 @@ export function createSuperjsonSerializer(): Serializer {
 }
 
 /**
- * Internal serializer class that can be used to serialize and deserialize values.
+ * Internal serializer factory that creates Effect-based serialization functions.
  *
- * This class is used to serialize and deserialize values in the database. It is used by the
- * executor to store task inputs and outputs in the database.
+ * This function:
+ * 1. Gets the serializer service (or defaults to superjson)
+ * 2. Wraps serialize/deserialize with Effect error handling
+ * 3. Adds size validation for serialized data
+ *
+ * The size check uses a quick approximation (length * 4) for performance, then falls back to
+ * accurate byte counting if needed.
  *
  * @category Serializer
  * @internal
  */
-export class SerializerInternal {
-  private readonly serializer: Serializer
+export const makeSerializerInternal = Effect.gen(function* () {
+  const serializerOption = yield* Effect.serviceOption(SerializerService)
+  const serializer = Option.isNone(serializerOption)
+    ? createSuperjsonSerializer()
+    : serializerOption.value
 
-  constructor(serializer?: Serializer | null) {
-    this.serializer = serializer ?? createSuperjsonSerializer()
-  }
+  const serialize = Effect.fn(function* <T>(value: T, maxSerializedDataSize?: number) {
+    const result = yield* convertMaybePromiseOrEffectToEffect(() => serializer.serialize(value))
 
-  serialize<T>(value: T, maxSerializedDataSize?: number): string {
-    try {
-      const result = this.serializer.serialize(value)
-      if (maxSerializedDataSize == null || result.length * 4 <= maxSerializedDataSize) {
-        return result
-      }
-
-      const sizeInBytes = Buffer.byteLength(result, 'utf8')
-      if (sizeInBytes > maxSerializedDataSize) {
-        throw DurableExecutionError.nonRetryable(
-          `Serialized data size (${sizeInBytes} bytes) exceeds maximum allowed size (${maxSerializedDataSize} bytes)`,
-        )
-      }
-
+    // Quick size check: assume worst case of 4 bytes per character (UTF-8). This avoids expensive
+    // Buffer.byteLength() call in most cases
+    if (maxSerializedDataSize == null || result.length * 4 <= maxSerializedDataSize) {
       return result
-    } catch (error) {
-      if (error instanceof DurableExecutionError) {
-        throw error
-      }
-      throw DurableExecutionError.nonRetryable(`Error serializing value: ${getErrorMessage(error)}`)
     }
-  }
 
-  deserialize<T>(value: string): T {
-    try {
-      return this.serializer.deserialize(value)
-    } catch (error) {
-      throw DurableExecutionError.nonRetryable(
-        `Error deserializing value: ${getErrorMessage(error)}`,
+    // Accurate byte counting for edge cases where quick check fails
+    const sizeInBytes = Buffer.byteLength(result, 'utf8')
+    if (sizeInBytes > maxSerializedDataSize) {
+      return yield* Effect.fail(
+        DurableExecutionError.nonRetryable(
+          `Serialized data size exceeds maximum allowed size [serializedDataSize=${result.length}B] [maxSerializedDataSize=${maxSerializedDataSize}B]`,
+        ),
       )
     }
-  }
-}
+
+    return result
+  })
+
+  const deserialize = Effect.fn(function* <T>(value: string) {
+    const result = yield* convertMaybePromiseOrEffectToEffect(() => serializer.deserialize(value))
+    return result as T
+  })
+
+  return { serialize, deserialize }
+})
+
+export type SerializerInternal = Effect.Effect.Success<typeof makeSerializerInternal>

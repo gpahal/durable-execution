@@ -7,15 +7,15 @@ describe('backpressure', () => {
     let storage: InMemoryTaskExecutionsStorage
     let executor: DurableExecutor
 
-    beforeEach(() => {
+    beforeEach(async () => {
       storage = new InMemoryTaskExecutionsStorage()
-      executor = new DurableExecutor(storage, {
+      executor = await DurableExecutor.make(storage, {
         logLevel: 'error',
         backgroundProcessIntraBatchSleepMs: 50,
         maxConcurrentTaskExecutions: 3,
         maxTaskExecutionsPerBatch: 2,
       })
-      executor.start()
+      await executor.start()
     })
 
     afterEach(async () => {
@@ -57,16 +57,15 @@ describe('backpressure', () => {
       expect(runningCount).toBe(3)
       expect(executor.getRunningTaskExecutionIds().size).toBe(3)
 
-      const stats = executor.getStats()
-      expect(stats.currConcurrentTaskExecutions).toBe(3)
-      expect(stats.maxConcurrentTaskExecutions).toBe(3)
+      const runningTaskExecutionsCount = executor.getRunningTaskExecutionsCount()
+      expect(runningTaskExecutionsCount).toBe(3)
       completedPromises.shift()!()
       completedPromises.shift()!()
 
       await sleep(250)
 
       expect(runningCount).toBe(3)
-      expect(executor.getRunningTaskExecutionIds().size).toBe(3)
+      expect(executor.getRunningTaskExecutionsCount()).toBe(3)
 
       while (completedPromises.length > 0) {
         completedPromises.shift()!()
@@ -82,7 +81,7 @@ describe('backpressure', () => {
 
       await sleep(100)
       expect(maxObservedRunning).toBe(3)
-      expect(executor.getRunningTaskExecutionIds().size).toBe(0)
+      expect(executor.getRunningTaskExecutionsCount()).toBe(0)
     })
 
     it('should respect maxTaskExecutionsPerBatch limit', async () => {
@@ -101,9 +100,8 @@ describe('backpressure', () => {
 
       await sleep(250)
 
-      const stats = executor.getStats()
-      expect(stats.currConcurrentTaskExecutions).toBeLessThanOrEqual(3)
-      expect(stats.maxTaskExecutionsPerBatch).toBe(2)
+      const runningTaskExecutionsCount = executor.getRunningTaskExecutionsCount()
+      expect(runningTaskExecutionsCount).toBeLessThanOrEqual(3)
 
       await Promise.all(
         handles.map((handle) =>
@@ -112,7 +110,7 @@ describe('backpressure', () => {
           }),
         ),
       )
-      expect(executor.getRunningTaskExecutionIds().size).toBe(0)
+      expect(executor.getRunningTaskExecutionsCount()).toBe(0)
     })
   })
 
@@ -120,15 +118,15 @@ describe('backpressure', () => {
     let storage: InMemoryTaskExecutionsStorage
     let executor: DurableExecutor
 
-    beforeEach(() => {
+    beforeEach(async () => {
       storage = new InMemoryTaskExecutionsStorage()
-      executor = new DurableExecutor(storage, {
+      executor = await DurableExecutor.make(storage, {
         logLevel: 'error',
         backgroundProcessIntraBatchSleepMs: 50,
         maxConcurrentTaskExecutions: 2,
         maxTaskExecutionsPerBatch: 5,
       })
-      executor.start()
+      await executor.start()
     })
 
     afterEach(async () => {
@@ -192,15 +190,15 @@ describe('backpressure', () => {
     let storage: InMemoryTaskExecutionsStorage
     let executor: DurableExecutor
 
-    beforeEach(() => {
+    beforeEach(async () => {
       storage = new InMemoryTaskExecutionsStorage()
-      executor = new DurableExecutor(storage, {
+      executor = await DurableExecutor.make(storage, {
         logLevel: 'error',
         backgroundProcessIntraBatchSleepMs: 50,
         maxConcurrentTaskExecutions: 5,
         maxTaskExecutionsPerBatch: 3,
       })
-      executor.start()
+      await executor.start()
     })
 
     afterEach(async () => {
@@ -261,42 +259,20 @@ describe('backpressure', () => {
     let storage: InMemoryTaskExecutionsStorage
     let executor: DurableExecutor
 
-    beforeEach(() => {
+    beforeEach(async () => {
       storage = new InMemoryTaskExecutionsStorage()
-      executor = new DurableExecutor(storage, {
+      executor = await DurableExecutor.make(storage, {
         logLevel: 'error',
         expireLeewayMs: 60_000,
         backgroundProcessIntraBatchSleepMs: 50,
         maxConcurrentTaskExecutions: 4,
         maxTaskExecutionsPerBatch: 2,
       })
-      executor.start()
+      await executor.start()
     })
 
     afterEach(async () => {
       await executor?.shutdown()
-    })
-
-    it('should provide accurate executor statistics', () => {
-      executor.task({
-        id: 'stats_task',
-        timeoutMs: 1000,
-        run: () => 'result',
-      })
-
-      const stats = executor.getStats()
-
-      expect(stats).toEqual({
-        expireLeewayMs: 60_000,
-        currConcurrentTaskExecutions: 0,
-        maxConcurrentTaskExecutions: 4,
-        maxTaskExecutionsPerBatch: 2,
-        maxChildrenPerTaskExecution: 1000,
-        maxSerializedInputDataSize: 1024 * 1024,
-        maxSerializedOutputDataSize: 1024 * 1024,
-        registeredTasksCount: 1,
-        isShutdown: false,
-      })
     })
 
     it('should update current executions in stats', async () => {
@@ -320,23 +296,23 @@ describe('backpressure', () => {
 
       await sleep(250)
 
-      let stats = executor.getStats()
-      expect(stats.currConcurrentTaskExecutions).toBe(3)
+      let runningTaskExecutionsCount = executor.getRunningTaskExecutionsCount()
+      expect(runningTaskExecutionsCount).toBe(3)
 
       completionSignals.shift()!()
       completionSignals.shift()!()
 
       await sleep(250)
 
-      stats = executor.getStats()
-      expect(stats.currConcurrentTaskExecutions).toBe(1)
+      runningTaskExecutionsCount = executor.getRunningTaskExecutionsCount()
+      expect(runningTaskExecutionsCount).toBe(1)
 
       completionSignals.shift()!()
 
       await sleep(250)
 
-      stats = executor.getStats()
-      expect(stats.currConcurrentTaskExecutions).toBe(0)
+      runningTaskExecutionsCount = executor.getRunningTaskExecutionsCount()
+      expect(runningTaskExecutionsCount).toBe(0)
     })
   })
 })

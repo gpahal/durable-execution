@@ -194,7 +194,7 @@ export type TaskExecutionsSQLiteTable = ReturnType<typeof createSQLiteTaskExecut
  * const storage = createSQLiteTaskExecutionsStorage(db, taskExecutionsTable)
  *
  * // Use with DurableExecutor
- * const executor = new DurableExecutor(storage)
+ * const executor = await DurableExecutor.make(storage)
  * ```
  *
  * @example

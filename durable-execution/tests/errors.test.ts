@@ -1,30 +1,31 @@
 import {
   DurableExecutionCancelledError,
+  DurableExecutionError,
   DurableExecutionNotFoundError,
   DurableExecutionTimedOutError,
 } from '../src'
 
 describe('errors', () => {
   it('should handle DurableExecutionError.retryable', () => {
-    let error = DurableExecutionNotFoundError.retryable('Error')
+    let error = DurableExecutionError.retryable('Error')
     expect(error.getErrorType()).toBe('generic')
     expect(error.isRetryable).toBe(true)
     expect(error.isInternal).toBe(false)
     expect(error.message).toBe('Error')
 
-    error = DurableExecutionNotFoundError.retryable('Error', true)
+    error = DurableExecutionError.retryable('Error', { isInternal: true })
     expect(error.getErrorType()).toBe('generic')
     expect(error.isRetryable).toBe(true)
     expect(error.isInternal).toBe(true)
     expect(error.message).toBe('Error')
 
-    error = DurableExecutionNotFoundError.any('Error', true)
+    error = new DurableExecutionError('Error', { isRetryable: true })
     expect(error.getErrorType()).toBe('generic')
     expect(error.isRetryable).toBe(true)
     expect(error.isInternal).toBe(false)
     expect(error.message).toBe('Error')
 
-    error = DurableExecutionNotFoundError.any('Error', true, true)
+    error = new DurableExecutionError('Error', { isRetryable: true, isInternal: true })
     expect(error.getErrorType()).toBe('generic')
     expect(error.isRetryable).toBe(true)
     expect(error.isInternal).toBe(true)
@@ -32,25 +33,25 @@ describe('errors', () => {
   })
 
   it('should handle DurableExecutionError.nonRetryable', () => {
-    let error = DurableExecutionNotFoundError.nonRetryable('Error')
+    let error = DurableExecutionError.nonRetryable('Error')
     expect(error.getErrorType()).toBe('generic')
     expect(error.isRetryable).toBe(false)
     expect(error.isInternal).toBe(false)
     expect(error.message).toBe('Error')
 
-    error = DurableExecutionNotFoundError.nonRetryable('Error', true)
+    error = DurableExecutionError.nonRetryable('Error', { isInternal: true })
     expect(error.getErrorType()).toBe('generic')
     expect(error.isRetryable).toBe(false)
     expect(error.isInternal).toBe(true)
     expect(error.message).toBe('Error')
 
-    error = DurableExecutionNotFoundError.any('Error', false)
+    error = new DurableExecutionError('Error', { isRetryable: false })
     expect(error.getErrorType()).toBe('generic')
     expect(error.isRetryable).toBe(false)
     expect(error.isInternal).toBe(false)
     expect(error.message).toBe('Error')
 
-    error = DurableExecutionNotFoundError.any('Error', false, true)
+    error = new DurableExecutionError('Error', { isRetryable: false, isInternal: true })
     expect(error.getErrorType()).toBe('generic')
     expect(error.isRetryable).toBe(false)
     expect(error.isInternal).toBe(true)

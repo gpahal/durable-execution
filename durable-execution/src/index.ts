@@ -1,16 +1,20 @@
 export {
-  DurableExecutor,
+  makeEffectDurableExecutor,
+  type EffectDurableExecutor,
+  EffectDurableExecutorOptionsSchema,
+  type EffectDurableExecutorOptions,
   type AnySchema,
   type InferSchemaInput,
   type InferSchemaOutput,
-} from './executor'
+} from './effect-executor'
+export { DurableExecutor, type DurableExecutorOptions } from './executor'
 export {
   type Task,
   type AnyTask,
   type AnyTasks,
   type InferTaskInput,
   type InferTaskOutput,
-  type InferTaskIsSleepingTask,
+  type InferTaskType,
   type CommonTaskOptions,
   type TaskRetryOptions,
   type TaskOptions,
@@ -44,7 +48,6 @@ export {
   ERRORED_TASK_EXECUTION_STATUSES,
   type ErroredTaskExecutionStatus,
   type TaskEnqueueOptions,
-  type TaskExecutionHandle,
   type WakeupSleepingTaskExecutionOptions,
   type SequentialTasks,
   type SequentialTasksHelper,
@@ -71,19 +74,5 @@ export {
   DurableExecutionCancelledError,
   type DurableExecutionErrorStorageValue,
 } from './errors'
-export { type Serializer, createSuperjsonSerializer, SerializerInternal } from './serializer'
-export {
-  type LogLevel,
-  LogLevelSchema,
-  type Logger,
-  createConsoleLogger,
-  LoggerInternal,
-} from './logger'
-export {
-  type CancelSignal,
-  createCancelSignal,
-  createTimeoutCancelSignal,
-  combineCancelSignals,
-  createCancellablePromise,
-} from '@gpahal/std/cancel'
+export { type Serializer, createSuperjsonSerializer } from './serializer'
 export { type Mutex, createMutex } from '@gpahal/std/promises'

@@ -193,7 +193,7 @@ export type TaskExecutionsMySqlTable = ReturnType<typeof createMySqlTaskExecutio
  * )
  *
  * // Use with DurableExecutor
- * const executor = new DurableExecutor(storage)
+ * const executor = await DurableExecutor.make(storage)
  * ```
  *
  * @example

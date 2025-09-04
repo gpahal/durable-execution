@@ -13,13 +13,13 @@ describe('parentTask', () => {
   let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
-    executor = new DurableExecutor(storage, {
+    executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.start()
+    await executor.start()
   })
 
   afterEach(async () => {
@@ -598,7 +598,212 @@ describe('parentTask', () => {
     )
   })
 
-  it('should fail with finalizeTask failing', async () => {
+  it('should fail with number of children exceeding maxChildrenPerTaskExecution', async () => {
+    let executionCount = 0
+    const child = executor.task({
+      id: 'child',
+      timeoutMs: 1000,
+      run: () => {
+        executionCount++
+        return 'child_output'
+      },
+    })
+
+    const task = executor.parentTask({
+      id: 'test',
+      timeoutMs: 1000,
+      runParent: async () => {
+        executionCount++
+        await sleep(1)
+        return {
+          output: 'test_output',
+          children: Array.from({ length: 1001 }, () => childTask(child)),
+        }
+      },
+      finalize: async ({ children }) => {
+        executionCount++
+        if (children.some((c) => c.status === 'failed')) {
+          throw DurableExecutionError.nonRetryable('finalizeTask error')
+        }
+
+        executionCount++
+        await sleep(1)
+        return `finalize_output`
+      },
+    })
+
+    const handle = await executor.enqueueTask(task)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(executionCount).toBe(1)
+    expect(finishedExecution.status).toBe('failed')
+    assert(finishedExecution.status === 'failed')
+    expect(finishedExecution.taskId).toBe('test')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.error).toBeDefined()
+    expect(finishedExecution.error?.message).toContain(
+      'tried to spawn more than max children tasks',
+    )
+    expect(finishedExecution.error?.errorType).toBe('generic')
+    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should fail with finalize function failing with no children', async () => {
+    let executionCount = 0
+
+    const task = executor.parentTask({
+      id: 'test',
+      timeoutMs: 1000,
+      runParent: async () => {
+        executionCount++
+        await sleep(1)
+        return {
+          output: 'test_output',
+          children: [],
+        }
+      },
+      finalize: async () => {
+        executionCount++
+        await sleep(1)
+        throw new Error('finalizeTask error')
+      },
+    })
+
+    const handle = await executor.enqueueTask(task)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(executionCount).toBe(2)
+    expect(finishedExecution.status).toBe('finalize_failed')
+    assert(finishedExecution.status === 'finalize_failed')
+    expect(finishedExecution.taskId).toBe('test')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.error).toBeDefined()
+    expect(finishedExecution.error?.message).toContain('finalizeTask error')
+    expect(finishedExecution.error?.errorType).toBe('generic')
+    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should fail with finalize task failing with no children', async () => {
+    let executionCount = 0
+
+    const task = executor.parentTask({
+      id: 'test',
+      timeoutMs: 1000,
+      runParent: async () => {
+        executionCount++
+        await sleep(1)
+        return {
+          output: 'test_output',
+          children: [],
+        }
+      },
+      finalize: {
+        id: 'finalizeTask',
+        timeoutMs: 1000,
+        run: async () => {
+          executionCount++
+          await sleep(1)
+          throw new Error('finalizeTask error')
+        },
+      },
+    })
+
+    const handle = await executor.enqueueTask(task)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(executionCount).toBe(2)
+    expect(finishedExecution.status).toBe('finalize_failed')
+    assert(finishedExecution.status === 'finalize_failed')
+    expect(finishedExecution.taskId).toBe('test')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.error).toBeDefined()
+    expect(finishedExecution.error?.message).toContain('finalizeTask error')
+    expect(finishedExecution.error?.errorType).toBe('generic')
+    expect(finishedExecution.error?.isRetryable).toBe(true)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should fail with finalize function failing', async () => {
+    let executionCount = 0
+    const child1 = executor.task({
+      id: 'child1',
+      timeoutMs: 1000,
+      run: async () => {
+        executionCount++
+        await sleep(1)
+        return 'child1_output'
+      },
+    })
+    const child2 = executor.task({
+      id: 'child2',
+      timeoutMs: 1000,
+      run: async () => {
+        executionCount++
+        await sleep(1)
+        return 'child2_output'
+      },
+    })
+
+    const task = executor.parentTask({
+      id: 'test',
+      timeoutMs: 1000,
+      runParent: async () => {
+        executionCount++
+        await sleep(1)
+        return {
+          output: 'test_output',
+          children: [childTask(child1), childTask(child2)],
+        }
+      },
+      finalize: async () => {
+        executionCount++
+        await sleep(1)
+        throw new Error('finalizeTask error')
+      },
+    })
+
+    const handle = await executor.enqueueTask(task)
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(executionCount).toBe(4)
+    expect(finishedExecution.status).toBe('finalize_failed')
+    assert(finishedExecution.status === 'finalize_failed')
+    expect(finishedExecution.taskId).toBe('test')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.error).toBeDefined()
+    expect(finishedExecution.error?.message).toContain('finalizeTask error')
+    expect(finishedExecution.error?.errorType).toBe('generic')
+    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should fail with finalize task failing', async () => {
     let executionCount = 0
     const child1 = executor.task({
       id: 'child1',
@@ -662,7 +867,7 @@ describe('parentTask', () => {
     )
   })
 
-  it('should complete with finalizeTask parent task', async () => {
+  it('should complete with finalize task parent task', async () => {
     let executionCount = 0
     const child1 = executor.task({
       id: 'child1',
@@ -766,7 +971,7 @@ describe('parentTask', () => {
       run: async (ctx) => {
         childStarted = true
         for (let i = 0; i < 100; i++) {
-          if (ctx.shutdownSignal.isCancelled()) {
+          if (ctx.abortSignal.aborted) {
             return 'cancelled_by_parent'
           }
           await sleep(50)
@@ -1036,7 +1241,7 @@ describe('parentTask', () => {
 
     while (true) {
       const executionStorageValues = await storage.getManyById([
-        { executionId: handle.getExecutionId(), filters: {} },
+        { executionId: handle.executionId, filters: {} },
       ])
       expect(executionStorageValues).toBeDefined()
       assert(executionStorageValues)

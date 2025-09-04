@@ -81,18 +81,24 @@ transactions in parallel.
 
 ### Create a durable executor and manage its lifecycle
 
+> [!TIP]
+> If using effect, use the `makeEffectDurableExecutor` function to create the executor with first
+> class support for effect. See
+> [makeEffectDurableExecutor](https://gpahal.github.io/durable-execution/variables/makeEffectDurableExecutor.html)
+> for more details.
+
 ```ts
-import { DurableExecutor } from 'durable-execution'
+import { childTask, DurableExecutor } from 'durable-execution'
 import { Schema } from 'effect'
 
-const executor = new DurableExecutor(storage)
+const executor = await DurableExecutor.make(storage)
 
 async function app() {
   // ... use the durable executor to enqueue functions and workflows
 }
 
 // Start the durable executor
-executor.start()
+await executor.start()
 
 // Run the app
 await app()
@@ -119,6 +125,7 @@ const extractFileTitle = executor
 
 const summarizeFile = executor
   .validateInput(async (input: { filePath: string }) => {
+    // Example validation function - implement your own validation logic
     if (!isValidFilePath(input.filePath)) {
       throw new Error('Invalid file path')
     }
@@ -393,10 +400,11 @@ The `finalize` task is run after the `runParent` function and all the children t
 is useful for combining the output of the `runParent` function and children tasks. The output of
 the `finalize` task is the output of the parent task.
 
-**Important**: The `finalize` function receives outputs from all children, including those that
+**Critical**: The `finalize` function/task receives outputs from all children, including those that
 have failed. This behaves similar to `Promise.allSettled()` - you get the results regardless of
 individual child success or failure. This allows you to implement custom error handling logic, such
-as failing the parent only if critical children fail, or providing partial results.
+as failing the parent only if critical children fail, or providing partial results. As a caveat,
+always check the status of child executions in the finalize function/task.
 
 ```ts
 const taskA = executor.task({
@@ -515,8 +523,8 @@ const parentTask = executor.parentTask({
 // Finished execution: {
 //   status: 'finalize_failed',
 //   error: {
-//     message: 'Children failed',
 //     errorType: 'generic',
+//     message: 'Children failed',
 //     isRetryable: false,
 //   },
 //   ... other fields
@@ -1103,9 +1111,9 @@ const recursiveTask: Task<{ index: number }, { count: number }> = executor
 // }
 ```
 
-### Polling task
+### Looping task
 
-Polling tasks are useful when you want to wait for a value to be available.
+Looping tasks are useful when you want to run a task again and again until a condition is met.
 
 ```ts
 let value: number | undefined
@@ -1113,8 +1121,8 @@ setTimeout(() => {
   value = 10
 }, 1000)
 
-const pollTask = executor.task({
-  id: 'poll',
+const iterationTask = executor.task({
+  id: 'iteration',
   sleepMsBeforeRun: 100,
   timeoutMs: 1000,
   run: () => {
@@ -1129,7 +1137,7 @@ const pollTask = executor.task({
   },
 })
 
-const pollingTask = executor.pollingTask('polling', pollTask, 20, 100)
+const loopingTask = executor.loopingTask('looping', iterationTask, 20, 100)
 
 // Input: undefined
 // Output: {
@@ -1138,14 +1146,14 @@ const pollingTask = executor.pollingTask('polling', pollTask, 20, 100)
 // }
 ```
 
-#### Manually implementing polling tasks
+#### Manually implementing looping tasks
 
-Polling tasks can also be implemented manually just by using the `parentTask` method. Use the
-dedicated `pollingTask` method in production as described above. This example is useful only to
+Looping tasks can also be implemented manually just by using the `parentTask` method. Use the
+dedicated `loopingTask` method in production as described above. This example is useful only to
 understand the flexibility of the `parentTask` method.
 
 The `sleepMsBeforeRun` option is used to wait for a certain amount of time before attempting to get
-the value again. The `finalize` task is used to combine the output of the polling task and children
+the value again. The `finalize` task is used to combine the output of the looping task and children
 tasks.
 
 ```ts
@@ -1154,10 +1162,10 @@ setTimeout(() => {
   value = 10
 }, 2000)
 
-const pollingTask: Task<{ prevCount: number }, { count: number; value: number }> = executor
+const loopingTask: Task<{ prevCount: number }, { count: number; value: number }> = executor
   .inputSchema(Schema.Struct({ prevCount: Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)) }))
   .parentTask({
-    id: 'polling',
+    id: 'looping',
     sleepMsBeforeRun: 100,
     timeoutMs: 1000,
     runParent: (ctx, input) => {
@@ -1181,11 +1189,11 @@ const pollingTask: Task<{ prevCount: number }, { count: number; value: number }>
         } as
           | { isDone: false; value: undefined; prevCount: number }
           | { isDone: true; value: number; prevCount: number },
-        children: [childTask(pollingTask, { prevCount: input.prevCount + 1 })],
+        children: [childTask(loopingTask, { prevCount: input.prevCount + 1 })],
       }
     },
     finalize: {
-      id: 'pollingFinalize',
+      id: 'loopingFinalize',
       timeoutMs: 1000,
       run: (ctx, { output, children }) => {
         if (output.isDone) {
@@ -1222,7 +1230,7 @@ for external signals. The task remains in a `running` state until explicitly wok
 `wakeupSleepingTaskExecution()` with a completion status and output. This pattern is ideal for
 integrating with payment providers, approval workflows, or any asynchronous external process.
 
-For most usecases, you should use a `parentTask` to setup any processing or background logic that
+For most use cases, you should use a `parentTask` to set up any processing or background logic that
 would wake up the sleeping task and return a `sleepingTask` as a child that would be woken up
 externally using a webhook or event.
 
@@ -1238,6 +1246,7 @@ const parentTask = executor.parentTask({
   id: 'parent',
   timeoutMs: 1000,
   runParent: async () => {
+    // Example API call - replace with your actual implementation
     const entityId = await callApiThatSendsWebhookOrEventLater()
     return {
       output: 'parent_output',
@@ -1258,7 +1267,6 @@ const parentTask = executor.parentTask({
 })
 
 // Wakeup in a webhook or event handler asynchronously using the unique id and executor
-// (or execution client)
 const childExecution = await executor.wakeupSleepingTaskExecution(
   waitForWebhookTask,
   'entity_id',
@@ -1288,7 +1296,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 const db = drizzle(process.env.DATABASE_URL!)
 const taskExecutionsTable = createPgTaskExecutionsTable()
 const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable)
-const executor = new DurableExecutor(storage)
+const executor = await DurableExecutor.make(storage)
 ```
 
 ### Scaling
@@ -1297,12 +1305,12 @@ Run multiple executor instances in different processes or even different machine
 
 ```ts
 // First executor instance
-const executor = new DurableExecutor(storage, {
+const executor1 = await DurableExecutor.make(storage, {
   maxConcurrentTaskExecutions: 100,
 })
 
 // Second executor instance on a beefier machine
-const executor = new DurableExecutor(storage, {
+const executor2 = await DurableExecutor.make(storage, {
   maxConcurrentTaskExecutions: 1000,
 })
 ```
@@ -1310,22 +1318,42 @@ const executor = new DurableExecutor(storage, {
 ### Monitoring and observability
 
 Lightweight stats are exposed by the executor. Track these periodically to watch throughput and
-latency of background processes.
+latency of executor and storage.
 
 ```ts
-const stats = executor.getExecutorStats()
-// { expireLeewayMs, currConcurrentTaskExecutions, maxConcurrentTaskExecutions, ... }
+const runningTaskExecutionsCount = executor.getRunningTaskExecutionsCount()
+// 100
 
-const timings = executor.getTimingStats()
-// { bgProcess_processing_ready_task_executions: { count, meanMs }, ... }
+const runningTaskExecutionIds = executor.getRunningTaskExecutionIds()
+// Set(['task_execution_id_1', 'task_execution_id_2', ...])
+
+const storageMetrics = executor.getStorageMetrics()
+// [
+//   {
+//     processName: 'insertMany',
+//     count: 250,
+//     min: 10,
+//     max: 25,
+//     quantiles: [
+//       [0.5, Option.some(15)],
+//       [0.9, Option.some(18)],
+//       [0.95, Option.some(24)]
+//     ]
+//   },
+//   ...
+// ]
 ```
 
 ## Design
 
 ### Task execution
 
-The following diagram shows the internal state transition of the task execution once it is
-enqueued till it's run function completes.
+> [!NOTE]
+> For a complete diagram of the task execution lifecycle, see
+> [DESIGN_DIAGRAM.md](https://github.com/gpahal/durable-execution/blob/main/durable-execution/DESIGN_DIAGRAM.md).
+
+The following diagram shows the internal state transition of the task execution once it is enqueued
+till it's run function completes.
 
 ```mermaid
 flowchart TD
@@ -1357,16 +1385,30 @@ flowchart TD
   Y-->|complete closing| Z[close_status=closed]
 ```
 
-A task is considered finished when it's in one of the following states:
+#### State categories
 
-- completed
-- failed
-- timed_out
-- finalize_failed
-- cancelled
+**Active States** (task is being processed):
 
-If a task is in any other state, it can be cancelled. The task will be marked as cancelled and
-closed. See the [cancellation](#cancellation) section for more details.
+- `ready` - Waiting for executor to pick up
+- `running` - Currently executing run function
+- `waiting_for_children` - Parent task waiting for children to complete
+- `waiting_for_finalize` - Waiting for finalize task to complete
+
+**Terminal States** (execution finished):
+
+- `completed` - Successfully finished ✅
+- `failed` - Execution failed (may be retried) ❌
+- `timed_out` - Exceeded timeout limit ⏰
+- `finalize_failed` - Parent task finalize function failed ❌
+- `cancelled` - Manually cancelled or parent failed 🛑
+
+**Recovery Mechanisms**:
+
+- Tasks stuck in `running` state beyond `expiresAt` are automatically reset to `ready` for retry
+- Process failures don't lose task state due to persistent storage
+- Failed children can cancel parent tasks (configurable in finalize logic)
+
+### Task closure
 
 Once a task is finished, it goes through a closure process. It happens in the background. These are
 the steps that happen during the closure process:
@@ -1387,6 +1429,8 @@ the steps that happen during the closure process:
 - If the task was a `finalize` task, the parent task is marked as `finalize_failed`
 
 ### Cancellation
+
+If a task is in any non-terminal state, it can be cancelled.
 
 When a task execution is cancelled, the task execution status is marked as cancelled and
 the `needsPromiseCancellation` field is set to `true`. A background process will cancel the
@@ -1416,6 +1460,291 @@ On shutdown, these happen in this order:
 - Stop background processes after the current iteration
 - Wait for active task executions to finish. Task execution context contains a shutdown signal that
   can be used to gracefully shutdown the task when executor is shutting down
+
+## Advanced APIs
+
+### Storage utilities
+
+For custom storage implementations, the library provides several utility classes:
+
+- **`TaskExecutionsStorageWithMutex`** - Wraps storage to make all operations atomic using a mutex.
+  Use this if your storage implementation is not natively atomic.
+- **`TaskExecutionsStorageWithBatching`** - Implements batching methods for storage that doesn't
+  support batch operations natively.
+
+```ts
+import {
+  TaskExecutionsStorageWithMutex,
+  TaskExecutionsStorageWithBatching
+} from 'durable-execution'
+
+// Wrap a non-atomic storage
+const atomicStorage = new TaskExecutionsStorageWithMutex(myStorage)
+
+// Wrap a storage without batch support
+const batchingStorage = new TaskExecutionsStorageWithBatching(myStorage)
+```
+
+### Effect integration
+
+For effect users, the library provides first-class effect support:
+
+- **`makeEffectDurableExecutor`** - Creates an effect-based executor
+- **`EffectDurableExecutor`** - Type for the effect durable executor
+- **`EffectDurableExecutorOptions`** - Configuration options
+
+```ts
+import { Effect } from 'effect'
+import { makeEffectDurableExecutor } from 'durable-execution'
+
+const program = Effect.gen(function* () {
+  const executor = yield* makeEffectDurableExecutor({
+    maxConcurrentTaskExecutions: 100
+  })
+
+  const task = yield* executor.task({
+    id: 'effectTask',
+    timeoutMs: 30_000,
+    run: (ctx, input) => Effect.succeed(`Hello ${input}!`)
+  })
+
+  const handle = yield* executor.enqueueTask(task, 'world')
+  const result = yield* handle.waitAndGetFinishedExecution()
+
+  return result
+})
+```
+
+### Error types and status constants
+
+The library exports several error types and status constants for advanced error handling:
+
+```ts
+import {
+  // Error types
+  DurableExecutionError,
+  DurableExecutionNotFoundError,
+  DurableExecutionTimedOutError,
+  DurableExecutionCancelledError,
+
+  // Status constants
+  ALL_TASK_EXECUTION_STATUSES,
+  ACTIVE_TASK_EXECUTION_STATUSES,
+  FINISHED_TASK_EXECUTION_STATUSES,
+  ERRORED_TASK_EXECUTION_STATUSES,
+
+  // Storage status types
+  type TaskExecutionStatus,
+  type TaskExecutionCloseStatus,
+  type TaskExecutionOnChildrenFinishedProcessingStatus
+} from 'durable-execution'
+```
+
+### Error handling best practices
+
+#### When to use each error type
+
+```ts
+import {
+  DurableExecutionError,
+  DurableExecutionNotFoundError,
+  DurableExecutionCancelledError
+} from 'durable-execution'
+
+const apiTask = executor.task({
+  id: 'api-call',
+  run: async (ctx, input: { url: string }) => {
+    try {
+      const response = await fetch(input.url)
+
+      if (response.status === 404) {
+        // Resource doesn't exist - don't retry
+        throw new DurableExecutionNotFoundError(
+          `Resource not found: ${input.url}`,
+        )
+        // OR
+        throw DurableExecutionError.nonRetryable(
+          `Resource not found: ${input.url}`,
+        )
+      }
+
+      if (response.status === 400) {
+        // Bad request - client error, don't retry
+        throw DurableExecutionError.nonRetryable(
+          `Invalid request to ${input.url}`,
+        )
+      }
+
+      if (response.status >= 500) {
+        // Server error - might be transient, retry
+        throw DurableExecutionError.retryable(
+          `Server error from ${input.url}: ${response.status}`,
+        )
+      }
+
+      if (response.status === 429) {
+        // Rate limited - retry with backoff
+        throw DurableExecutionError.retryable(
+          `Rate limited by ${input.url}`,
+        )
+      }
+
+      const data = await response.json()
+      if (data.error) {
+        // Custom cancellation - throw this error to mark the task as cancelled
+        throw new DurableExecutionCancelledError(data.error)
+      }
+
+      return await response.json()
+    } catch (error) {
+      if (error instanceof DurableExecutionError) {
+        throw error // Re-throw our custom errors
+      }
+
+      // Network errors, timeouts, etc. - usually retryable
+      throw DurableExecutionError.retryable(
+        `Network error calling ${input.url}`,
+        { cause: error }
+      )
+    }
+  }
+})
+```
+
+#### Finalize function error handling
+
+```ts
+import { DurableExecutionError } from 'durable-execution'
+
+const batchProcessingTask = executor.parentTask({
+  id: 'batch-processing',
+  runParent: async (ctx, input: { batchItems: Array<string> }) => {
+    // Process items one by one
+    return {
+      output: undefined,
+      children: input.batchItems.map((item, index) =>
+        childTask(processItemTask, { item, index })
+      ),
+    }
+  },
+  finalize: async (ctx, input) => {
+    const { output, children } = input
+
+    // Separate successful and failed children
+    const successful = children.filter(child => child.status === 'completed')
+    const cancelled = children.filter(child => child.status === 'cancelled')
+    const failed = children.filter(child => child.status !== 'completed' && child.status !== 'cancelled')
+
+    // Log results for monitoring
+    console.log(`Batch processing completed: ${successful.length} succeeded, ${cancelled.length} cancelled, ${failed.length} failed`)
+
+    // Different error handling strategies:
+
+    // 1. Fail if ANY child failed (strict)
+    if (failed.length > 0) {
+      throw DurableExecutionError.nonRetryable(
+        `Batch processing failed: ${failed.length} items failed`,
+      )
+    }
+
+    // 2. Fail only if more than 50% failed (tolerance-based)
+    // if (failed.length > children.length / 2) {
+    //   throw DurableExecutionError.nonRetryable(
+    //     `Too many failures: ${failed.length}/${children.length}`
+    //   )
+    // }
+
+    // 3. Always succeed but report partial results (best-effort)
+    // return {
+    //   successful: successful.map(s => s.output),
+    //   failed: failed.length,
+    //   total: children.length
+    // }
+
+    // Return successful results
+    return {
+      results: successful.map(child => child.output),
+      processedCount: successful.length,
+      cancelledCount: cancelled.length,
+      failedCount: failed.length
+    }
+  }
+})
+```
+
+#### Error recovery patterns
+
+```ts
+async function attemptApi(url: string) {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+  }
+  return response.json()
+}
+
+const resilientApiTask = executor.task({
+  id: 'resilient-api-call',
+  retryOptions: {
+    maxAttempts: 5,
+    baseDelayMs: 1000,
+    delayMultiplier: 2,
+    maxDelayMs: 30_000
+  },
+  run: async (ctx, input: { url: string, fallbackUrl?: string }) => {
+    try {
+      // Try primary URL
+      return await attemptApi(input.url)
+    } catch (primaryError) {
+      // If we have a fallback and this is our last attempt
+      if (input.fallbackUrl && ctx.attempt >= 3) {
+        try {
+          console.log(`Primary URL failed, trying fallback: ${input.fallbackUrl}`)
+          return await attemptApi(input.fallbackUrl)
+        } catch (fallbackError) {
+          // Both failed - provide detailed error
+          throw DurableExecutionError.nonRetryable(
+            `Both primary and fallback URLs failed`,
+            {
+              cause: {
+                primary: primaryError,
+                fallback: fallbackError
+              }
+            }
+          )
+        }
+      }
+
+      // Retry with primary URL
+      throw DurableExecutionError.retryable(
+        `API call failed (attempt ${ctx.attempt}/${ctx.maxAttempts})`,
+        { cause: primaryError }
+      )
+    }
+  }
+})
+```
+
+### Serialization
+
+For custom serialization needs:
+
+> [!NOTE]
+> If you are using a custom serializer, you must ensure that the serializer can handle all the
+> types that are used in the task inputs and outputs.
+
+```ts
+import { createSuperjsonSerializer, type Serializer } from 'durable-execution'
+
+// Use the default serializer
+const defaultSerializer = createSuperjsonSerializer()
+
+// Create a custom serializer
+const customSerializer: Serializer = {
+  serialize: <T>(value: T) => JSON.stringify(value),
+  deserialize: <T>(str: string) => JSON.parse(str) as T
+}
+```
 
 ## Links
 

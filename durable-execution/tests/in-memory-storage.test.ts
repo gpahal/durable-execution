@@ -8,13 +8,13 @@ describe('InMemoryTaskExecutionsStorage', () => {
   let storage: InMemoryTaskExecutionsStorage
   let executor: DurableExecutor
 
-  beforeEach(() => {
+  beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
-    executor = new DurableExecutor(storage, {
+    executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       backgroundProcessIntraBatchSleepMs: 50,
     })
-    executor.start()
+    await executor.start()
   })
 
   afterEach(async () => {
@@ -68,9 +68,7 @@ describe('InMemoryTaskExecutionsStorage', () => {
     await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
     })
-    const dbValues = await storage.getManyById([
-      { executionId: handle.getExecutionId(), filters: {} },
-    ])
+    const dbValues = await storage.getManyById([{ executionId: handle.executionId, filters: {} }])
     expect(dbValues).toBeDefined()
     assert(dbValues)
     expect(dbValues[0]?.status).toBe('completed')
@@ -81,7 +79,7 @@ describe('InMemoryTaskExecutionsStorage', () => {
     const newStorage = await loadInMemoryTaskExecutionsStorageFromFile(tempFile)
     expect(newStorage).toBeDefined()
     const newDbValues = await newStorage.getManyById([
-      { executionId: handle.getExecutionId(), filters: {} },
+      { executionId: handle.executionId, filters: {} },
     ])
     expect(newDbValues).toBeDefined()
     assert(newDbValues)
