@@ -94,7 +94,7 @@ Each package has its own [`AGENTS.md`] file with package-specific commands. Use 
 - **Internal Types**: Prefix with `Internal` for private implementation types
 - **Error Handling**: Custom error classes extending base error types
 - **Factory Functions**: Use factory pattern for object creation (`createLogger`, `createStorage`)
-- **Validation**: Use Zod schemas for runtime validation (`zSerializer`, `zLogger`)
+- **Validation**: Use Effect Schema for runtime validation
 
 #### Import/Export Patterns
 

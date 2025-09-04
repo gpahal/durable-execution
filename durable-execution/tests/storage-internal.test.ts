@@ -61,33 +61,54 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('initialization', () => {
     it('should initialize with batching disabled', () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       expect(storageInternal).toBeDefined()
       expect(storageInternal.getCallsDurationsStats()).toBeDefined()
       expect(storageInternal.getPerSecondCallsCountsStats()).toBeDefined()
     })
 
     it('should initialize with batching enabled', () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       expect(storageInternal).toBeDefined()
       expect(storageInternal.getCallsDurationsStats()).toBeDefined()
       expect(storageInternal.getPerSecondCallsCountsStats()).toBeDefined()
     })
 
     it('should handle custom max retry attempts', () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100, 5)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        maxRetryAttempts: 5,
+      })
       expect(storageInternal).toBeDefined()
     })
   })
 
   describe('insertMany', () => {
     it('should handle empty executions array', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       await expect(storageInternal.insertMany([])).resolves.toBeUndefined()
     })
 
     it('should insert single execution without batching', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const execution = createMockStorageValue()
       await storageInternal.insertMany([execution])
 
@@ -98,7 +119,11 @@ describe('TaskExecutionsStorageInternal', () => {
     })
 
     it('should insert multiple executions without batching', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const executions = [
         createMockStorageValue({ executionId: 'exec-1' }),
         createMockStorageValue({ executionId: 'exec-2' }),
@@ -115,7 +140,11 @@ describe('TaskExecutionsStorageInternal', () => {
     })
 
     it('should batch small inserts when batching is enabled', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 10)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 10,
+      })
       storageInternal.start()
 
       const execution1 = createMockStorageValue({ executionId: 'exec-1' })
@@ -133,7 +162,11 @@ describe('TaskExecutionsStorageInternal', () => {
     })
 
     it('should not batch large inserts even when batching is enabled', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       storageInternal.start()
 
       const executions = [
@@ -154,7 +187,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('getById', () => {
     beforeEach(async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const execution = createMockStorageValue()
       await storage.insertMany([execution])
     })
@@ -186,7 +223,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     it('should batch getById calls when batching is enabled', async () => {
       await storageInternal.shutdown()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 10)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 10,
+      })
       storageInternal.start()
 
       const promise1 = storageInternal.getById({ executionId: 'exec-1', filters: {} })
@@ -203,7 +244,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('getBySleepingTaskUniqueId', () => {
     beforeEach(async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const execution = createMockStorageValue({
         isSleepingTask: true,
         sleepingTaskUniqueId: 'sleep-1',
@@ -232,7 +277,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const execution = createMockStorageValue()
       await storage.insertMany([execution])
     })
@@ -259,7 +308,11 @@ describe('TaskExecutionsStorageInternal', () => {
     })
 
     it('should handle finalize of parent with completed status', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       storageInternal.start()
       const execution = createMockStorageValue({
         executionId: 'finalize-exec',
@@ -288,7 +341,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     it('should batch updateById calls when batching is enabled', async () => {
       await storageInternal.shutdown()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 10)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 10,
+      })
       storageInternal.start()
 
       const promise1 = storageInternal.updateById(now, {
@@ -313,7 +370,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const execution = createMockStorageValue()
       await storage.insertMany([execution])
     })
@@ -353,7 +414,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     it('should not batch when children count is >= 3', async () => {
       await storageInternal.shutdown()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 10)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 10,
+      })
       storageInternal.start()
 
       const children = [
@@ -380,7 +445,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const parent = createMockStorageValue({
         executionId: 'parent-1',
         status: 'waiting_for_children',
@@ -424,7 +493,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     it('should batch updates when batching is enabled', async () => {
       await storageInternal.shutdown()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 10)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 10,
+      })
       storageInternal.start()
 
       const promise1 = storageInternal.updateByParentExecutionIdAndIsFinished(now, {
@@ -447,7 +520,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('getByParentExecutionId', () => {
     beforeEach(async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const parent = createMockStorageValue({ executionId: 'parent-1' })
       const child1 = createMockStorageValue({
         executionId: 'child-1',
@@ -486,7 +563,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     it('should batch requests when batching is enabled', async () => {
       await storageInternal.shutdown()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 10)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 10,
+      })
       storageInternal.start()
 
       const promise1 = storageInternal.getByParentExecutionId('parent-1')
@@ -527,7 +608,12 @@ describe('TaskExecutionsStorageInternal', () => {
         deleteAll: vi.fn(),
       }
 
-      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, false, true, 100, 3)
+      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        maxRetryAttempts: 3,
+      })
       const execution = createMockStorageValue()
       await storageInternal.insertMany([execution])
 
@@ -561,7 +647,12 @@ describe('TaskExecutionsStorageInternal', () => {
         deleteAll: vi.fn(),
       }
 
-      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, false, true, 100, 3)
+      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        maxRetryAttempts: 3,
+      })
       const execution = createMockStorageValue()
 
       await expect(storageInternal.insertMany([execution])).rejects.toThrow('Permanent error')
@@ -595,7 +686,12 @@ describe('TaskExecutionsStorageInternal', () => {
         deleteAll: vi.fn(),
       }
 
-      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, false, true, 100, 2)
+      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+        maxRetryAttempts: 2,
+      })
       const execution = createMockStorageValue()
 
       await expect(storageInternal.insertMany([execution])).rejects.toThrow('Temporary error')
@@ -606,19 +702,31 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('shutdown', () => {
     it('should handle shutdown without background processes', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       await expect(storageInternal.shutdown()).resolves.toBeUndefined()
     })
 
     it('should handle shutdown with background processes', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       storageInternal.start()
       await sleep(10)
       await expect(storageInternal.shutdown()).resolves.toBeUndefined()
     })
 
     it('should handle shutdown with pending requests', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       storageInternal.start()
 
       const promises = []
@@ -634,7 +742,11 @@ describe('TaskExecutionsStorageInternal', () => {
     })
 
     it('should throw if operations are attempted after shutdown', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       await storageInternal.shutdown()
 
       expect(() => storageInternal.start()).toThrowError()
@@ -643,7 +755,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('timing stats', () => {
     it('should track timing stats for operations', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const execution = createMockStorageValue()
 
       await storageInternal.insertMany([execution])
@@ -662,7 +778,11 @@ describe('TaskExecutionsStorageInternal', () => {
     })
 
     it('should update mean duration correctly', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const execution1 = createMockStorageValue({ executionId: 'exec-mean-1' })
       const execution2 = createMockStorageValue({ executionId: 'exec-mean-2' })
 
@@ -676,7 +796,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('storage call counts', () => {
     it('should track storage calls per second', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100, 1)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const execution = createMockStorageValue()
 
       await storageInternal.insertMany([execution])
@@ -692,7 +816,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const executions = [
         createMockStorageValue({ executionId: 'exec-1', status: 'ready', startAt: now - 1000 }),
         createMockStorageValue({ executionId: 'exec-2', status: 'ready', startAt: now - 500 }),
@@ -755,7 +883,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const executions = [
         createMockStorageValue({ executionId: 'exec-1', closeStatus: 'ready' }),
         createMockStorageValue({ executionId: 'exec-2', closeStatus: 'ready' }),
@@ -783,7 +915,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const executions = [
         createMockStorageValue({
           executionId: 'sleep-1',
@@ -824,7 +960,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
     beforeEach(async () => {
       now = Date.now()
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const executions = [
         createMockStorageValue({
           executionId: 'exec-1',
@@ -864,7 +1004,11 @@ describe('TaskExecutionsStorageInternal', () => {
 
   describe('background processes', () => {
     it('should handle background processes lifecycle', async () => {
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, true, true, 10)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 10,
+      })
 
       expect(() => storageInternal.start()).not.toThrow()
 
@@ -897,7 +1041,11 @@ describe('TaskExecutionsStorageInternal', () => {
         deleteAll: vi.fn(),
       }
 
-      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, true, true, 10)
+      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 10,
+      })
       storageInternal.start()
 
       const execution = createMockStorageValue()
@@ -933,7 +1081,11 @@ describe('TaskExecutionsStorageInternal', () => {
         deleteAll: vi.fn(),
       }
 
-      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, true, true, 10)
+      storageInternal = new TaskExecutionsStorageInternal(logger, mockStorage, {
+        enableBatching: true,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 10,
+      })
       storageInternal.start()
 
       await sleep(50)
@@ -954,7 +1106,11 @@ describe('TaskExecutionsStorageInternal', () => {
       await storage.insertMany([mockValue])
 
       const futureTime = Date.now() + 2000
-      storageInternal = new TaskExecutionsStorageInternal(logger, storage, false, true, 100)
+      storageInternal = new TaskExecutionsStorageInternal(logger, storage, {
+        enableBatching: false,
+        enableStats: true,
+        batchingBackgroundProcessIntraBatchSleepMs: 100,
+      })
       const count = await storageInternal.updateByOnChildrenFinishedProcessingExpiresAtLessThan(
         Date.now(),
         {

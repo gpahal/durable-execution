@@ -1,5 +1,5 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
-import z from 'zod'
+import { Either, Schema } from 'effect'
 
 import { createCancellablePromise, createCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
 import { getErrorMessage } from '@gpahal/std/errors'
@@ -18,13 +18,12 @@ import {
 import {
   createConsoleLogger,
   LoggerInternal,
-  zLogger,
-  zLogLevel,
+  LogLevelSchema,
   type Logger,
   type LogLevel,
 } from './logger'
 import { PromisePool } from './promise-pool'
-import { SerializerInternal, zSerializer, type Serializer } from './serializer'
+import { SerializerInternal, type Serializer } from './serializer'
 import {
   convertTaskExecutionStorageValueToTaskExecution,
   createTaskExecutionStorageValue,
@@ -33,7 +32,6 @@ import {
 } from './storage'
 import {
   TaskExecutionsStorageInternal,
-  zStorageMaxRetryAttempts,
   type TaskExecutionStorageUpdateInternal,
 } from './storage-internal'
 import {
@@ -69,99 +67,127 @@ import { generateId, summarizeStandardSchemaIssues } from './utils'
 
 const BACKGROUND_PROCESS_MAX_CONSECUTIVE_ERRORS = 3
 
-export const zDurableExecutorOptions = z.object({
-  serializer: zSerializer.nullish(),
-  logger: zLogger.nullish(),
-  logLevel: zLogLevel.nullish(),
-  expireLeewayMs: z
-    .number()
-    .nullish()
-    .transform((val) => val ?? 300_000),
-  backgroundProcessIntraBatchSleepMs: z
-    .number()
-    .nullish()
-    .transform((val) => val ?? 500),
-  maxConcurrentTaskExecutions: z
-    .number()
-    .nullish()
-    .transform((val) => val ?? 5000),
-  maxTaskExecutionsPerBatch: z
-    .number()
-    .nullish()
-    .transform((val) => val ?? 100),
-  processOnChildrenFinishedTaskExecutionsBatchSize: z
-    .number()
-    .int()
-    .min(1)
-    .max(100)
-    .nullish()
-    .transform((val) => val ?? 100),
-  markFinishedTaskExecutionsAsCloseStatusReadyBatchSize: z
-    .number()
-    .int()
-    .min(1)
-    .max(200)
-    .nullish()
-    .transform((val) => val ?? 100),
-  closeFinishedTaskExecutionsBatchSize: z
-    .number()
-    .int()
-    .min(1)
-    .max(100)
-    .nullish()
-    .transform((val) => val ?? 100),
-  cancelNeedsPromiseCancellationTaskExecutionsBatchSize: z
-    .number()
-    .int()
-    .min(1)
-    .max(200)
-    .nullish()
-    .transform((val) => val ?? 100),
-  retryExpiredTaskExecutionsBatchSize: z
-    .number()
-    .int()
-    .min(1)
-    .max(200)
-    .nullish()
-    .transform((val) => val ?? 100),
-  maxChildrenPerTaskExecution: z
-    .number()
-    .int()
-    .min(1)
-    .max(1000)
-    .nullish()
-    .transform((val) => val ?? 1000),
-  maxSerializedInputDataSize: z
-    .number()
-    .int()
-    .min(0)
-    .max(1024 * 1024) // 1MB
-    .nullish()
-    .transform((val) => val ?? 1024 * 1024), // 1MB
-  maxSerializedOutputDataSize: z
-    .number()
-    .int()
-    .min(1024) // 1KB
-    .max(10 * 1024 * 1024) // 10MB
-    .nullish()
-    .transform((val) => val ?? 1024 * 1024), // 1MB
-  enableStorageBatching: z
-    .boolean()
-    .nullish()
-    .transform((val) => val ?? false),
-  enableStorageStats: z
-    .boolean()
-    .nullish()
-    .transform((val) => val ?? false),
-  storageBatchingBackgroundProcessIntraBatchSleepMs: z
-    .number()
-    .int()
-    .min(1)
-    .max(100)
-    .nullish()
-    .transform((val) => val ?? 10),
-  storageMaxRetryAttempts: zStorageMaxRetryAttempts,
+export const DurableExecutorOptionsSchema = Schema.Struct({
+  logLevel: LogLevelSchema.pipe(Schema.optionalWith({ nullable: true })),
+  expireLeewayMs: Schema.Number.pipe(
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 300_000),
+  ),
+  backgroundProcessIntraBatchSleepMs: Schema.Number.pipe(
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 500),
+  ),
+  maxConcurrentTaskExecutions: Schema.Number.pipe(
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 5000),
+  ),
+  maxTaskExecutionsPerBatch: Schema.Number.pipe(
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 100),
+  ),
+  processOnChildrenFinishedTaskExecutionsBatchSize: Schema.Int.pipe(
+    Schema.between(1, 200),
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 100),
+  ),
+  markFinishedTaskExecutionsAsCloseStatusReadyBatchSize: Schema.Int.pipe(
+    Schema.between(1, 200),
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 100),
+  ),
+  closeFinishedTaskExecutionsBatchSize: Schema.Int.pipe(
+    Schema.between(1, 200),
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 100),
+  ),
+  cancelNeedsPromiseCancellationTaskExecutionsBatchSize: Schema.Int.pipe(
+    Schema.between(1, 200),
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 100),
+  ),
+  retryExpiredTaskExecutionsBatchSize: Schema.Int.pipe(
+    Schema.between(1, 200),
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 100),
+  ),
+  maxChildrenPerTaskExecution: Schema.Int.pipe(
+    Schema.between(1, 1000),
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 1000),
+  ),
+  maxSerializedInputDataSize: Schema.Int.pipe(
+    Schema.between(1024, 10 * 1024 * 1024), // 1KB to 10MB
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 1024 * 1024), // 1MB
+  ),
+  maxSerializedOutputDataSize: Schema.Int.pipe(
+    Schema.between(1024, 10 * 1024 * 1024), // 1KB to 10MB
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 1024 * 1024), // 1MB
+  ),
+  enableStorageBatching: Schema.Boolean.pipe(
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => false),
+  ),
+  enableStorageStats: Schema.Boolean.pipe(
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => false),
+  ),
+  storageBatchingBackgroundProcessIntraBatchSleepMs: Schema.Number.pipe(
+    Schema.between(1, 100),
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 10),
+  ),
+  storageMaxRetryAttempts: Schema.Number.pipe(
+    Schema.between(0, 10),
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 1),
+  ),
 })
+
+/**
+ * Any schema that can be used to validate inputs and outputs of tasks.
+ *
+ * @category Executor
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnySchema = StandardSchemaV1 | Schema.Schema<any, any, never>
+
+function isStandardSchema<TInput, TOutput>(
+  schema: AnySchema,
+): schema is StandardSchemaV1<TInput, TOutput> {
+  return '~standard' in schema
+}
+
+function isEffectSchema<A, I>(schema: AnySchema): schema is Schema.Schema<A, I, never> {
+  return 'ast' in schema
+}
+
+/**
+ * Infer the input type from a schema.
+ *
+ * @category Executor
+ */
+export type InferSchemaInput<TSchema extends AnySchema> =
+  TSchema extends StandardSchemaV1<infer Input>
+    ? Input
+    : // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      TSchema extends Schema.Schema<any, infer Input, never>
+      ? Input
+      : never
+
+/**
+ * Infer the output type from a schema.
+ *
+ * @category Executor
+ */
+export type InferSchemaOutput<TSchema extends AnySchema> =
+  TSchema extends StandardSchemaV1<infer Output>
+    ? Output
+    : // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      TSchema extends Schema.Schema<infer Output, any, never>
+      ? Output
+      : never
 
 /**
  * A durable executor. It is used to execute tasks durably, reliably and resiliently.
@@ -174,11 +200,14 @@ export const zDurableExecutorOptions = z.object({
  *
  * @example
  * ```ts
+ * import { DurableExecutor } from 'durable-execution'
+ * import { Schema } from 'effect'
+ *
  * const executor = new DurableExecutor(storage)
  *
  * // Create tasks
  * const extractFileTitle = executor
- *   .inputSchema(z.object({ filePath: z.string() }))
+ *   .inputSchema(Schema.Struct({ filePath: Schema.String }))
  *   .task({
  *     id: 'extractFileTitle',
  *     timeoutMs: 30_000, // 30 seconds
@@ -211,7 +240,7 @@ export const zDurableExecutorOptions = z.object({
  *   })
  *
  * const uploadFile = executor
- *   .inputSchema(z.object({ filePath: z.string(), uploadUrl: z.string() }))
+ *   .inputSchema(Schema.Struct({ filePath: Schema.String, uploadUrl: Schema.String }))
  *   .parentTask({
  *     id: 'uploadFile',
  *     timeoutMs: 60_000, // 1 minute
@@ -313,26 +342,27 @@ export class DurableExecutor {
    *   considered expired. If not provided, defaults to 300_000 (5 minutes).
    * @param options.backgroundProcessIntraBatchSleepMs - The duration to sleep between batches of
    *   background processes. If not provided, defaults to 500 (500ms).
-   * @param options.maxConcurrentTaskExecutions - The maximum number of tasks that can run concurrently.
-   *   If not provided, defaults to 5000.
-   * @param options.maxTaskExecutionsPerBatch - The maximum number of tasks to process in each batch.
-   *   If not provided, defaults to 100.
+   * @param options.maxConcurrentTaskExecutions - The maximum number of tasks that can run
+   *   concurrently. If not provided, defaults to 5000.
+   * @param options.maxTaskExecutionsPerBatch - The maximum number of tasks to process in each
+   *   batch. If not provided, defaults to 100.
    * @param options.processOnChildrenFinishedTaskExecutionsBatchSize - The maximum number of on
-   *   children finished task executions to process in each batch. If not provided, defaults to 100.
+   *   children finished task executions to process in each batch. If not provided, defaults to
+   *   100.
    * @param options.markFinishedTaskExecutionsAsCloseStatusReadyBatchSize - The maximum number of
    *   finished task executions to mark as close status ready in each batch. If not provided,
    *   defaults to 100.
    * @param options.closeFinishedTaskExecutionsBatchSize - The maximum number of finished task
    *   executions to close in each batch. If not provided, defaults to 100.
    * @param options.cancelNeedsPromiseCancellationTaskExecutionsBatchSize - The maximum number of
-   *   needs promise cancellation task executions to cancel in each batch. If not provided, defaults
-   *   to 100.
+   *   needs promise cancellation task executions to cancel in each batch. If not provided,
+   *   defaults to 100.
    * @param options.retryExpiredTaskExecutionsBatchSize - The maximum number of expired task
    *   executions to retry in each batch. If not provided, defaults to 100.
-   * @param options.maxChildrenPerTaskExecution - The maximum number of children tasks per parent task.
-   *   If not provided, defaults to 1000.
-   * @param options.maxSerializedInputDataSize - The maximum size of serialized input data in bytes.
-   *   If not provided, defaults to 1MB.
+   * @param options.maxChildrenPerTaskExecution - The maximum number of children tasks per parent
+   *   task. If not provided, defaults to 1000.
+   * @param options.maxSerializedInputDataSize - The maximum size of serialized input data in
+   *   bytes. If not provided, defaults to 1MB.
    * @param options.enableStorageBatching - Whether to enable storage batching. If not provided,
    *   defaults to false.
    * @param options.storageBatchingBackgroundProcessIntraBatchSleepMs - The sleep duration between
@@ -343,7 +373,11 @@ export class DurableExecutor {
    */
   constructor(
     storage: TaskExecutionsStorage,
-    options: {
+    {
+      serializer,
+      logger,
+      ...otherOptions
+    }: {
       serializer?: Serializer
       logger?: Logger
       logLevel?: LogLevel
@@ -365,16 +399,12 @@ export class DurableExecutor {
       storageMaxRetryAttempts?: number
     } = {},
   ) {
-    const parsedOptions = zDurableExecutorOptions.safeParse(options)
-    if (!parsedOptions.success) {
-      throw DurableExecutionError.nonRetryable(
-        `Invalid options: ${z.prettifyError(parsedOptions.error)}`,
-      )
+    const parsedOptions = Schema.decodeUnknownEither(DurableExecutorOptionsSchema)(otherOptions)
+    if (Either.isLeft(parsedOptions)) {
+      throw DurableExecutionError.nonRetryable(`Invalid options: ${parsedOptions.left.message}`)
     }
 
     const {
-      serializer,
-      logger,
       logLevel,
       expireLeewayMs,
       backgroundProcessIntraBatchSleepMs,
@@ -392,7 +422,7 @@ export class DurableExecutor {
       enableStorageStats,
       storageBatchingBackgroundProcessIntraBatchSleepMs,
       storageMaxRetryAttempts,
-    } = parsedOptions.data
+    } = parsedOptions.right
 
     this.id = `de_${generateId(8)}`
     this.serializer = new SerializerInternal(serializer)
@@ -415,14 +445,12 @@ export class DurableExecutor {
     this.maxChildrenPerTaskExecution = maxChildrenPerTaskExecution
     this.maxSerializedInputDataSize = maxSerializedInputDataSize
     this.maxSerializedOutputDataSize = maxSerializedOutputDataSize
-    this.storage = new TaskExecutionsStorageInternal(
-      this.logger,
-      storage,
-      enableStorageBatching,
-      enableStorageStats,
-      storageBatchingBackgroundProcessIntraBatchSleepMs,
-      storageMaxRetryAttempts,
-    )
+    this.storage = new TaskExecutionsStorageInternal(this.logger, storage, {
+      enableBatching: enableStorageBatching,
+      enableStats: enableStorageStats,
+      batchingBackgroundProcessIntraBatchSleepMs: storageBatchingBackgroundProcessIntraBatchSleepMs,
+      maxRetryAttempts: storageMaxRetryAttempts,
+    })
 
     const [cancelSignal, cancel] = createCancelSignal()
     this.shutdownSignal = cancelSignal
@@ -908,43 +936,43 @@ export class DurableExecutor {
    * @param inputSchema - The input schema.
    * @returns The input schema.
    */
-  inputSchema<TInputSchema extends StandardSchemaV1>(
+  inputSchema<TInputSchema extends AnySchema>(
     inputSchema: TInputSchema,
   ): {
     task: <TOutput>(
-      taskOptions: TaskOptions<StandardSchemaV1.InferOutput<TInputSchema>, TOutput>,
-    ) => Task<StandardSchemaV1.InferInput<TInputSchema>, TOutput, false>
+      taskOptions: TaskOptions<InferSchemaOutput<TInputSchema>, TOutput>,
+    ) => Task<InferSchemaInput<TInputSchema>, TOutput, false>
     parentTask: <
       TRunOutput = unknown,
       TOutput = DefaultParentTaskOutput<TRunOutput>,
       TFinalizeTaskRunOutput = unknown,
     >(
       parentTaskOptions: ParentTaskOptions<
-        StandardSchemaV1.InferOutput<TInputSchema>,
+        InferSchemaOutput<TInputSchema>,
         TRunOutput,
         TOutput,
         TFinalizeTaskRunOutput
       >,
-    ) => Task<StandardSchemaV1.InferInput<TInputSchema>, TOutput, false>
+    ) => Task<InferSchemaInput<TInputSchema>, TOutput, false>
     sequentialTasks: <TSequentialTasks extends ReadonlyArray<AnyTask>>(
       id: string,
       tasks: SequentialTasks<TSequentialTasks>,
-    ) => InferTaskInput<TSequentialTasks[0]> extends StandardSchemaV1.InferOutput<TInputSchema>
+    ) => InferTaskInput<TSequentialTasks[0]> extends InferSchemaOutput<TInputSchema>
       ? Task<
-          StandardSchemaV1.InferInput<TInputSchema>,
+          InferSchemaInput<TInputSchema>,
           InferTaskOutput<LastTaskElementInArray<TSequentialTasks>>
         >
       : never
     pollingTask: <TOutput>(
       id: string,
       pollTask: Task<
-        StandardSchemaV1.InferOutput<TInputSchema>,
+        InferSchemaOutput<TInputSchema>,
         { isDone: false } | { isDone: true; output: TOutput }
       >,
       maxAttempts: number,
       sleepMsBeforeRun?: number | ((attempt: number) => number),
     ) => Task<
-      StandardSchemaV1.InferInput<TInputSchema>,
+      InferSchemaInput<TInputSchema>,
       { isSuccess: false } | { isSuccess: true; output: TOutput }
     >
   } {
@@ -952,15 +980,31 @@ export class DurableExecutor {
 
     const validateInputFn = async (
       id: string,
-      input: StandardSchemaV1.InferInput<TInputSchema>,
-    ): Promise<StandardSchemaV1.InferOutput<TInputSchema>> => {
-      const validateResult = await inputSchema['~standard'].validate(input)
-      if (validateResult.issues != null) {
-        throw DurableExecutionError.nonRetryable(
-          `Invalid input to task ${id}: ${summarizeStandardSchemaIssues(validateResult.issues)}`,
-        )
+      input: InferSchemaInput<TInputSchema>,
+    ): Promise<InferSchemaOutput<TInputSchema>> => {
+      if (isStandardSchema(inputSchema)) {
+        const validateResult = await inputSchema['~standard'].validate(input)
+        if (validateResult.issues != null) {
+          throw DurableExecutionError.nonRetryable(
+            `Invalid input to task ${id}: ${summarizeStandardSchemaIssues(validateResult.issues)}`,
+          )
+        }
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        return validateResult.value as InferSchemaOutput<TInputSchema>
+      } else if (isEffectSchema(inputSchema)) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+          return (await Schema.decodeUnknownPromise(inputSchema)(
+            input,
+          )) as InferSchemaOutput<TInputSchema>
+        } catch (error) {
+          throw DurableExecutionError.nonRetryable(
+            `Invalid input to task ${id}: ${getErrorMessage(error)}`,
+          )
+        }
       }
-      return validateResult.value
+
+      throw new Error('Invalid schema: Expected a standard schema or an effect schema')
     }
 
     return this.validateInputInternal(validateInputFn)

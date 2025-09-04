@@ -1,32 +1,5 @@
 import { createSuperjsonSerializer, DurableExecutionError } from '../src'
-import { SerializerInternal, zSerializer } from '../src/serializer'
-
-describe('zSerializer', () => {
-  it('should handle serializer validation', () => {
-    expect(() =>
-      zSerializer.parse({
-        serialize: () => 'test',
-        deserialize: () => 'test',
-      }),
-    ).not.toThrow()
-
-    expect(() => zSerializer.parse({})).toThrow()
-
-    expect(() =>
-      zSerializer.parse({
-        serialize: 1,
-        deserialize: () => 'test',
-      }),
-    ).toThrow()
-
-    expect(() =>
-      zSerializer.parse({
-        serialize: () => 'test',
-        deserialize: 1,
-      }),
-    ).toThrow()
-  })
-})
+import { SerializerInternal } from '../src/serializer'
 
 describe('serializer', () => {
   it('should handle serializer errors', () => {

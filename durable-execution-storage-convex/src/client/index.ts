@@ -10,8 +10,6 @@ import {
 import type { GenericId } from 'convex/values'
 import {
   DurableExecutionError,
-  zLogger,
-  zLogLevel,
   type TaskExecutionCloseStatus,
   type TaskExecutionOnChildrenFinishedProcessingStatus,
   type TaskExecutionsStorage,
@@ -20,7 +18,7 @@ import {
   type TaskExecutionStorageUpdate,
   type TaskExecutionStorageValue,
 } from 'durable-execution'
-import { z } from 'zod'
+import { Either, Schema } from 'effect'
 
 import {
   taskExecutionDBValueToStorageValue,
@@ -568,38 +566,53 @@ export type BatchRequest<T, R> = {
 /**
  * A schema for the options of the Convex task executions storage.
  */
-export const zConvexTaskExecutionsStorageOptions = z
-  .object({
-    totalShards: z
-      .number()
-      .min(1)
-      .max(64)
-      .nullish()
-      .transform((val) => val ?? 1),
-    shards: z.array(z.number().min(0)).nullish(),
-    enableTestMode: z
-      .boolean()
-      .nullish()
-      .transform((val) => val ?? false),
-    logger: zLogger.nullish(),
-    logLevel: zLogLevel.nullish(),
-  })
-  .transform((val) => {
-    let finalShards: Array<number>
-    if (!val.shards) {
-      finalShards = Array.from({ length: val.totalShards }, (_, i) => i)
-    } else if (val.shards.some((shard) => shard < 0 || shard >= val.totalShards)) {
-      throw new Error('Shards must be an array of numbers between 0 and totalShards')
-    } else {
-      const shardsSet = new Set(val.shards)
-      finalShards = [...shardsSet].sort((a, b) => a - b)
+export const ConvexTaskExecutionsStorageOptionsSchema = Schema.Struct({
+  totalShards: Schema.Int.pipe(
+    Schema.between(1, 64),
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => 1),
+  ),
+  shards: Schema.Array(Schema.Int.pipe(Schema.greaterThanOrEqualTo(0))).pipe(
+    Schema.optionalWith({ nullable: true }),
+  ),
+  enableTestMode: Schema.Boolean.pipe(
+    Schema.optionalWith({ nullable: true }),
+    Schema.withDecodingDefault(() => false),
+  ),
+}).pipe(
+  Schema.filter((val) => {
+    if (val.shards?.some((shard) => shard < 0 || shard >= val.totalShards)) {
+      return `Shards must be an array of numbers between 0 and totalShards (${val.totalShards})`
     }
-
-    return {
-      ...val,
-      shards: finalShards,
-    }
-  })
+    return true
+  }),
+  Schema.transform(
+    Schema.Struct({
+      totalShards: Schema.Int,
+      shards: Schema.Array(Schema.Int),
+      enableTestMode: Schema.Boolean,
+    }),
+    {
+      strict: true,
+      encode: (val) => ({
+        ...val,
+      }),
+      decode: (val) => {
+        let finalShards: Array<number>
+        if (!val.shards) {
+          finalShards = Array.from({ length: val.totalShards }, (_, i) => i)
+        } else {
+          const shardsSet = new Set(val.shards)
+          finalShards = [...shardsSet].sort((a, b) => a - b)
+        }
+        return {
+          ...val,
+          shards: finalShards,
+        }
+      },
+    },
+  ),
+)
 
 /**
  * A task executions storage implementation that uses a Convex database.
@@ -609,7 +622,7 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
   private readonly authSecret: string
   private readonly publicApi: DurableExecutionStoragePublicApi
   private readonly totalShards: number
-  private readonly shards: Array<number>
+  private readonly shards: ReadonlyArray<number>
   private readonly enableTestMode: boolean
 
   /**
@@ -634,19 +647,17 @@ export class ConvexTaskExecutionsStorage implements TaskExecutionsStorage {
       enableTestMode?: boolean
     } = {},
   ) {
-    const parsedOptions = zConvexTaskExecutionsStorageOptions.safeParse(options)
-    if (!parsedOptions.success) {
-      throw DurableExecutionError.nonRetryable(
-        `Invalid options: ${z.prettifyError(parsedOptions.error)}`,
-      )
+    const parsedOptions = Schema.decodeEither(ConvexTaskExecutionsStorageOptionsSchema)(options)
+    if (Either.isLeft(parsedOptions)) {
+      throw DurableExecutionError.nonRetryable(`Invalid options: ${parsedOptions.left.message}`)
     }
 
     this.convexClient = convexClient
     this.authSecret = authSecret
     this.publicApi = publicApi
-    this.totalShards = parsedOptions.data.totalShards
-    this.shards = parsedOptions.data.shards
-    this.enableTestMode = parsedOptions.data.enableTestMode
+    this.totalShards = parsedOptions.right.totalShards
+    this.shards = parsedOptions.right.shards
+    this.enableTestMode = parsedOptions.right.enableTestMode
   }
 
   async insertMany(executions: ReadonlyArray<TaskExecutionStorageValue>): Promise<void> {

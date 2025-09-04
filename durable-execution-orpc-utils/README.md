@@ -32,13 +32,13 @@ sequenceDiagram
 - npm
 
 ```bash
-npm install durable-execution durable-execution-orpc-utils @orpc/client @orpc/contract @orpc/server
+npm install effect durable-execution durable-execution-orpc-utils @orpc/client @orpc/contract @orpc/server
 ```
 
 - pnpm
 
 ```bash
-pnpm add durable-execution durable-execution-orpc-utils @orpc/client @orpc/contract @orpc/server
+pnpm add effect durable-execution durable-execution-orpc-utils @orpc/client @orpc/contract @orpc/server
 ```
 
 ## Basic Usage
@@ -138,16 +138,16 @@ Keep business logic in your app, let the executor handle orchestration.
 ```ts
 // app/api/rpc.ts
 import { os } from '@orpc/server'
-import { z } from 'zod'
+import { Schema } from 'effect'
 
 const processOrder = os
-  .input(z.object({
-    orderId: z.string(),
-    amount: z.number(),
-  }))
-  .output(z.object({
-    transactionId: z.string(),
-  }))
+  .input(Schema.standardSchemaV1(Schema.Struct({
+    orderId: Schema.String,
+    amount: Schema.Number,
+  })))
+  .output(Schema.standardSchemaV1(Schema.Struct({
+    transactionId: Schema.String,
+  })))
   .handler(async ({ input }) => {
     // Business logic here
     return { transactionId: 'txn_123' }

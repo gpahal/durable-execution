@@ -1,5 +1,3 @@
-import z from 'zod'
-
 import { createCancelSignal, type CancelSignal } from '@gpahal/std/cancel'
 import { getErrorMessage } from '@gpahal/std/errors'
 import { omitUndefinedValues } from '@gpahal/std/objects'
@@ -336,23 +334,6 @@ class BatchRequester<T, R> {
   }
 }
 
-export const zStorageMaxRetryAttempts = z
-  .number()
-  .min(0)
-  .max(10)
-  .nullish()
-  .transform((val) => val ?? 1)
-
-export function validateStorageMaxRetryAttempts(maxRetryAttempts?: number | null): number {
-  const parsedMaxRetryAttempts = zStorageMaxRetryAttempts.safeParse(maxRetryAttempts)
-  if (!parsedMaxRetryAttempts.success) {
-    throw DurableExecutionError.nonRetryable(
-      `Invalid storage max retry attempts: ${z.prettifyError(parsedMaxRetryAttempts.error)}`,
-    )
-  }
-  return parsedMaxRetryAttempts.data
-}
-
 /**
  * Internal class that can be used to interact with the storage implementation.
  *
@@ -367,7 +348,7 @@ export class TaskExecutionsStorageInternal {
   private readonly storage: TaskExecutionsStorage
   private readonly enableBatching: boolean
   private readonly enableStats: boolean
-  private readonly baseBackgroundProcessIntraBatchSleepMs: number
+  private readonly batchingBackgroundProcessIntraBatchSleepMs: number
   private readonly maxRetryAttempts: number
   private isStarted: boolean
   private readonly shutdownSignal: CancelSignal
@@ -435,17 +416,25 @@ export class TaskExecutionsStorageInternal {
   constructor(
     logger: LoggerInternal,
     storage: TaskExecutionsStorage,
-    enableBatching: boolean,
-    enableStats: boolean,
-    baseBackgroundProcessIntraBatchSleepMs: number,
-    maxRetryAttempts?: number,
+    {
+      enableBatching,
+      enableStats,
+      batchingBackgroundProcessIntraBatchSleepMs,
+      maxRetryAttempts,
+    }: {
+      enableBatching: boolean
+      enableStats: boolean
+      batchingBackgroundProcessIntraBatchSleepMs: number
+      maxRetryAttempts?: number
+    },
   ) {
     this.logger = logger
     this.storage = storage
     this.enableBatching = enableBatching
     this.enableStats = enableStats
-    this.baseBackgroundProcessIntraBatchSleepMs = baseBackgroundProcessIntraBatchSleepMs
-    this.maxRetryAttempts = validateStorageMaxRetryAttempts(maxRetryAttempts)
+    this.batchingBackgroundProcessIntraBatchSleepMs = batchingBackgroundProcessIntraBatchSleepMs
+    this.maxRetryAttempts =
+      maxRetryAttempts != null ? Math.max(0, Math.min(10, maxRetryAttempts)) : 1
     this.isStarted = false
 
     const [cancelSignal, cancel] = createCancelSignal()
@@ -468,7 +457,7 @@ export class TaskExecutionsStorageInternal {
         logger,
         'insertMany',
         100,
-        this.baseBackgroundProcessIntraBatchSleepMs * 2,
+        this.batchingBackgroundProcessIntraBatchSleepMs * 2,
         (requests) => this.insertManyBatched(requests),
         this.shutdownSignal,
         this.backgroundPromisePool,
@@ -477,7 +466,7 @@ export class TaskExecutionsStorageInternal {
         logger,
         'getById',
         100,
-        this.baseBackgroundProcessIntraBatchSleepMs * 2,
+        this.batchingBackgroundProcessIntraBatchSleepMs * 2,
         (requests) => this.getManyById(requests),
         this.shutdownSignal,
         this.backgroundPromisePool,
@@ -486,7 +475,7 @@ export class TaskExecutionsStorageInternal {
         logger,
         'getBySleepingTaskUniqueId',
         100,
-        this.baseBackgroundProcessIntraBatchSleepMs * 2,
+        this.batchingBackgroundProcessIntraBatchSleepMs * 2,
         (requests) => this.getManyBySleepingTaskUniqueId(requests),
         this.shutdownSignal,
         this.backgroundPromisePool,
@@ -495,7 +484,7 @@ export class TaskExecutionsStorageInternal {
         logger,
         'updateById',
         100,
-        this.baseBackgroundProcessIntraBatchSleepMs,
+        this.batchingBackgroundProcessIntraBatchSleepMs,
         (requests) => this.updateManyById(requests),
         this.shutdownSignal,
         this.backgroundPromisePool,
@@ -504,7 +493,7 @@ export class TaskExecutionsStorageInternal {
         logger,
         'updateByIdAndInsertChildrenIfUpdated',
         50,
-        this.baseBackgroundProcessIntraBatchSleepMs,
+        this.batchingBackgroundProcessIntraBatchSleepMs,
         (requests) => this.updateManyByIdAndInsertChildrenIfUpdated(requests),
         this.shutdownSignal,
         this.backgroundPromisePool,
@@ -513,7 +502,7 @@ export class TaskExecutionsStorageInternal {
         logger,
         'getByParentExecutionId',
         3,
-        this.baseBackgroundProcessIntraBatchSleepMs,
+        this.batchingBackgroundProcessIntraBatchSleepMs,
         (requests) => this.getManyByParentExecutionId(requests),
         this.shutdownSignal,
         this.backgroundPromisePool,
@@ -522,7 +511,7 @@ export class TaskExecutionsStorageInternal {
         logger,
         'updateByParentExecutionIdAndIsFinished',
         5,
-        this.baseBackgroundProcessIntraBatchSleepMs * 2,
+        this.batchingBackgroundProcessIntraBatchSleepMs * 2,
         (requests) => this.updateManyByParentExecutionIdAndIsFinished(requests),
         this.shutdownSignal,
         this.backgroundPromisePool,
@@ -638,10 +627,10 @@ export class TaskExecutionsStorageInternal {
   }
 
   private getResolvedMaxRetryAttempts(maxRetryAttempts?: number): number {
-    if (maxRetryAttempts != null) {
-      return validateStorageMaxRetryAttempts(maxRetryAttempts)
-    }
-    return this.maxRetryAttempts
+    return Math.max(
+      0,
+      Math.min(10, maxRetryAttempts != null ? maxRetryAttempts : this.maxRetryAttempts),
+    )
   }
 
   private async retry<T>(

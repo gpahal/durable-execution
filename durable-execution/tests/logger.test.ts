@@ -1,48 +1,4 @@
-import { createConsoleLogger, LoggerInternal, zLogger } from '../src/logger'
-
-describe('zLogger', () => {
-  it('should handle logger validation', () => {
-    expect(() =>
-      zLogger.parse({
-        debug: () => {
-          // Do nothing
-        },
-        info: () => {
-          // Do nothing
-        },
-        error: () => {
-          // Do nothing
-        },
-      }),
-    ).not.toThrow()
-
-    expect(() => zLogger.parse({})).toThrow()
-
-    expect(() =>
-      zLogger.parse({
-        debug: 1,
-        info: () => 'test',
-        error: () => 'test',
-      }),
-    ).toThrow()
-
-    expect(() =>
-      zLogger.parse({
-        debug: () => 'test',
-        info: 1,
-        error: () => 'test',
-      }),
-    ).toThrow()
-
-    expect(() =>
-      zLogger.parse({
-        debug: () => 'test',
-        info: () => 'test',
-        error: 1,
-      }),
-    ).toThrow()
-  })
-})
+import { createConsoleLogger, LoggerInternal } from '../src/logger'
 
 describe('logger', () => {
   it('should create console logger', () => {

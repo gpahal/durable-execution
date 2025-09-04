@@ -53,12 +53,17 @@
     "pre-commit": "pnpm pre-commit",
     "pre-push": "pnpm pre-commit"
   },
+  "peerDependencies": {
+    "effect": "catalog:dev"
+  },
   "dependencies": {
     "@gpahal/std": "catalog:prod",
     "@standard-schema/spec": "catalog:prod",
     "@standard-schema/utils": "catalog:prod",
     "nanoid": "catalog:prod",
-    "superjson": "catalog:prod",
-    "zod": "catalog:prod"
+    "superjson": "catalog:prod"
+  },
+  "devDependencies": {
+    "effect": "catalog:dev"
   }
 }

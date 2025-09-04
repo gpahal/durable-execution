@@ -5,28 +5,7 @@ import {
   type TaskExecutionsStorage,
   type TaskExecutionStorageValue,
 } from '../src/storage'
-import {
-  getTaskExecutionStorageUpdate,
-  validateStorageMaxRetryAttempts,
-} from '../src/storage-internal'
-
-describe('validateStorageMaxRetryAttempts', () => {
-  it('should handle valid max retry attempts', () => {
-    expect(validateStorageMaxRetryAttempts(0)).toBe(0)
-    expect(validateStorageMaxRetryAttempts(1)).toBe(1)
-    expect(validateStorageMaxRetryAttempts(10)).toBe(10)
-  })
-
-  it('should handle undefined or null max retry attempts', () => {
-    expect(validateStorageMaxRetryAttempts(undefined)).toBe(1)
-    expect(validateStorageMaxRetryAttempts(null)).toBe(1)
-  })
-
-  it('should handle invalid max retry attempts', () => {
-    expect(() => validateStorageMaxRetryAttempts(-1)).toThrow('Invalid storage max retry attempts')
-    expect(() => validateStorageMaxRetryAttempts(11)).toThrow('Invalid storage max retry attempts')
-  })
-})
+import { getTaskExecutionStorageUpdate } from '../src/storage-internal'
 
 describe('getTaskExecutionStorageUpdate', () => {
   it('should handle empty update', () => {

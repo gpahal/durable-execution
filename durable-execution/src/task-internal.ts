@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { Either, Schema } from 'effect'
 
 import {
   combineCancelSignals,
@@ -128,82 +128,84 @@ function convertParentTaskOptionsOptionsInternal(
   }
 }
 
-const zRetryOptions = z
-  .object({
-    maxAttempts: z.number().int().min(0).max(100), // Reasonable maximum
-    baseDelayMs: z
-      .number()
-      .int()
-      .min(0)
-      .max(3_600_000) // 1 hour
-      .nullish()
-      .transform((val) => {
-        if (val == null) {
-          return undefined
-        }
-        return val
-      }),
-    delayMultiplier: z
-      .number()
-      .min(0.1)
-      .max(10)
-      .nullish()
-      .transform((val) => {
-        if (val == null) {
-          return undefined
-        }
-        return val
-      }),
-    maxDelayMs: z
-      .number()
-      .int()
-      .min(0)
-      .max(86_400_000) // 24 hours
-      .nullish()
-      .transform((val) => {
-        if (val == null) {
-          return undefined
-        }
-        return val
-      }),
-  })
-  .nullish()
-  .transform((val) => {
-    if (val == null) {
-      return {
-        maxAttempts: 0,
-        baseDelayMs: undefined,
-        delayMultiplier: undefined,
-        maxDelayMs: undefined,
-      }
+const RetryOptionsSchema = Schema.Struct({
+  maxAttempts: Schema.Int.pipe(Schema.between(0, 1000)),
+  baseDelayMs: Schema.Int.pipe(
+    Schema.between(0, 3_600_000), // 0 to 1 hour
+    Schema.optionalWith({ nullable: true }),
+  ),
+  delayMultiplier: Schema.Number.pipe(
+    Schema.between(0.1, 10),
+    Schema.optionalWith({ nullable: true }),
+  ),
+  maxDelayMs: Schema.Int.pipe(
+    Schema.between(0, 86_400_000), // 0 to 24 hours
+    Schema.optionalWith({ nullable: true }),
+  ),
+}).pipe(
+  Schema.filter((val) => {
+    if (val.maxDelayMs != null && val.baseDelayMs != null && val.maxDelayMs < val.baseDelayMs) {
+      return `maxDelayMs must be greater than or equal to baseDelayMs`
     }
-    return val
-  })
-  .refine(
-    (val) => {
-      if (val.maxDelayMs != null && val.baseDelayMs != null) {
-        return val.maxDelayMs >= val.baseDelayMs
-      }
-      return true
-    },
+    return true
+  }),
+  Schema.NullishOr,
+  Schema.transform(
+    Schema.Struct({
+      maxAttempts: Schema.Int,
+      baseDelayMs: Schema.Int.pipe(Schema.optional),
+      delayMultiplier: Schema.Number.pipe(Schema.optional),
+      maxDelayMs: Schema.Int.pipe(Schema.optional),
+    }),
     {
-      message: 'maxDelayMs must be greater than or equal to baseDelayMs',
+      strict: true,
+      encode: (val) => {
+        return {
+          maxAttempts: val.maxAttempts,
+          baseDelayMs: val.baseDelayMs,
+          delayMultiplier: val.delayMultiplier,
+          maxDelayMs: val.maxDelayMs,
+        }
+      },
+      decode: (val) => {
+        if (val == null) {
+          return {
+            maxAttempts: 0,
+            baseDelayMs: undefined,
+            delayMultiplier: undefined,
+            maxDelayMs: undefined,
+          }
+        }
+
+        return {
+          maxAttempts: val.maxAttempts,
+          baseDelayMs: val.baseDelayMs,
+          delayMultiplier: val.delayMultiplier,
+          maxDelayMs: val.maxDelayMs,
+        }
+      },
     },
-  )
+  ),
+)
 
-const zSleepMsBeforeRun = z
-  .number()
-  .int()
-  .min(0)
-  .nullish()
-  .transform((val) => {
-    if (val == null || val <= 0) {
-      return 0
-    }
-    return val
-  })
+const SleepMsBeforeRunSchema = Schema.Number.pipe(
+  Schema.greaterThanOrEqualTo(0),
+  Schema.NullishOr,
+  Schema.transform(Schema.Number, {
+    strict: true,
+    encode: (val) => {
+      return val
+    },
+    decode: (val) => {
+      if (val == null) {
+        return 0
+      }
+      return val
+    },
+  }),
+)
 
-const zTimeoutMs = z.number().int().min(1)
+const TimeoutMsSchema = Schema.Int.pipe(Schema.greaterThanOrEqualTo(1))
 
 /**
  * An internal representation of a task.
@@ -379,31 +381,35 @@ export function validateCommonTaskOptions(taskOptions: CommonTaskOptions): {
 } {
   validateTaskId(taskOptions.id)
 
-  const parsedRetryOptions = zRetryOptions.safeParse(taskOptions.retryOptions)
-  if (!parsedRetryOptions.success) {
+  const parsedRetryOptions = Schema.decodeUnknownEither(RetryOptionsSchema)(
+    taskOptions.retryOptions,
+  )
+  if (Either.isLeft(parsedRetryOptions)) {
     throw DurableExecutionError.nonRetryable(
-      `Invalid retry options for task ${taskOptions.id}: ${z.prettifyError(parsedRetryOptions.error)}`,
+      `Invalid retry options for task ${taskOptions.id}: ${parsedRetryOptions.left.message}`,
     )
   }
 
-  const parsedSleepMsBeforeRun = zSleepMsBeforeRun.safeParse(taskOptions.sleepMsBeforeRun)
-  if (!parsedSleepMsBeforeRun.success) {
+  const parsedSleepMsBeforeRun = Schema.decodeUnknownEither(SleepMsBeforeRunSchema)(
+    taskOptions.sleepMsBeforeRun,
+  )
+  if (Either.isLeft(parsedSleepMsBeforeRun)) {
     throw DurableExecutionError.nonRetryable(
-      `Invalid sleep ms before run for task ${taskOptions.id}: ${z.prettifyError(parsedSleepMsBeforeRun.error)}`,
+      `Invalid sleep ms before run for task ${taskOptions.id}: ${parsedSleepMsBeforeRun.left.message}`,
     )
   }
 
-  const parsedTimeoutMs = zTimeoutMs.safeParse(taskOptions.timeoutMs)
-  if (!parsedTimeoutMs.success) {
+  const parsedTimeoutMs = Schema.decodeUnknownEither(TimeoutMsSchema)(taskOptions.timeoutMs)
+  if (Either.isLeft(parsedTimeoutMs)) {
     throw DurableExecutionError.nonRetryable(
-      `Invalid timeout value for task ${taskOptions.id}: ${z.prettifyError(parsedTimeoutMs.error)}`,
+      `Invalid timeout value for task ${taskOptions.id}: ${parsedTimeoutMs.left.message}`,
     )
   }
 
   return {
-    retryOptions: parsedRetryOptions.data,
-    sleepMsBeforeRun: parsedSleepMsBeforeRun.data,
-    timeoutMs: parsedTimeoutMs.data,
+    retryOptions: parsedRetryOptions.right,
+    sleepMsBeforeRun: parsedSleepMsBeforeRun.right,
+    timeoutMs: parsedTimeoutMs.right,
   }
 }
 
@@ -414,36 +420,38 @@ export function validateEnqueueOptions(
   const validatedOptions: TaskEnqueueOptions = {}
 
   if (options?.retryOptions) {
-    const parsedRetryOptions = zRetryOptions.safeParse(options.retryOptions)
-    if (!parsedRetryOptions.success) {
+    const parsedRetryOptions = Schema.decodeUnknownEither(RetryOptionsSchema)(options.retryOptions)
+    if (Either.isLeft(parsedRetryOptions)) {
       throw DurableExecutionError.nonRetryable(
-        `Invalid retry options for task ${taskId}: ${z.prettifyError(parsedRetryOptions.error)}`,
+        `Invalid retry options for task ${taskId}: ${parsedRetryOptions.left.message}`,
       )
     }
 
-    validatedOptions.retryOptions = parsedRetryOptions.data
+    validatedOptions.retryOptions = parsedRetryOptions.right
   }
 
   if (options?.sleepMsBeforeRun != null) {
-    const parsedSleepMsBeforeRun = zSleepMsBeforeRun.safeParse(options.sleepMsBeforeRun)
-    if (!parsedSleepMsBeforeRun.success) {
+    const parsedSleepMsBeforeRun = Schema.decodeUnknownEither(SleepMsBeforeRunSchema)(
+      options.sleepMsBeforeRun,
+    )
+    if (Either.isLeft(parsedSleepMsBeforeRun)) {
       throw DurableExecutionError.nonRetryable(
-        `Invalid sleep ms before run for task ${taskId}: ${z.prettifyError(parsedSleepMsBeforeRun.error)}`,
+        `Invalid sleep ms before run for task ${taskId}: ${parsedSleepMsBeforeRun.left.message}`,
       )
     }
 
-    validatedOptions.sleepMsBeforeRun = parsedSleepMsBeforeRun.data
+    validatedOptions.sleepMsBeforeRun = parsedSleepMsBeforeRun.right
   }
 
   if (options?.timeoutMs != null) {
-    const parsedTimeoutMs = zTimeoutMs.safeParse(options.timeoutMs)
-    if (!parsedTimeoutMs.success) {
+    const parsedTimeoutMs = Schema.decodeUnknownEither(TimeoutMsSchema)(options.timeoutMs)
+    if (Either.isLeft(parsedTimeoutMs)) {
       throw DurableExecutionError.nonRetryable(
-        `Invalid timeout value for task ${taskId}: ${z.prettifyError(parsedTimeoutMs.error)}`,
+        `Invalid timeout value for task ${taskId}: ${parsedTimeoutMs.left.message}`,
       )
     }
 
-    validatedOptions.timeoutMs = parsedTimeoutMs.data
+    validatedOptions.timeoutMs = parsedTimeoutMs.right
   }
 
   return validatedOptions

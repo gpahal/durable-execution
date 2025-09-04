@@ -1,4 +1,9 @@
-export { DurableExecutor } from './executor'
+export {
+  DurableExecutor,
+  type AnySchema,
+  type InferSchemaInput,
+  type InferSchemaOutput,
+} from './executor'
 export {
   type Task,
   type AnyTask,
@@ -66,19 +71,13 @@ export {
   DurableExecutionCancelledError,
   type DurableExecutionErrorStorageValue,
 } from './errors'
+export { type Serializer, createSuperjsonSerializer, SerializerInternal } from './serializer'
 export {
-  type Serializer,
-  createSuperjsonSerializer,
-  SerializerInternal,
-  zSerializer,
-} from './serializer'
-export {
-  type Logger,
   type LogLevel,
+  LogLevelSchema,
+  type Logger,
   createConsoleLogger,
   LoggerInternal,
-  zLogger,
-  zLogLevel,
 } from './logger'
 export {
   type CancelSignal,

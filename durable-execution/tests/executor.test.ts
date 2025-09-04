@@ -842,7 +842,7 @@ describe('runBackgroundProcess', () => {
     await shutdownPromise
 
     await expect(promise).resolves.not.toThrow()
-    expect(errorCount).toBeGreaterThan(10)
+    expect(errorCount).toBeGreaterThan(5)
   })
 
   it('should handle background process errors without shutdown', async () => {

@@ -60,11 +60,11 @@
   },
   "peerDependencies": {
     "convex": "catalog:dev",
-    "durable-execution": "workspace:*"
+    "durable-execution": "workspace:*",
+    "effect": "catalog:dev"
   },
   "dependencies": {
-    "@gpahal/std": "catalog:prod",
-    "zod": "catalog:prod"
+    "@gpahal/std": "catalog:prod"
   },
   "devDependencies": {
     "@edge-runtime/vm": "catalog:dev",
@@ -72,6 +72,7 @@
     "convex": "catalog:dev",
     "durable-execution": "workspace:*",
     "durable-execution-storage-test-utils": "workspace:*",
+    "effect": "catalog:dev",
     "testcontainers": "catalog:dev"
   }
 }

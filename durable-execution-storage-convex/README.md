@@ -11,13 +11,13 @@ A storage implementation for [durable-execution](https://github.com/gpahal/durab
 - npm
 
 ```bash
-npm install durable-execution durable-execution-storage-convex convex
+npm install effect durable-execution durable-execution-storage-convex convex
 ```
 
 - pnpm
 
 ```bash
-pnpm add durable-execution durable-execution-storage-convex convex
+pnpm add effect durable-execution durable-execution-storage-convex convex
 ```
 
 ## Features

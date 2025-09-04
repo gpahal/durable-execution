@@ -57,7 +57,7 @@ This project provides a Convex storage implementation for the `durable-execution
 ### Key Dependencies
 
 - `@gpahal/std` - Standard utilities
-- `zod` - Schema validation
+- `effect` - Schema validation
 
 ## Testing Conventions
 

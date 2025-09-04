@@ -54,13 +54,13 @@ package using the [oRPC](https://orpc.unnoq.com/) library.
 - npm
 
 ```bash
-npm install durable-execution
+npm install effect durable-execution
 ```
 
 - pnpm
 
 ```bash
-pnpm add durable-execution
+pnpm add effect durable-execution
 ```
 
 ## Usage
@@ -83,7 +83,7 @@ transactions in parallel.
 
 ```ts
 import { DurableExecutor } from 'durable-execution'
-import { z } from 'zod'
+import { Schema } from 'effect'
 
 const executor = new DurableExecutor(storage)
 
@@ -105,7 +105,7 @@ await executor.shutdown()
 
 ```ts
 const extractFileTitle = executor
-  .inputSchema(z.object({ filePath: z.string() }))
+  .inputSchema(Schema.Struct({ filePath: Schema.String }))
   .task({
     id: 'extractFileTitle',
     timeoutMs: 30_000, // 30 seconds
@@ -138,7 +138,7 @@ const summarizeFile = executor
   })
 
 const uploadFile = executor
-  .inputSchema(z.object({ filePath: z.string(), uploadUrl: z.string() }))
+  .inputSchema(Schema.Struct({ filePath: Schema.String, uploadUrl: Schema.String }))
   .parentTask({
     id: 'uploadFile',
     timeoutMs: 60_000, // 1 minute
@@ -251,12 +251,14 @@ const taskA = executor
 
 #### Schema-Based Validation
 
-The `inputSchema` method supports any [Standard Schema](https://standardschema.dev/) compatible validation library (Zod, Yup, Joi, etc.).
+The `inputSchema` method supports any
+[Standard Schema](https://standardschema.dev/) compatible validation library (Zod, Yup, Joi, etc.)
+or [Effect Schema](https://effect.website/docs/schema/introduction/).
 
 ```ts
-import { z } from 'zod'
+import { Schema } from 'effect'
 
-const taskA = executor.inputSchema(z.object({ name: z.string() })).task({
+const taskA = executor.inputSchema(Schema.Struct({ name: Schema.String })).task({
   id: 'a',
   timeoutMs: 1000,
   run: (ctx, input) => {
@@ -1063,7 +1065,7 @@ coordinate the output of the recursive task and children tasks.
 
 ```ts
 const recursiveTask: Task<{ index: number }, { count: number }> = executor
-  .inputSchema(z.object({ index: z.number().int().min(0) }))
+  .inputSchema(Schema.Struct({ index: Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)) }))
   .parentTask({
     id: 'recursive',
     timeoutMs: 1000,
@@ -1153,7 +1155,7 @@ setTimeout(() => {
 }, 2000)
 
 const pollingTask: Task<{ prevCount: number }, { count: number; value: number }> = executor
-  .inputSchema(z.object({ prevCount: z.number().int().min(0) }))
+  .inputSchema(Schema.Struct({ prevCount: Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)) }))
   .parentTask({
     id: 'polling',
     sleepMsBeforeRun: 100,

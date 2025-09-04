@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { Schema } from 'effect'
 
 import { sleep } from '@gpahal/std/promises'
 
@@ -118,7 +118,7 @@ describe('examples', () => {
   })
 
   it('should complete task with input schema', async () => {
-    const taskA = executor.inputSchema(z.object({ name: z.string() })).task({
+    const taskA = executor.inputSchema(Schema.Struct({ name: Schema.String })).task({
       id: 'a',
       timeoutMs: 1000,
       run: (ctx, input) => {
@@ -946,7 +946,7 @@ describe('examples', () => {
 
   it('should complete recursive task', async () => {
     const recursiveTask: Task<{ index: number }, { count: number }> = executor
-      .inputSchema(z.object({ index: z.number().int().min(0) }))
+      .inputSchema(Schema.Struct({ index: Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)) }))
       .parentTask({
         id: 'recursive',
         timeoutMs: 1000,
@@ -1046,7 +1046,7 @@ describe('examples', () => {
     }, 1000)
 
     const pollingTask: Task<{ prevCount: number }, { count: number; value: number }> = executor
-      .inputSchema(z.object({ prevCount: z.number().int().min(0) }))
+      .inputSchema(Schema.Struct({ prevCount: Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)) }))
       .parentTask({
         id: 'polling',
         sleepMsBeforeRun: 100,

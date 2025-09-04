@@ -12,13 +12,13 @@ storage implementations.
 - npm
 
 ```bash
-npm install durable-execution durable-execution-storage-test-utils
+npm install effect durable-execution durable-execution-storage-test-utils
 ```
 
 - pnpm
 
 ```bash
-pnpm add durable-execution durable-execution-storage-test-utils
+pnpm add effect durable-execution durable-execution-storage-test-utils
 ```
 
 ## Usage

@@ -12,13 +12,13 @@ A storage implementation for [durable-execution](https://github.com/gpahal/durab
 - npm
 
 ```bash
-npm install durable-execution durable-execution-storage-drizzle drizzle-orm
+npm install effect durable-execution durable-execution-storage-drizzle drizzle-orm
 ```
 
 - pnpm
 
 ```bash
-pnpm add durable-execution durable-execution-storage-drizzle drizzle-orm
+pnpm add effect durable-execution durable-execution-storage-drizzle drizzle-orm
 ```
 
 ## Features

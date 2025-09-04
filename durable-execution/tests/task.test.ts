@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { Schema } from 'effect'
 
 import { sleep } from '@gpahal/std/promises'
 
@@ -165,9 +165,45 @@ describe('simpleTask', () => {
     let executionCount = 0
     const task = executor
       .inputSchema(
-        z.object({
-          name: z.string(),
+        Schema.Struct({
+          name: Schema.String,
         }),
+      )
+      .task({
+        id: 'test',
+        timeoutMs: 1000,
+        run: async (_, input) => {
+          executionCount++
+          await sleep(1)
+          return input.name
+        },
+      })
+
+    const handle = await executor.enqueueTask(task, { name: 'test' })
+
+    const finishedExecution = await handle.waitAndGetFinishedExecution({
+      pollingIntervalMs: 100,
+    })
+    expect(executionCount).toBe(1)
+    expect(finishedExecution.status).toBe('completed')
+    assert(finishedExecution.status === 'completed')
+    expect(finishedExecution.taskId).toBe('test')
+    expect(finishedExecution.executionId).toMatch(/^te_/)
+    expect(finishedExecution.output).toBe('test')
+    expect(finishedExecution.startedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
+    expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
+      finishedExecution.startedAt.getTime(),
+    )
+  })
+
+  it('should complete with input standard schema', async () => {
+    let executionCount = 0
+    const task = executor
+      .inputSchema(
+        Schema.Struct({
+          name: Schema.String,
+        }).pipe(Schema.standardSchemaV1),
       )
       .task({
         id: 'test',
@@ -201,8 +237,8 @@ describe('simpleTask', () => {
     let executionCount = 0
     const task = executor
       .inputSchema(
-        z.object({
-          name: z.string(),
+        Schema.Struct({
+          name: Schema.String,
         }),
       )
       .task({
@@ -866,7 +902,17 @@ describe('simpleTask', () => {
   it('should complete sequential tasks with input schema', async () => {
     let executionCount = 0
     const taskString = executor
-      .inputSchema(z.object({ name: z.string() }).transform((data) => data.name))
+      .inputSchema(
+        Schema.Struct({ name: Schema.String }).pipe(
+          Schema.transform(Schema.String, {
+            strict: true,
+            encode: (name) => ({
+              name,
+            }),
+            decode: (data) => data.name,
+          }),
+        ),
+      )
       .task({
         id: 'string',
         timeoutMs: 1000,
@@ -1172,7 +1218,7 @@ describe('simpleTask', () => {
 
   it('should complete polling task with input schema', async () => {
     let executionCount = 0
-    const pollTask = executor.inputSchema(z.object({ name: z.string() })).task({
+    const pollTask = executor.inputSchema(Schema.Struct({ name: Schema.String })).task({
       id: 'poll',
       timeoutMs: 1000,
       run: (_, input) => {

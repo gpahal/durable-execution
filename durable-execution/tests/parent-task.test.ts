@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { Schema } from 'effect'
 
 import { sleep } from '@gpahal/std/promises'
 
@@ -356,8 +356,8 @@ describe('parentTask', () => {
 
     const task = executor
       .inputSchema(
-        z.object({
-          name: z.string(),
+        Schema.Struct({
+          name: Schema.String,
         }),
       )
       .parentTask({
@@ -428,9 +428,9 @@ describe('parentTask', () => {
 
     const task = executor
       .inputSchema(
-        z.object({
-          name: z.string(),
-          version: z.number(),
+        Schema.Struct({
+          name: Schema.String,
+          version: Schema.Int,
         }),
       )
       .parentTask({

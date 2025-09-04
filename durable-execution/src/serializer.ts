@@ -1,29 +1,8 @@
 import superjson from 'superjson'
-import z from 'zod'
 
 import { getErrorMessage } from '@gpahal/std/errors'
 
 import { DurableExecutionError } from './errors'
-
-/**
- * A schema for a serializer.
- *
- * @category Serializer
- */
-export const zSerializer = z.object({
-  serialize: z.custom<Serializer['serialize']>((val) => {
-    if (typeof val !== 'function') {
-      return false
-    }
-    return true
-  }),
-  deserialize: z.custom<Serializer['deserialize']>((val) => {
-    if (typeof val !== 'function') {
-      return false
-    }
-    return true
-  }),
-})
 
 /**
  * Interface for serializing and deserializing task inputs and outputs.

@@ -196,7 +196,7 @@ export type TaskRetryOptions = {
  * @example
  * ```ts
  * const extractFileTitle = executor
- *   .inputSchema(z.object({ filePath: z.string() }))
+ *   .inputSchema(Schema.Struct({ filePath: Schema.String }))
  *   .task({
  *     id: 'extractFileTitle',
  *     timeoutMs: 30_000, // 30 seconds
@@ -307,7 +307,7 @@ export type SleepingTaskOptions<TOutput = unknown> = Pick<CommonTaskOptions, 'id
  * @example
  * ```ts
  * const extractFileTitle = executor
- *   .inputSchema(z.object({ filePath: z.string() }))
+ *   .inputSchema(Schema.Struct({ filePath: Schema.String }))
  *   .task({
  *     id: 'extractFileTitle',
  *     timeoutMs: 30_000, // 30 seconds
@@ -340,7 +340,7 @@ export type SleepingTaskOptions<TOutput = unknown> = Pick<CommonTaskOptions, 'id
  *   })
  *
  * const uploadFile = executor
- *   .inputSchema(z.object({ filePath: z.string(), uploadUrl: z.string() }))
+ *   .inputSchema(Schema.Struct({ filePath: Schema.String, uploadUrl: Schema.String }))
  *   .parentTask({
  *     id: 'uploadFile',
  *     timeoutMs: 60_000, // 1 minute

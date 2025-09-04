@@ -1,30 +1,22 @@
-import z from 'zod'
+import { Schema } from 'effect'
 
 /**
- * A schema for a logger.
+ * Log levels for the logger. It's used to determine which messages to log. Any message with a level
+ * more than or equal to the current level will be logged. The order of the levels is:
+ * - `debug`
+ * - `info`
+ * - `error`
  *
  * @category Logger
  */
-export const zLogger = z.object({
-  debug: z.custom<Logger['debug']>((val) => {
-    if (typeof val !== 'function') {
-      return false
-    }
-    return true
-  }),
-  info: z.custom<Logger['info']>((val) => {
-    if (typeof val !== 'function') {
-      return false
-    }
-    return true
-  }),
-  error: z.custom<Logger['error']>((val) => {
-    if (typeof val !== 'function') {
-      return false
-    }
-    return true
-  }),
-})
+export type LogLevel = 'debug' | 'info' | 'error'
+
+/**
+ * A schema for a log level.
+ *
+ * @category Logger
+ */
+export const LogLevelSchema = Schema.Literal('debug', 'info', 'error')
 
 /**
  * Logger interface for durable execution system events and diagnostics.
@@ -60,24 +52,6 @@ export type Logger = {
   info: (message: string) => void
   error: (message: string, error?: unknown) => void
 }
-
-/**
- * A schema for a log level.
- *
- * @category Logger
- */
-export const zLogLevel = z.enum(['debug', 'info', 'error'])
-
-/**
- * Log levels for the logger. It's used to determine which messages to log. Any message with a level
- * more than or equal to the current level will be logged. The order of the levels is:
- * - `debug`
- * - `info`
- * - `error`
- *
- * @category Logger
- */
-export type LogLevel = 'debug' | 'info' | 'error'
 
 const levels: Record<LogLevel, number> = {
   debug: 1,
