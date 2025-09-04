@@ -569,8 +569,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       startedAt: now,
       expiresAt: now,
       error: {
-        message: 'test_error_message',
         errorType: 'generic',
+        message: 'test_error_message',
         isRetryable: true,
         isInternal: false,
       },
@@ -603,8 +603,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.status).toBe('failed')
     assert(taskExecution.status === 'failed')
     expect(taskExecution.error).toEqual({
-      message: 'test_error_message',
       errorType: 'generic',
+      message: 'test_error_message',
       isRetryable: true,
       isInternal: false,
     })
@@ -654,8 +654,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
       startedAt: now,
       expiresAt: now,
       error: {
-        message: 'test_error_message',
         errorType: 'timed_out',
+        message: 'test_error_message',
         isRetryable: true,
         isInternal: false,
       },
@@ -688,8 +688,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.status).toBe('timed_out')
     assert(taskExecution.status === 'timed_out')
     expect(taskExecution.error).toEqual({
-      message: 'test_error_message',
       errorType: 'timed_out',
+      message: 'test_error_message',
       isRetryable: true,
       isInternal: false,
     })
@@ -925,8 +925,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
         executionId: 'finalizeExecutionId',
       },
       error: {
-        message: 'test_error_message',
         errorType: 'generic',
+        message: 'test_error_message',
         isRetryable: true,
         isInternal: false,
       },
@@ -959,8 +959,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.status).toBe('finalize_failed')
     assert(taskExecution.status === 'finalize_failed')
     expect(taskExecution.error).toEqual({
-      message: 'test_error_message',
       errorType: 'generic',
+      message: 'test_error_message',
       isRetryable: true,
       isInternal: false,
     })
@@ -1127,8 +1127,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
         executionId: 'finalizeExecutionId',
       },
       error: {
-        message: 'test_error_message',
         errorType: 'cancelled',
+        message: 'test_error_message',
         isRetryable: false,
         isInternal: false,
       },
@@ -1161,8 +1161,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     expect(taskExecution.status).toBe('cancelled')
     assert(taskExecution.status === 'cancelled')
     expect(taskExecution.error).toEqual({
-      message: 'test_error_message',
       errorType: 'cancelled',
+      message: 'test_error_message',
       isRetryable: false,
       isInternal: false,
     })

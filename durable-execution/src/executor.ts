@@ -2029,7 +2029,9 @@ export class DurableExecutor {
     if (firstDummyChildIdx === 0) {
       await markExecutionAsFailed(
         execution,
-        DurableExecutionError.any(`Sequential tasks ${execution.taskId} is in an invalid state`),
+        DurableExecutionError.nonRetryable(
+          `Sequential tasks ${execution.taskId} is in an invalid state`,
+        ),
       )
       return
     }

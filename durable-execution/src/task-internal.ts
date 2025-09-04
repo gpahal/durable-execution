@@ -83,7 +83,7 @@ function convertSleepingTaskOptionsOptionsInternal(
     validateInputFn,
     areChildrenSequential: false,
     runParent: () => {
-      throw DurableExecutionError.any('Sleeping tasks cannot be run', false, true)
+      throw new DurableExecutionError('Sleeping tasks cannot be run', { isInternal: true })
     },
     finalize: undefined,
   }

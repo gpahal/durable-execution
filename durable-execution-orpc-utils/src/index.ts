@@ -543,7 +543,7 @@ export function convertProcedureClientToTask<
           isInternal = true
         }
 
-        throw DurableExecutionError.any(orpcError.message, isRetryable, isInternal)
+        throw new DurableExecutionError(orpcError.message, { isRetryable, isInternal })
       } else if (isSuccess) {
         // eslint-disable-next-line @typescript-eslint/no-unsafe-return
         return data as TProcedure extends ProcedureClient<

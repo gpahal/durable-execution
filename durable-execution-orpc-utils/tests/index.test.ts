@@ -444,7 +444,7 @@ describe('server', () => {
     const client = createRouterClient(router, { context: {} })
 
     vi.spyOn(executor, 'enqueueTask').mockRejectedValueOnce(
-      DurableExecutionError.retryable('Database connection failed', true),
+      DurableExecutionError.retryable('Database connection failed', { isInternal: true }),
     )
 
     await expect(client.enqueueTask({ taskId: 'add1', input: { n: 0 } })).rejects.toThrow(

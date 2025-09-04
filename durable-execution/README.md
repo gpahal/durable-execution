@@ -515,8 +515,8 @@ const parentTask = executor.parentTask({
 // Finished execution: {
 //   status: 'finalize_failed',
 //   error: {
-//     message: 'Children failed',
 //     errorType: 'generic',
+//     message: 'Children failed',
 //     isRetryable: false,
 //   },
 //   ... other fields
