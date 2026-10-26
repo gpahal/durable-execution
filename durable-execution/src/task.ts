@@ -39,9 +39,9 @@ export type TaskType = 'task' | 'sleepingTask' | 'parentTask' | 'sequentialTasks
  * @category Task
  */
 export type Task<
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- a phantom type parameter that carries the input type of the task
   TInput,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- a phantom type parameter that carries the output type of the task
   TOutput,
   TTaskType extends TaskType = TaskType,
 > = {
@@ -255,7 +255,7 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
   run: (
     ctx: TaskRunContext,
     input: TInput,
-  ) => TOutput | Promise<TOutput> | Effect.Effect<TOutput, unknown, never>
+  ) => TOutput | Promise<TOutput> | Effect.Effect<TOutput, unknown>
 }
 
 /**
@@ -303,7 +303,7 @@ export type TaskOptions<TInput = undefined, TOutput = unknown> = CommonTaskOptio
  *
  * @category Task
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- TOutput is a phantom type parameter that carries the output type of the sleeping task
 export type SleepingTaskOptions<TOutput = unknown> = Pick<CommonTaskOptions, 'id' | 'timeoutMs'>
 
 /**
@@ -429,10 +429,6 @@ export type ParentTaskOptions<
     ctx: TaskRunContext,
     input: TInput,
   ) =>
-    | {
-        output: TRunOutput
-        children?: ReadonlyArray<ChildTask>
-      }
     | Promise<{
         output: TRunOutput
         children?: ReadonlyArray<ChildTask>
@@ -442,9 +438,12 @@ export type ParentTaskOptions<
           output: TRunOutput
           children?: ReadonlyArray<ChildTask>
         },
-        unknown,
-        never
+        unknown
       >
+    | {
+        output: TRunOutput
+        children?: ReadonlyArray<ChildTask>
+      }
   /**
    * Function or task to run after the runParent function and children tasks finish. This is useful
    * for combining the output of the run function and children tasks. It is called even if the
@@ -456,7 +455,7 @@ export type ParentTaskOptions<
   finalize?:
     | ((
         input: DefaultParentTaskOutput<TRunOutput>,
-      ) => TOutput | Promise<TOutput> | Effect.Effect<TOutput, unknown, never>)
+      ) => TOutput | Promise<TOutput> | Effect.Effect<TOutput, unknown>)
     | FinalizeTaskOptions<TRunOutput, TOutput, TFinalizeTaskRunOutput>
 }
 
@@ -888,12 +887,12 @@ export type ChildTask<TTask extends AnyTask = AnyTask> =
     ? {
         task: TTask
         input?: InferTaskInput<TTask>
-        options?: TaskEnqueueOptions<AnyTask>
+        options?: TaskEnqueueOptions
       }
     : {
         task: TTask
         input: InferTaskInput<TTask>
-        options?: TaskEnqueueOptions<AnyTask>
+        options?: TaskEnqueueOptions
       }
 
 /**
@@ -910,6 +909,7 @@ export function childTask<TTask extends AnyTask = AnyTask>(
     ? [task: TTask, input?: InferTaskInput<TTask>, options?: TaskEnqueueOptions<TTask>]
     : [task: TTask, input: InferTaskInput<TTask>, options?: TaskEnqueueOptions<TTask>]
 ): ChildTask<TTask> {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- TypeScript can't relate the conditional rest tuple to the conditional ChildTask type, which have the same condition
   return {
     task: rest[0],
     input: rest[1],
@@ -927,8 +927,7 @@ export function childTask<TTask extends AnyTask = AnyTask>(
  * @category Task
  */
 export type FinishedChildTaskExecution<TOutput = unknown> =
-  | CompletedChildTaskExecution<TOutput>
-  | ErroredChildTaskExecution
+  CompletedChildTaskExecution<TOutput> | ErroredChildTaskExecution
 
 /**
  * A completed child task execution.

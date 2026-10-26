@@ -9,6 +9,8 @@ A storage implementation for [durable-execution](https://github.com/gpahal/durab
 
 ## Installation
 
+Requires Node.js 24.22 or later and `effect` 4.
+
 - npm
 
 ```bash
@@ -42,7 +44,11 @@ import {
 } from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
-const db = drizzle(process.env.DATABASE_URL!)
+const databaseUrl = process.env.DATABASE_URL
+if (!databaseUrl) {
+  throw new Error('DATABASE_URL is not set')
+}
+const db = drizzle(databaseUrl)
 
 // Create the schema - you can customize the table name by passing a string to the function
 const taskExecutionsTable = createPgTaskExecutionsTable()
@@ -90,7 +96,11 @@ import {
 } from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
-const db = drizzle(process.env.DATABASE_URL!)
+const databaseUrl = process.env.DATABASE_URL
+if (!databaseUrl) {
+  throw new Error('DATABASE_URL is not set')
+}
+const db = drizzle(databaseUrl)
 
 // Create the schema - you can customize the table name by passing a string to the function
 const taskExecutionsTable = createMySqlTaskExecutionsTable()
@@ -142,7 +152,11 @@ import {
 } from 'durable-execution-storage-drizzle'
 
 // Create drizzle instance
-const db = drizzle(process.env.DATABASE_URL!)
+const databaseUrl = process.env.DATABASE_URL
+if (!databaseUrl) {
+  throw new Error('DATABASE_URL is not set')
+}
+const db = drizzle(databaseUrl)
 
 // Create the schema - you can customize the table name by passing a string to the function
 const taskExecutionsTable = createSQLiteTaskExecutionsTable()

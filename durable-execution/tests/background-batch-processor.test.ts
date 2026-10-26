@@ -1,4 +1,4 @@
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect'
 
 import { makeBackgroundBatchProcessor } from '../src/background-batch-processor'
 import { DurableExecutionError } from '../src/errors'
@@ -51,10 +51,10 @@ describe('backgroundBatchProcessor', () => {
 
             yield* processor.start
 
-            const result = yield* processor.processRequest({ input: 5 }).pipe(Effect.either)
-            expect(Either.isLeft(result)).toBe(true)
-            assert(Either.isLeft(result))
-            expect(result.left.message).toContain('Invalid return type')
+            const result = yield* processor.processRequest({ input: 5 }).pipe(Effect.result)
+            expect(Result.isFailure(result)).toBe(true)
+            assert(Result.isFailure(result))
+            expect(result.failure.message).toContain('Invalid return type')
 
             yield* processor.shutdown
           }),
@@ -136,11 +136,10 @@ describe('backgroundBatchProcessor', () => {
 
             yield* processor.start
 
-            const result = yield* processor.processRequest({ input: 5 }).pipe(Effect.either)
-            expect(result._tag).toBe('Left')
-            if (result._tag === 'Left') {
-              expect(result.left.message).toContain('Invalid number of results')
-            }
+            const result = yield* processor.processRequest({ input: 5 }).pipe(Effect.result)
+            expect(result._tag).toBe('Failure')
+            assert(result._tag === 'Failure')
+            expect(result.failure.message).toContain('Invalid number of results')
 
             yield* processor.shutdown
           }),
@@ -184,11 +183,10 @@ describe('backgroundBatchProcessor', () => {
               processBatchRequests: (_inputs: ReadonlyArray<number>) => Effect.succeed([1, 2, 3]),
             })
 
-            const result = yield* processor.processRequest({ input: 7 }).pipe(Effect.either)
-            expect(result._tag).toBe('Left')
-            if (result._tag === 'Left') {
-              expect(result.left.message).toContain('Invalid number of results')
-            }
+            const result = yield* processor.processRequest({ input: 7 }).pipe(Effect.result)
+            expect(result._tag).toBe('Failure')
+            assert(result._tag === 'Failure')
+            expect(result.failure.message).toContain('Invalid number of results')
           }),
         ),
       )
@@ -208,11 +206,10 @@ describe('backgroundBatchProcessor', () => {
                 Effect.succeed('hello' as unknown as ReadonlyArray<string>),
             })
 
-            const result = yield* processor.processRequest({ input: 7 }).pipe(Effect.either)
-            expect(result._tag).toBe('Left')
-            if (result._tag === 'Left') {
-              expect(result.left.message).toContain('Invalid return type')
-            }
+            const result = yield* processor.processRequest({ input: 7 }).pipe(Effect.result)
+            expect(result._tag).toBe('Failure')
+            assert(result._tag === 'Failure')
+            expect(result.failure.message).toContain('Invalid return type')
           }),
         ),
       )
@@ -256,11 +253,10 @@ describe('backgroundBatchProcessor', () => {
 
             yield* processor.start
 
-            const result = yield* processor.processRequest({ input: 5 }).pipe(Effect.either)
-            expect(result._tag).toBe('Left')
-            if (result._tag === 'Left') {
-              expect(result.left.message).toContain('Test error')
-            }
+            const result = yield* processor.processRequest({ input: 5 }).pipe(Effect.result)
+            expect(result._tag).toBe('Failure')
+            assert(result._tag === 'Failure')
+            expect(result.failure.message).toContain('Test error')
 
             yield* processor.shutdown
           }),
@@ -284,12 +280,11 @@ describe('backgroundBatchProcessor', () => {
 
             yield* processor.start
 
-            const result = yield* processor.processRequest({ input: 5 }).pipe(Effect.either)
-            expect(result._tag).toBe('Left')
-            if (result._tag === 'Left') {
-              expect(result.left).toBeInstanceOf(DurableExecutionError)
-              expect(result.left.message).toContain('Random error')
-            }
+            const result = yield* processor.processRequest({ input: 5 }).pipe(Effect.result)
+            expect(result._tag).toBe('Failure')
+            assert(result._tag === 'Failure')
+            expect(result.failure).toBeInstanceOf(DurableExecutionError)
+            expect(result.failure.message).toContain('Random error')
 
             yield* processor.shutdown
           }),

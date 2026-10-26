@@ -62,6 +62,7 @@ export {
   type TaskExecutionStorageUpdate,
   applyTaskExecutionStorageUpdate,
   TaskExecutionsStorageWithMutex,
+  TaskExecutionsStorageService,
   type TaskExecutionsStorageWithoutBatching,
   TaskExecutionsStorageWithBatching,
 } from './storage'

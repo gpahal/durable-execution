@@ -8,6 +8,7 @@ import {
   DurableExecutor,
   InMemoryTaskExecutionsStorage,
 } from '../src'
+import type { TaskExecutionStorageValue } from '../src'
 
 describe('parentTask', () => {
   let storage: InMemoryTaskExecutionsStorage
@@ -73,16 +74,17 @@ describe('parentTask', () => {
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.output).toBe('test_output')
     expect(finishedExecution.output.children).toHaveLength(2)
-    expect(finishedExecution.output.children[0]!.taskId).toBe('child1')
-    expect(finishedExecution.output.children[0]!.executionId).toMatch(/^te_/)
-    expect(finishedExecution.output.children[0]!.status).toBe('completed')
-    assert(finishedExecution.output.children[0]!.status === 'completed')
-    expect(finishedExecution.output.children[0]!.output).toBe('child1_output')
-    expect(finishedExecution.output.children[1]!.taskId).toBe('child2')
-    expect(finishedExecution.output.children[1]!.executionId).toMatch(/^te_/)
-    expect(finishedExecution.output.children[1]!.status).toBe('completed')
-    assert(finishedExecution.output.children[1]!.status === 'completed')
-    expect(finishedExecution.output.children[1]!.output).toBe('child2_output')
+    const [finishedChild1, finishedChild2] = finishedExecution.output.children
+    expect(finishedChild1!.taskId).toBe('child1')
+    expect(finishedChild1!.executionId).toMatch(/^te_/)
+    expect(finishedChild1!.status).toBe('completed')
+    assert(finishedChild1!.status === 'completed')
+    expect(finishedChild1!.output).toBe('child1_output')
+    expect(finishedChild2!.taskId).toBe('child2')
+    expect(finishedChild2!.executionId).toMatch(/^te_/)
+    expect(finishedChild2!.status).toBe('completed')
+    assert(finishedChild2!.status === 'completed')
+    expect(finishedChild2!.output).toBe('child2_output')
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.waitingForChildrenStartedAt).toBeInstanceOf(Date)
     expect(finishedExecution.waitingForFinalizeStartedAt).toBeUndefined()
@@ -388,16 +390,17 @@ describe('parentTask', () => {
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.output).toBe('test_output')
     expect(finishedExecution.output.children).toHaveLength(2)
-    expect(finishedExecution.output.children[0]!.taskId).toBe('child1')
-    expect(finishedExecution.output.children[0]!.executionId).toMatch(/^te_/)
-    expect(finishedExecution.output.children[0]!.status).toBe('completed')
-    assert(finishedExecution.output.children[0]!.status === 'completed')
-    expect(finishedExecution.output.children[0]!.output).toBe('child1_output')
-    expect(finishedExecution.output.children[1]!.taskId).toBe('child2')
-    expect(finishedExecution.output.children[1]!.executionId).toMatch(/^te_/)
-    expect(finishedExecution.output.children[1]!.status).toBe('completed')
-    assert(finishedExecution.output.children[1]!.status === 'completed')
-    expect(finishedExecution.output.children[1]!.output).toBe('child2_output')
+    const [finishedChild1, finishedChild2] = finishedExecution.output.children
+    expect(finishedChild1!.taskId).toBe('child1')
+    expect(finishedChild1!.executionId).toMatch(/^te_/)
+    expect(finishedChild1!.status).toBe('completed')
+    assert(finishedChild1!.status === 'completed')
+    expect(finishedChild1!.output).toBe('child1_output')
+    expect(finishedChild2!.taskId).toBe('child2')
+    expect(finishedChild2!.executionId).toMatch(/^te_/)
+    expect(finishedChild2!.status).toBe('completed')
+    assert(finishedChild2!.status === 'completed')
+    expect(finishedChild2!.output).toBe('child2_output')
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -458,9 +461,9 @@ describe('parentTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain('Invalid input to task test')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toContain('Invalid input to task test')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -523,9 +526,9 @@ describe('parentTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain('finalizeTask error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toContain('finalizeTask error')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -588,9 +591,9 @@ describe('parentTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain('finalizeTask error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toContain('finalizeTask error')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -643,11 +646,9 @@ describe('parentTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain(
-      'tried to spawn more than max children tasks',
-    )
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toContain('tried to spawn more than max children tasks')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -687,9 +688,9 @@ describe('parentTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain('finalizeTask error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toContain('finalizeTask error')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -733,9 +734,9 @@ describe('parentTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain('finalizeTask error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
+    expect(finishedExecution.error.message).toContain('finalizeTask error')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -793,9 +794,9 @@ describe('parentTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain('finalizeTask error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toContain('finalizeTask error')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -857,9 +858,9 @@ describe('parentTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain('finalizeTask error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
+    expect(finishedExecution.error.message).toContain('finalizeTask error')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -962,14 +963,14 @@ describe('parentTask', () => {
   })
 
   it('should handle parent task cancelled while children are running', async () => {
-    let childStarted = false
+    const childState = { started: false }
     let childCompleted = false
 
     const slowChildTask = executor.task({
       id: 'slow_child',
       timeoutMs: 10_000,
       run: async (ctx) => {
-        childStarted = true
+        childState.started = true
         for (let i = 0; i < 100; i++) {
           if (ctx.abortSignal.aborted) {
             return 'cancelled_by_parent'
@@ -994,7 +995,7 @@ describe('parentTask', () => {
 
     const handle = await executor.enqueueTask(parentTask)
 
-    while (!childStarted) {
+    while (!childState.started) {
       await sleep(50)
     }
 
@@ -1065,7 +1066,7 @@ describe('parentTask', () => {
     expect(grandchildExecuted).toBe(true)
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
-    expect(finishedExecution.error?.message).toContain('Child parent failed')
+    expect(finishedExecution.error.message).toContain('Child parent failed')
   })
 
   it('should handle parent task with children finalization timeout', async () => {
@@ -1105,7 +1106,7 @@ describe('parentTask', () => {
 
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
-    expect(finishedExecution.error?.message).toContain('Finalize task failed')
+    expect(finishedExecution.error.message).toContain('Finalize task failed')
   })
 
   it('should complete child sleeping task', async () => {
@@ -1134,7 +1135,7 @@ describe('parentTask', () => {
     })
 
     const handle = await executor.enqueueTask(parentTask)
-    while (true) {
+    for (;;) {
       const execution = await handle.getExecution()
       if (execution.status === 'waiting_for_children') {
         break
@@ -1185,7 +1186,7 @@ describe('parentTask', () => {
     })
 
     const handle = await executor.enqueueTask(parentTask)
-    while (true) {
+    for (;;) {
       const execution = await handle.getExecution()
       if (execution.status === 'waiting_for_children') {
         break
@@ -1200,14 +1201,14 @@ describe('parentTask', () => {
     })
     expect(childExecution.status).toBe('failed')
     assert(childExecution.status === 'failed')
-    expect(childExecution.error?.message).toBe('test_error')
+    expect(childExecution.error.message).toBe('test_error')
 
     const finishedExecution = await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
     })
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
-    expect(finishedExecution.error?.message).toBe('Finalize task failed')
+    expect(finishedExecution.error.message).toBe('Finalize task failed')
   })
 
   it('should handle parent task closure', async () => {
@@ -1239,32 +1240,34 @@ describe('parentTask', () => {
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.output.output).toBe('parent_output')
 
-    while (true) {
+    let closedExecutionStorageValue: TaskExecutionStorageValue
+    for (;;) {
       const executionStorageValues = await storage.getManyById([
         { executionId: handle.executionId, filters: {} },
       ])
       expect(executionStorageValues).toBeDefined()
-      assert(executionStorageValues)
       expect(executionStorageValues.length).toBe(1)
 
-      const executionStorageValue = executionStorageValues[0]!
+      const executionStorageValue = executionStorageValues[0]
       expect(executionStorageValue).toBeDefined()
       assert(executionStorageValue)
       expect(executionStorageValue.status).toBe('completed')
       expect(executionStorageValue.onChildrenFinishedProcessingStatus).toBe('processed')
       expect(executionStorageValue.onChildrenFinishedProcessingFinishedAt).toBeDefined()
-      assert(executionStorageValue.onChildrenFinishedProcessingFinishedAt)
+      assert(executionStorageValue.onChildrenFinishedProcessingFinishedAt !== undefined)
       expect(executionStorageValue.onChildrenFinishedProcessingFinishedAt).toBeGreaterThan(0)
 
       if (executionStorageValue.closeStatus === 'closed') {
-        expect(executionStorageValue.closedAt).toBeDefined()
-        expect(executionStorageValue.closedAt).toBeGreaterThan(
-          executionStorageValue.onChildrenFinishedProcessingFinishedAt,
-        )
+        closedExecutionStorageValue = executionStorageValue
         break
       }
 
       await sleep(100)
     }
+
+    expect(closedExecutionStorageValue.closedAt).toBeDefined()
+    expect(closedExecutionStorageValue.closedAt).toBeGreaterThan(
+      closedExecutionStorageValue.onChildrenFinishedProcessingFinishedAt!,
+    )
   })
 })

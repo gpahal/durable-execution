@@ -1,3 +1,4 @@
+/* eslint-disable no-console -- the crash test spawns this script as a child process, which prints its progress */
 import { sleep } from '@gpahal/std/promises'
 
 import { DurableExecutor, InMemoryTaskExecutionsStorage } from '../src'
@@ -12,7 +13,7 @@ async function main() {
   const storage = new InMemoryTaskExecutionsStorage()
   const onCrash = () => {
     void storage.saveToFile(filename).then(() => {
-      // eslint-disable-next-line unicorn/no-process-exit
+      // eslint-disable-next-line unicorn/no-process-exit -- the script simulates a crashing process
       process.exit(1)
     })
   }
@@ -38,7 +39,7 @@ async function main() {
     console.log('Task enqueued', handle.executionId)
 
     await sleep(1000)
-    // eslint-disable-next-line unicorn/no-process-exit
+    // eslint-disable-next-line unicorn/no-process-exit -- the script simulates a crashing process
     process.exit(1)
   } finally {
     await executor.shutdown()

@@ -1,11 +1,10 @@
 import type { TaskExecutionStatus } from '../src'
-import {
-  createTaskExecutionStorageValue,
-  TaskExecutionsStorageWithBatching,
-  type TaskExecutionsStorageWithoutBatching,
-  type TaskExecutionStorageGetByIdFilters,
-  type TaskExecutionStorageUpdate,
-  type TaskExecutionStorageValue,
+import { createTaskExecutionStorageValue, TaskExecutionsStorageWithBatching } from '../src/storage'
+import type {
+  TaskExecutionsStorageWithoutBatching,
+  TaskExecutionStorageGetByIdFilters,
+  TaskExecutionStorageUpdate,
+  TaskExecutionStorageValue,
 } from '../src/storage'
 
 function createMockStorageValue(
@@ -32,7 +31,7 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
     insertMany: vi.fn((executions: ReadonlyArray<TaskExecutionStorageValue>) => {
       for (const execution of executions) {
         storage.set(execution.executionId, execution)
-        if (execution.sleepingTaskUniqueId) {
+        if (execution.sleepingTaskUniqueId != null && execution.sleepingTaskUniqueId !== '') {
           sleepingTaskMap.set(execution.sleepingTaskUniqueId, execution)
         }
       }
@@ -189,19 +188,24 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
         limit: number
       }): Array<TaskExecutionStorageValue> => {
         const updated: Array<TaskExecutionStorageValue> = []
-        const sortedExecutions = [...storage.values()].sort((a, b) => a.startAt - b.startAt)
+        const sortedExecutions = storage
+          .values()
+          .toArray()
+          .toSorted((a, b) => a.startAt - b.startAt)
         for (const execution of sortedExecutions) {
-          if (
+          if (!(
             execution.status === status &&
             execution.startAt < startAtLessThan &&
             updated.length < limit
-          ) {
-            Object.assign(execution, update)
-            if (execution.timeoutMs) {
-              execution.expiresAt = updateExpiresAtWithStartedAt + execution.timeoutMs
-            }
-            updated.push(execution)
+          )) {
+            continue
           }
+
+          Object.assign(execution, update)
+          if (execution.timeoutMs !== 0) {
+            execution.expiresAt = updateExpiresAtWithStartedAt + execution.timeoutMs
+          }
+          updated.push(execution)
         }
         return updated
       },
@@ -221,15 +225,17 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
       }): Array<TaskExecutionStorageValue> => {
         const updated: Array<TaskExecutionStorageValue> = []
         for (const execution of storage.values()) {
-          if (
+          if (!(
             execution.status === status &&
             execution.onChildrenFinishedProcessingStatus === onChildrenFinishedProcessingStatus &&
             execution.activeChildrenCount === 0 &&
             updated.length < limit
-          ) {
-            Object.assign(execution, update)
-            updated.push(execution)
+          )) {
+            continue
           }
+
+          Object.assign(execution, update)
+          updated.push(execution)
         }
         return updated
       },
@@ -246,12 +252,17 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
         limit: number
       }): Array<TaskExecutionStorageValue> => {
         const updated: Array<TaskExecutionStorageValue> = []
-        const sortedExecutions = [...storage.values()].sort((a, b) => a.updatedAt - b.updatedAt)
+        const sortedExecutions = storage
+          .values()
+          .toArray()
+          .toSorted((a, b) => a.updatedAt - b.updatedAt)
         for (const execution of sortedExecutions) {
-          if (execution.closeStatus === closeStatus && updated.length < limit) {
-            Object.assign(execution, update)
-            updated.push(execution)
+          if (!(execution.closeStatus === closeStatus && updated.length < limit)) {
+            continue
           }
+
+          Object.assign(execution, update)
+          updated.push(execution)
         }
         return updated
       },
@@ -272,20 +283,23 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
         limit: number
       }): number => {
         let count = 0
-        const sortedExecutions = [...storage.values()].sort(
-          (a, b) => (a.expiresAt ?? 0) - (b.expiresAt ?? 0),
-        )
+        const sortedExecutions = storage
+          .values()
+          .toArray()
+          .toSorted((a, b) => (a.expiresAt ?? 0) - (b.expiresAt ?? 0))
         for (const execution of sortedExecutions) {
-          if (
+          if (!(
             execution.status === status &&
             execution.isSleepingTask === isSleepingTask &&
             execution.expiresAt !== undefined &&
             execution.expiresAt < expiresAtLessThan &&
             count < limit
-          ) {
-            Object.assign(execution, update)
-            count++
+          )) {
+            continue
           }
+
+          Object.assign(execution, update)
+          count++
         }
         return count
       },
@@ -303,15 +317,17 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
       }): number => {
         let count = 0
         for (const execution of storage.values()) {
-          if (
+          if (!(
             execution.onChildrenFinishedProcessingExpiresAt !== undefined &&
             execution.onChildrenFinishedProcessingExpiresAt <
               onChildrenFinishedProcessingExpiresAtLessThan &&
             count < limit
-          ) {
-            Object.assign(execution, update)
-            count++
+          )) {
+            continue
           }
+
+          Object.assign(execution, update)
+          count++
         }
         return count
       },
@@ -329,14 +345,16 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
       }): number => {
         let count = 0
         for (const execution of storage.values()) {
-          if (
+          if (!(
             execution.closeExpiresAt !== undefined &&
             execution.closeExpiresAt < closeExpiresAtLessThan &&
             count < limit
-          ) {
-            Object.assign(execution, update)
-            count++
+          )) {
+            continue
           }
+
+          Object.assign(execution, update)
+          count++
         }
         return count
       },
@@ -356,14 +374,16 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
       }): Array<TaskExecutionStorageValue> => {
         const updated: Array<TaskExecutionStorageValue> = []
         for (const execution of storage.values()) {
-          if (
+          if (!(
             execution.executorId === executorId &&
             execution.needsPromiseCancellation === needsPromiseCancellation &&
             updated.length < limit
-          ) {
-            Object.assign(execution, update)
-            updated.push(execution)
+          )) {
+            continue
           }
+
+          Object.assign(execution, update)
+          updated.push(execution)
         }
         return updated
       },
@@ -382,23 +402,28 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
         limit: number
       }): number => {
         let count = 0
-        const sortedExecutions = [...storage.values()].sort((a, b) => a.updatedAt - b.updatedAt)
+        const sortedExecutions = storage
+          .values()
+          .toArray()
+          .toSorted((a, b) => a.updatedAt - b.updatedAt)
         for (const execution of sortedExecutions) {
-          if (
+          if (!(
             execution.isFinished === isFinished &&
             execution.closeStatus === closeStatus &&
             count < limit
-          ) {
-            Object.assign(execution, update)
-            if (execution.parent) {
-              const parent = storage.get(execution.parent.executionId)
-              if (parent && parent.activeChildrenCount > 0) {
-                parent.activeChildrenCount--
-              }
-            }
-
-            count++
+          )) {
+            continue
           }
+
+          Object.assign(execution, update)
+          if (execution.parent) {
+            const parent = storage.get(execution.parent.executionId)
+            if (parent && parent.activeChildrenCount > 0) {
+              parent.activeChildrenCount--
+            }
+          }
+
+          count++
         }
         return count
       },
@@ -406,7 +431,7 @@ function createMockStorageWithoutBatching(): TaskExecutionsStorageWithoutBatchin
 
     deleteById: vi.fn(({ executionId }: { executionId: string }): void => {
       const execution = storage.get(executionId)
-      if (execution?.sleepingTaskUniqueId) {
+      if (execution?.sleepingTaskUniqueId != null && execution.sleepingTaskUniqueId !== '') {
         sleepingTaskMap.delete(execution.sleepingTaskUniqueId)
       }
       storage.delete(executionId)
@@ -607,7 +632,7 @@ describe('TaskExecutionsStorageWithBatching', () => {
           executionId: 'exec-1',
           filters: { status: 'ready' as TaskExecutionStatus },
           update: {
-            status: 'running' as TaskExecutionStatus,
+            status: 'running',
             updatedAt: now,
           } as TaskExecutionStorageUpdate,
         },
@@ -615,7 +640,7 @@ describe('TaskExecutionsStorageWithBatching', () => {
           executionId: 'exec-2',
           filters: { status: 'completed' as TaskExecutionStatus },
           update: {
-            status: 'failed' as TaskExecutionStatus,
+            status: 'failed',
             updatedAt: now,
           } as TaskExecutionStorageUpdate,
         },
@@ -678,7 +703,7 @@ describe('TaskExecutionsStorageWithBatching', () => {
       expect(baseStorage.updateByIdAndInsertChildrenIfUpdated).toHaveBeenCalledWith({
         executionId: 'parent-1',
         filters: {},
-        update: { status: 'waiting_for_children', updatedAt: now } as TaskExecutionStorageUpdate,
+        update: { status: 'waiting_for_children', updatedAt: now },
         childrenTaskExecutionsToInsertIfAnyUpdated: children,
       })
       expect(baseStorage.updateByIdAndInsertChildrenIfUpdated).toHaveBeenCalledTimes(1)

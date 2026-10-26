@@ -19,13 +19,13 @@ describe('backpressure', () => {
     })
 
     afterEach(async () => {
-      await executor?.shutdown()
+      await executor.shutdown()
     })
 
     it('should respect maxConcurrentTaskExecutions limit', async () => {
       let runningCount = 0
       let maxObservedRunning = 0
-      const completedPromises: Array<(value: void) => void> = []
+      const completedPromises: Array<() => void> = []
 
       const longRunningTask = executor.task({
         id: 'long_running_task',
@@ -72,7 +72,7 @@ describe('backpressure', () => {
       }
 
       await Promise.all(
-        handles.map((handle) =>
+        handles.map(async (handle) =>
           handle.waitAndGetFinishedExecution({
             pollingIntervalMs: 100,
           }),
@@ -95,7 +95,7 @@ describe('backpressure', () => {
       })
 
       const handles = await Promise.all(
-        Array.from({ length: 10 }, () => executor.enqueueTask(task)),
+        Array.from({ length: 10 }, async () => executor.enqueueTask(task)),
       )
 
       await sleep(250)
@@ -104,7 +104,7 @@ describe('backpressure', () => {
       expect(runningTaskExecutionsCount).toBeLessThanOrEqual(3)
 
       await Promise.all(
-        handles.map((handle) =>
+        handles.map(async (handle) =>
           handle.waitAndGetFinishedExecution({
             pollingIntervalMs: 100,
           }),
@@ -130,7 +130,7 @@ describe('backpressure', () => {
     })
 
     afterEach(async () => {
-      await executor?.shutdown()
+      await executor.shutdown()
     })
 
     it('should apply backpressure when at concurrency limit', async () => {
@@ -174,7 +174,7 @@ describe('backpressure', () => {
       }
 
       await Promise.all(
-        handles.map((handle) =>
+        handles.map(async (handle) =>
           handle.waitAndGetFinishedExecution({
             pollingIntervalMs: 100,
           }),
@@ -202,7 +202,7 @@ describe('backpressure', () => {
     })
 
     afterEach(async () => {
-      await executor?.shutdown()
+      await executor.shutdown()
     })
 
     it('should adapt batch size based on available capacity', async () => {
@@ -272,7 +272,7 @@ describe('backpressure', () => {
     })
 
     afterEach(async () => {
-      await executor?.shutdown()
+      await executor.shutdown()
     })
 
     it('should update current executions in stats', async () => {

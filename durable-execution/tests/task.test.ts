@@ -1,4 +1,4 @@
-import { Schema } from 'effect'
+import { Schema, SchemaTransformation } from 'effect'
 
 import { sleep } from '@gpahal/std/promises'
 
@@ -7,8 +7,8 @@ import {
   DurableExecutionError,
   DurableExecutor,
   InMemoryTaskExecutionsStorage,
-  type TaskRunContext,
 } from '../src'
+import type { TaskExecutionStorageValue, TaskRunContext } from '../src'
 
 describe('simpleTask', () => {
   let storage: InMemoryTaskExecutionsStorage
@@ -187,9 +187,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Invalid input to task test: Invalid input')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toBe('Invalid input to task test: Invalid input')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -239,7 +239,7 @@ describe('simpleTask', () => {
       .inputSchema(
         Schema.Struct({
           name: Schema.String,
-        }).pipe(Schema.standardSchemaV1),
+        }).pipe(Schema.toStandardSchemaV1),
       )
       .task({
         id: 'test',
@@ -299,9 +299,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain('Invalid input to task test')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toContain('Invalid input to task test')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -315,7 +315,7 @@ describe('simpleTask', () => {
       .inputSchema(
         Schema.Struct({
           name: Schema.String,
-        }).pipe(Schema.standardSchemaV1),
+        }).pipe(Schema.toStandardSchemaV1),
       )
       .task({
         id: 'test',
@@ -339,9 +339,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain('Invalid input to task test')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toContain('Invalid input to task test')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -371,9 +371,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
+    expect(finishedExecution.error.message).toBe('Test error')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -440,9 +440,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Test error 1')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
+    expect(finishedExecution.error.message).toBe('Test error 1')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -475,9 +475,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toBe('Test error')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -507,9 +507,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task execution timed out')
-    expect(finishedExecution.error?.errorType).toBe('timed_out')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
+    expect(finishedExecution.error.message).toBe('Task execution timed out')
+    expect(finishedExecution.error.errorType).toBe('timed_out')
+    expect(finishedExecution.error.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -585,9 +585,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
-    expect(finishedExecution.error?.errorType).toBe('cancelled')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toBe('Task execution cancelled')
+    expect(finishedExecution.error.errorType).toBe('cancelled')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
   })
 
@@ -616,9 +616,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
-    expect(finishedExecution.error?.errorType).toBe('cancelled')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toBe('Task execution cancelled')
+    expect(finishedExecution.error.errorType).toBe('cancelled')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -653,9 +653,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
-    expect(finishedExecution.error?.errorType).toBe('cancelled')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toBe('Task execution cancelled')
+    expect(finishedExecution.error.errorType).toBe('cancelled')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
   })
 
@@ -683,9 +683,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
-    expect(finishedExecution.error?.errorType).toBe('cancelled')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toBe('Task execution cancelled')
+    expect(finishedExecution.error.errorType).toBe('cancelled')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -721,9 +721,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
+    expect(finishedExecution.error.message).toBe('Test error')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -765,9 +765,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
+    expect(finishedExecution.error.message).toBe('Test error')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.startedAt.getTime()).toBeGreaterThanOrEqual(
       finishedExecution.createdAt.getTime() + 250,
@@ -825,9 +825,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Test error')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(true)
+    expect(finishedExecution.error.message).toBe('Test error')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(true)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -898,9 +898,9 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('test')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
-    expect(finishedExecution.error?.errorType).toBe('cancelled')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toBe('Task execution cancelled')
+    expect(finishedExecution.error.errorType).toBe('cancelled')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -934,7 +934,7 @@ describe('simpleTask', () => {
       timeoutMs: 1000,
       run: (ctx, input: number) => {
         executionCount++
-        return input > 10 ? true : false
+        return input > 10
       },
     })
 
@@ -980,13 +980,15 @@ describe('simpleTask', () => {
     const taskString = executor
       .inputSchema(
         Schema.Struct({ name: Schema.String }).pipe(
-          Schema.transform(Schema.String, {
-            strict: true,
-            encode: (name) => ({
-              name,
+          Schema.decodeTo(
+            Schema.String,
+            SchemaTransformation.transform({
+              encode: (name) => ({
+                name,
+              }),
+              decode: (data) => data.name,
             }),
-            decode: (data) => data.name,
-          }),
+          ),
         ),
       )
       .task({
@@ -1010,7 +1012,7 @@ describe('simpleTask', () => {
       timeoutMs: 1000,
       run: (ctx, input: number) => {
         executionCount++
-        return input > 10 ? true : false
+        return input > 10
       },
     })
 
@@ -1067,9 +1069,9 @@ describe('simpleTask', () => {
       },
     })
 
-    await expect(async () => {
-      await executor.enqueueTask(testTask, tooLargeString)
-    }).rejects.toThrow()
+    await expect(executor.enqueueTask(testTask, tooLargeString)).rejects.toThrow(
+      'Serialized data size exceeds maximum allowed size',
+    )
   })
 
   it('should fail when task output exceeds serialization size limit', async () => {
@@ -1090,7 +1092,7 @@ describe('simpleTask', () => {
 
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
-    expect(finishedExecution.error?.message).toContain('size')
+    expect(finishedExecution.error.message).toContain('size')
   })
 
   it('should handle sequential task error propagation correctly', async () => {
@@ -1132,7 +1134,7 @@ describe('simpleTask', () => {
 
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
-    expect(finishedExecution.error?.message).toBe(
+    expect(finishedExecution.error.message).toBe(
       'Sequential task failed [parentTaskId=seq] [index=1]: Task 2 failed',
     )
     expect(executionCount).toBe(2)
@@ -1203,14 +1205,16 @@ describe('simpleTask', () => {
 
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
-    expect(finishedExecution.error?.message).toContain(
+    expect(finishedExecution.error.message).toContain(
       'Sequential task failed [parentTaskId=seq] [index=0]: Task execution timed out',
     )
   })
 
   it('should handle empty sequential task array', () => {
     // @ts-expect-error - Testing invalid input
-    expect(() => executor.sequentialTasks('seq')).toThrow()
+    expect(() => executor.sequentialTasks('seq')).toThrow(
+      "Cannot read properties of undefined (reading 'length')",
+    )
   })
 
   it('should complete single sequential task', async () => {
@@ -1257,7 +1261,7 @@ describe('simpleTask', () => {
 
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
-    expect(finishedExecution.error?.message).toContain('Task 1 failed')
+    expect(finishedExecution.error.message).toContain('Task 1 failed')
     expect(executionCount).toBe(1)
   })
 
@@ -1468,7 +1472,7 @@ describe('simpleTask', () => {
     expect(finishedExecution.taskId).toBe('looping')
     expect(finishedExecution.status).toBe('finalize_failed')
     assert(finishedExecution.status === 'finalize_failed')
-    expect(finishedExecution.error?.message).toBe(
+    expect(finishedExecution.error.message).toBe(
       'Iteration task failed [taskId=iteration]: unknown error',
     )
   })
@@ -1511,7 +1515,9 @@ describe('simpleTask', () => {
       },
     })
 
-    expect(() => executor.loopingTask('looping', iterationTask, -1)).toThrow()
+    expect(() => executor.loopingTask('looping', iterationTask, -1)).toThrow(
+      'Max attempts must be greater than 0',
+    )
   })
 
   it('should complete sleeping task', async () => {
@@ -1549,7 +1555,7 @@ describe('simpleTask', () => {
     })
     expect(execution.status).toBe('failed')
     assert(execution.status === 'failed')
-    expect(execution.error?.message).toBe('test_error')
+    expect(execution.error.message).toBe('test_error')
   })
 
   it('should timeout sleeping task', async () => {
@@ -1567,7 +1573,7 @@ describe('simpleTask', () => {
     })
     expect(finishedExecution.status).toBe('timed_out')
     assert(finishedExecution.status === 'timed_out')
-    expect(finishedExecution.error?.message).toBe('Task execution timed out')
+    expect(finishedExecution.error.message).toBe('Task execution timed out')
   })
 
   it('should cancel sleeping task', async () => {
@@ -1587,7 +1593,7 @@ describe('simpleTask', () => {
     })
     expect(execution.status).toBe('cancelled')
     assert(execution.status === 'cancelled')
-    expect(execution.error?.message).toBe('Task execution cancelled')
+    expect(execution.error.message).toBe('Task execution cancelled')
   })
 
   it('should fail wakeup sleeping task execution with non-sleeping task', async () => {
@@ -1608,7 +1614,7 @@ describe('simpleTask', () => {
         status: 'failed',
         error: new Error('test_error'),
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow('Task is not a sleeping task [taskId=test]')
   })
 
   it('should fail wakeup sleeping task execution with invalid status', async () => {
@@ -1626,7 +1632,7 @@ describe('simpleTask', () => {
         status: 'timed_out',
         error: new Error('test_error'),
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow('Invalid status for sleeping task execution')
   })
 
   it('should fail wakeup sleeping task execution with invalid inputs', async () => {
@@ -1654,14 +1660,14 @@ describe('simpleTask', () => {
         status: 'completed',
         output: 'test_output',
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow('Task is not a sleeping task [taskId=nonSleepingTask]')
 
     await expect(
       executor.wakeupSleepingTaskExecution(sleepingTask1, 'invalid_unique_id', {
         status: 'completed',
         output: 'test_output',
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow('Sleeping task execution not found [sleepingTaskUniqueId=invalid_unique_id]')
 
     await handle.waitAndGetFinishedExecution({
       pollingIntervalMs: 100,
@@ -1672,7 +1678,7 @@ describe('simpleTask', () => {
         status: 'completed',
         output: 'test_output',
       }),
-    ).rejects.toThrow()
+    ).rejects.toThrow('Sleeping task execution belongs to another task')
   })
 
   it('should handle task closure', async () => {
@@ -1696,32 +1702,34 @@ describe('simpleTask', () => {
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.output).toBe('test')
 
-    while (true) {
+    let closedExecutionStorageValue: TaskExecutionStorageValue
+    for (;;) {
       const executionStorageValues = await storage.getManyById([
         { executionId: handle.executionId, filters: {} },
       ])
       expect(executionStorageValues).toBeDefined()
-      assert(executionStorageValues)
       expect(executionStorageValues.length).toBe(1)
 
-      const executionStorageValue = executionStorageValues[0]!
+      const executionStorageValue = executionStorageValues[0]
       expect(executionStorageValue).toBeDefined()
       assert(executionStorageValue)
       expect(executionStorageValue.status).toBe('completed')
 
       if (executionStorageValue.closeStatus === 'closed') {
-        expect(executionStorageValue.closedAt).toBeDefined()
-        expect(executionStorageValue.closedAt).toBeGreaterThan(0)
+        closedExecutionStorageValue = executionStorageValue
         break
       }
 
       await sleep(100)
     }
+
+    expect(closedExecutionStorageValue.closedAt).toBeDefined()
+    expect(closedExecutionStorageValue.closedAt).toBeGreaterThan(0)
   })
 
   it('should handle promise cancellation for running task executions', async () => {
     let taskStarted = false
-    let taskCancelled = false
+    const taskState = { cancelled: false }
 
     const longRunningTask = executor.task({
       id: 'longRunningCancel',
@@ -1731,7 +1739,7 @@ describe('simpleTask', () => {
         try {
           for (let i = 0; i < 100; i++) {
             if (ctx.abortSignal.aborted) {
-              taskCancelled = true
+              taskState.cancelled = true
               throw DurableExecutionError.nonRetryable('Task was cancelled')
             }
             await sleep(50)
@@ -1739,7 +1747,7 @@ describe('simpleTask', () => {
           return 'completed'
         } catch (error) {
           if (ctx.abortSignal.aborted) {
-            taskCancelled = true
+            taskState.cancelled = true
           }
           throw error
         }
@@ -1758,15 +1766,15 @@ describe('simpleTask', () => {
 
     expect(finishedExecution.status).toBe('cancelled')
     assert(finishedExecution.status === 'cancelled')
-    expect(finishedExecution.error?.message).toBe('Task execution cancelled')
+    expect(finishedExecution.error.message).toBe('Task execution cancelled')
 
     for (let i = 0; i < 5; i++) {
-      if (taskCancelled) {
+      if (taskState.cancelled) {
         break
       }
       await sleep(500)
     }
 
-    expect(taskCancelled).toBe(true)
+    expect(taskState.cancelled).toBe(true)
   })
 })

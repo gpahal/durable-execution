@@ -1,19 +1,22 @@
 {
-  "private": true,
   "name": "durable-execution-storage-convex-test",
   "version": "0.0.0",
+  "private": true,
   "sideEffects": false,
   "type": "module",
   "scripts": {
     "convex": "convex",
     "convex-dev": "convex dev --live-component-sources --typecheck-components",
     "dev": "tsx --env-file=.env.local src/index.ts",
-    "type-check": "tsc --noEmit && typedoc --options ../../typedoc.json --emit none --entryPoints src/index.ts",
     "lint": "eslint .",
-    "lint-fix": "eslint . --fix"
+    "lint-fix": "eslint . --fix",
+    "type-check": "tsc --noEmit && typedoc --options ../../typedoc.json --emit none --entryPoints src/index.ts"
   },
   "dependencies": {
     "convex": "catalog:dev",
     "durable-execution-storage-convex": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24.22.0"
   }
 }

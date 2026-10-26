@@ -51,6 +51,8 @@ package using the [oRPC](https://orpc.unnoq.com/) library.
 
 ## Installation
 
+Requires Node.js 24.22 or later and `effect` 4.
+
 - npm
 
 ```bash
@@ -281,7 +283,7 @@ const taskA = executor.inputSchema(Schema.Struct({ name: Schema.String })).task(
 ### Retries
 
 ```ts
-let totalAttempts = 0
+const stats = { totalAttempts: 0 }
 const taskA = executor.task({
   id: 'a',
   retryOptions: {
@@ -292,12 +294,12 @@ const taskA = executor.task({
   },
   timeoutMs: 1000,
   run: (ctx, input: { name: string }) => {
-    totalAttempts++
+    stats.totalAttempts++
     if (ctx.attempt < 2) {
       throw new Error('Failed')
     }
     return {
-      totalAttempts,
+      totalAttempts: stats.totalAttempts,
       output: `Hello, ${input.name}!`,
     }
   },
@@ -438,12 +440,11 @@ const parentTask = executor.parentTask({
     id: 'onParentRunAndChildrenComplete',
     timeoutMs: 1000,
     run: (ctx, { output, children }) => {
-      const child1 = children[0]!
-      const child2 = children[1]!
+      const [child1, child2] = children
 
       // The finalize function receives all children executions, including failed ones.
       // This allows you to implement custom error handling logic.
-      if (child1.status !== 'completed' || child2.status !== 'completed') {
+      if (child1?.status !== 'completed' || child2?.status !== 'completed') {
         throw DurableExecutionError.nonRetryable('Children failed')
       }
 
@@ -501,12 +502,11 @@ const parentTask = executor.parentTask({
     id: 'onParentRunAndChildrenComplete',
     timeoutMs: 1000,
     run: (ctx, { output, children }) => {
-      const child1 = children[0]!
-      const child2 = children[1]!
+      const [child1, child2] = children
 
       // The finalize function receives all children executions, including failed ones.
       // This allows you to implement custom error handling logic.
-      if (child1.status !== 'completed' || child2.status !== 'completed') {
+      if (child1?.status !== 'completed' || child2?.status !== 'completed') {
         throw DurableExecutionError.nonRetryable('Children failed')
       }
 
@@ -700,8 +700,8 @@ const taskB = executor.parentTask({
       id: 'taskBFinalizeNested',
       timeoutMs: 1000,
       run: (ctx, { output, children }) => {
-        const child = children[0]!
-        if (child.status !== 'completed') {
+        const [child] = children
+        if (child?.status !== 'completed') {
           throw DurableExecutionError.nonRetryable('Child failed')
         }
 
@@ -737,8 +737,8 @@ const taskA = executor.parentTask({
       id: 'taskAFinalizeNested',
       timeoutMs: 1000,
       run: (ctx, { output, children }) => {
-        const child = children[0]!
-        if (child.status !== 'completed') {
+        const [child] = children
+        if (child?.status !== 'completed') {
           throw DurableExecutionError.nonRetryable('Child failed')
         }
 
@@ -829,9 +829,8 @@ const taskA = executor.parentTask({
     id: 'taskAFinalize',
     timeoutMs: 1000,
     run: (ctx, { output, children }) => {
-      const child1 = children[0]!
-      const child2 = children[1]!
-      if (child1.status !== 'completed' || child2.status !== 'completed') {
+      const [child1, child2] = children
+      if (child1?.status !== 'completed' || child2?.status !== 'completed') {
         throw DurableExecutionError.nonRetryable('Children failed')
       }
 
@@ -868,9 +867,8 @@ const taskB = executor.parentTask({
     id: 'taskBFinalize',
     timeoutMs: 1000,
     run: (ctx, { output, children }) => {
-      const child1 = children[0]!
-      const child2 = children[1]!
-      if (child1.status !== 'completed' || child2.status !== 'completed') {
+      const [child1, child2] = children
+      if (child1?.status !== 'completed' || child2?.status !== 'completed') {
         throw DurableExecutionError.nonRetryable('Children failed')
       }
 
@@ -984,13 +982,11 @@ const taskA = executor.parentTask({
     id: 'taskAFinalize',
     timeoutMs: 1000,
     run: (ctx, { output, children }) => {
-      const child1 = children[0]!
-      const child2 = children[1]!
-      const child3 = children[2]!
+      const [child1, child2, child3] = children
       if (
-        child1.status !== 'completed' ||
-        child2.status !== 'completed' ||
-        child3.status !== 'completed'
+        child1?.status !== 'completed' ||
+        child2?.status !== 'completed' ||
+        child3?.status !== 'completed'
       ) {
         throw DurableExecutionError.nonRetryable('Children failed')
       }
@@ -1021,9 +1017,8 @@ const rootTask = executor.parentTask({
     id: 'rootFinalize',
     timeoutMs: 1000,
     run: (ctx, { output, children }) => {
-      const child1 = children[0]!
-      const child2 = children[1]!
-      if (child1.status !== 'completed' || child2.status !== 'completed') {
+      const [child1, child2] = children
+      if (child1?.status !== 'completed' || child2?.status !== 'completed') {
         throw DurableExecutionError.nonRetryable('Children failed')
       }
 
@@ -1073,7 +1068,7 @@ coordinate the output of the recursive task and children tasks.
 
 ```ts
 const recursiveTask: Task<{ index: number }, { count: number }> = executor
-  .inputSchema(Schema.Struct({ index: Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)) }))
+  .inputSchema(Schema.Struct({ index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) }))
   .parentTask({
     id: 'recursive',
     timeoutMs: 1000,
@@ -1116,9 +1111,9 @@ const recursiveTask: Task<{ index: number }, { count: number }> = executor
 Looping tasks are useful when you want to run a task again and again until a condition is met.
 
 ```ts
-let value: number | undefined
+const state: { value?: number } = {}
 setTimeout(() => {
-  value = 10
+  state.value = 10
 }, 1000)
 
 const iterationTask = executor.task({
@@ -1126,6 +1121,7 @@ const iterationTask = executor.task({
   sleepMsBeforeRun: 100,
   timeoutMs: 1000,
   run: () => {
+    const { value } = state
     return value == null
       ? {
           isDone: false,
@@ -1157,18 +1153,19 @@ the value again. The `finalize` task is used to combine the output of the loopin
 tasks.
 
 ```ts
-let value: number | undefined
+const state: { value?: number } = {}
 setTimeout(() => {
-  value = 10
+  state.value = 10
 }, 2000)
 
 const loopingTask: Task<{ prevCount: number }, { count: number; value: number }> = executor
-  .inputSchema(Schema.Struct({ prevCount: Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)) }))
+  .inputSchema(Schema.Struct({ prevCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) }))
   .parentTask({
     id: 'looping',
     sleepMsBeforeRun: 100,
     timeoutMs: 1000,
     runParent: (ctx, input) => {
+      const { value } = state
       if (value != null) {
         return {
           output: {
@@ -1203,8 +1200,8 @@ const loopingTask: Task<{ prevCount: number }, { count: number; value: number }>
           }
         }
 
-        const child = children[0]!
-        if (child.status !== 'completed') {
+        const [child] = children
+        if (child?.status !== 'completed') {
           throw DurableExecutionError.nonRetryable('Child failed')
         }
 
@@ -1257,7 +1254,10 @@ const parentTask = executor.parentTask({
     id: 'finalizeTask',
     timeoutMs: 1000,
     run: (ctx, { children }) => {
-      const child = children[0]!
+      const [child] = children
+      if (!child) {
+        throw new Error('Webhook task execution not found')
+      }
       if (child.status !== 'completed') {
         throw new Error(`Webhook task failed: ${child.error.message}`)
       }
@@ -1293,7 +1293,12 @@ import {
 } from 'durable-execution-storage-drizzle'
 import { drizzle } from 'drizzle-orm/node-postgres'
 
-const db = drizzle(process.env.DATABASE_URL!)
+const databaseUrl = process.env.DATABASE_URL
+if (!databaseUrl) {
+  throw new Error('DATABASE_URL is not set')
+}
+
+const db = drizzle(databaseUrl)
 const taskExecutionsTable = createPgTaskExecutionsTable()
 const storage = createPgTaskExecutionsStorage(db, taskExecutionsTable)
 const executor = await DurableExecutor.make(storage)
@@ -1492,27 +1497,35 @@ For effect users, the library provides first-class effect support:
 - **`makeEffectDurableExecutor`** - Creates an effect-based executor
 - **`EffectDurableExecutor`** - Type for the effect durable executor
 - **`EffectDurableExecutorOptions`** - Configuration options
+- **`TaskExecutionsStorageService`** - The service that provides the storage to the executor
 
 ```ts
 import { Effect } from 'effect'
-import { makeEffectDurableExecutor } from 'durable-execution'
+import {
+  InMemoryTaskExecutionsStorage,
+  makeEffectDurableExecutor,
+  TaskExecutionsStorageService,
+} from 'durable-execution'
 
 const program = Effect.gen(function* () {
-  const executor = yield* makeEffectDurableExecutor({
-    maxConcurrentTaskExecutions: 100
-  })
+  const executor = yield* makeEffectDurableExecutor({ maxConcurrentTaskExecutions: 100 })
 
   const task = yield* executor.task({
     id: 'effectTask',
     timeoutMs: 30_000,
-    run: (ctx, input) => Effect.succeed(`Hello ${input}!`)
+    run: (ctx, input: string) => Effect.succeed(`Hello ${input}!`),
   })
 
+  yield* executor.start
   const handle = yield* executor.enqueueTask(task, 'world')
-  const result = yield* handle.waitAndGetFinishedExecution()
+  return yield* handle.waitAndGetFinishedExecution()
+}).pipe(
+  // The executor shuts down when the scope closes
+  Effect.scoped,
+  Effect.provideService(TaskExecutionsStorageService, new InMemoryTaskExecutionsStorage()),
+)
 
-  return result
-})
+const finishedExecution = await Effect.runPromise(program)
 ```
 
 ### Error types and status constants
@@ -1531,13 +1544,14 @@ import {
   ALL_TASK_EXECUTION_STATUSES,
   ACTIVE_TASK_EXECUTION_STATUSES,
   FINISHED_TASK_EXECUTION_STATUSES,
-  ERRORED_TASK_EXECUTION_STATUSES,
+  ERRORED_TASK_EXECUTION_STATUSES
 
   // Storage status types
-  type TaskExecutionStatus,
-  type TaskExecutionCloseStatus,
-  type TaskExecutionOnChildrenFinishedProcessingStatus
+
+
+
 } from 'durable-execution'
+import type {TaskExecutionStatus, TaskExecutionCloseStatus, TaskExecutionOnChildrenFinishedProcessingStatus} from 'durable-execution';
 ```
 
 ### Error handling best practices
@@ -1558,12 +1572,9 @@ const apiTask = executor.task({
       const response = await fetch(input.url)
 
       if (response.status === 404) {
-        // Resource doesn't exist - don't retry
+        // Resource doesn't exist - don't retry. Throwing
+        // `DurableExecutionError.nonRetryable(...)` also stops the retries.
         throw new DurableExecutionNotFoundError(
-          `Resource not found: ${input.url}`,
-        )
-        // OR
-        throw DurableExecutionError.nonRetryable(
           `Resource not found: ${input.url}`,
         )
       }
@@ -1734,7 +1745,8 @@ For custom serialization needs:
 > types that are used in the task inputs and outputs.
 
 ```ts
-import { createSuperjsonSerializer, type Serializer } from 'durable-execution'
+import { createSuperjsonSerializer  } from 'durable-execution'
+import type {Serializer} from 'durable-execution';
 
 // Use the default serializer
 const defaultSerializer = createSuperjsonSerializer()

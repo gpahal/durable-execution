@@ -8,6 +8,7 @@ This is a TypeScript monorepo containing the **durable-execution** ecosystem - a
 
 - [`durable-execution/`](./durable-execution/) - Core durable execution library
 - [`durable-execution-storage-convex/`](./durable-execution-storage-convex/) - Convex storage implementation
+  - [`durable-execution-storage-convex/test/`](./durable-execution-storage-convex/test/) - Private Convex app that the package's tests and benchmarks run against
 - [`durable-execution-storage-drizzle/`](./durable-execution-storage-drizzle/) - Drizzle ORM storage implementation
 - [`durable-execution-storage-test-utils/`](./durable-execution-storage-test-utils/) - Test utilities for storage implementations
 - [`durable-execution-orpc-utils/`](./durable-execution-orpc-utils/) - oRPC utilities for durable execution
@@ -43,13 +44,15 @@ Each package has its own [`AGENTS.md`] file with package-specific commands. Use 
 
 ## Technology Stack
 
-- **Language**: TypeScript (ES modules only)
-- **Package Manager**: pnpm with workspaces
+- **Runtime**: Node.js 24.22 or later (`.node-version` and `engines.node`)
+- **Language**: TypeScript 6.0 (ES modules only). Stay on `~6.0.3`: `@gpahal/eslint-config` doesn't support TypeScript 7
+- **Effect**: `effect` 4, a peer dependency of the core library and the Convex storage
+- **Package Manager**: pnpm 12 with workspaces and catalogs (`pnpm-workspace.yaml`)
 - **Build System**: Turbo for monorepo orchestration
 - **Bundler**: tsup for package building
-- **Testing**: Vitest with v8 coverage
-- **Linting**: ESLint with `@gpahal/eslint-config`
-- **Formatting**: Prettier
+- **Testing**: Vitest 5 with v8 coverage
+- **Linting**: ESLint 10 with `@gpahal/eslint-config`, one `eslint.config.mjs` per package using `defineConfig`
+- **Formatting**: Prettier with `@gpahal/prettier-config`, which sorts imports and `package.json` keys
 - **Type Checking**: TypeScript with strict mode
 - **Documentation**: TypeDoc with Mermaid plugin
 
@@ -62,7 +65,7 @@ Each package has its own [`AGENTS.md`] file with package-specific commands. Use 
 - **Strict TypeScript**: All packages use strict mode with comprehensive type checking
 - **ESM Only**: Pure ES modules (`"type": "module"`) - no CommonJS
 - **Base Configuration**: Extends `@gpahal/tsconfig/base.json` for consistent compiler settings
-- **Node.js**: Minimum version 20.0.0 required
+- **Node.js**: Minimum version 24.22.0 required
 
 #### Naming Conventions
 
@@ -105,7 +108,7 @@ Each package has its own [`AGENTS.md`] file with package-specific commands. Use 
 
 #### Error Handling Conventions
 
-- **Custom Errors**: Extend `CustomError` from `@gpahal/std/errors`
+- **Custom Errors**: Extend `DurableExecutionError`, an Effect Schema tagged error class
 - **Error Types**: Use specific error types for different failure modes
 - **Retry Logic**: Include `isRetryable` flags for durable execution errors
 - **Factory Methods**: Provide `.retryable()` and `.nonRetryable()` factory methods
@@ -138,7 +141,8 @@ Each package has its own [`AGENTS.md`] file with package-specific commands. Use 
 - All packages follow consistent structure with `src/`, `tests/`, `build/` directories
 - Individual AGENTS.md files in each package
 - Shared build scripts and configurations
-- Catalog-based dependency management
+- Catalog-based dependency management: add versions to a catalog in `pnpm-workspace.yaml` and reference them with `catalog:prod` or `catalog:dev`
+- pnpm 12 runs only the install scripts that `allowBuilds` in `pnpm-workspace.yaml` allows
 
 ### Git Workflow
 

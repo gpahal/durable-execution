@@ -18,7 +18,8 @@ describe('InMemoryTaskExecutionsStorage', () => {
   })
 
   afterEach(async () => {
-    if (executor) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- beforeEach can fail before it assigns this
+    if (executor !== undefined) {
       await executor.shutdown()
     }
   })
@@ -36,23 +37,22 @@ describe('InMemoryTaskExecutionsStorage', () => {
     })
 
     let savedData = ''
-    await storage.save((s) => {
+    await storage.save(async (s) => {
       savedData = s
-      return Promise.resolve()
     })
 
     expect(savedData).toBeDefined()
     expect(typeof savedData).toBe('string')
 
     const newStorage = new InMemoryTaskExecutionsStorage()
-    await newStorage.load(() => Promise.resolve(savedData))
+    await newStorage.load(async () => savedData)
 
     expect(newStorage).toBeDefined()
   })
 
   it('should handle empty load operations', async () => {
     const newStorage = new InMemoryTaskExecutionsStorage()
-    await newStorage.load(() => Promise.resolve(''))
+    await newStorage.load(async () => '')
 
     expect(newStorage).toBeDefined()
   })
@@ -70,7 +70,6 @@ describe('InMemoryTaskExecutionsStorage', () => {
     })
     const dbValues = await storage.getManyById([{ executionId: handle.executionId, filters: {} }])
     expect(dbValues).toBeDefined()
-    assert(dbValues)
     expect(dbValues[0]?.status).toBe('completed')
 
     const tempFile = '/tmp/test-storage.json'
@@ -82,7 +81,6 @@ describe('InMemoryTaskExecutionsStorage', () => {
       { executionId: handle.executionId, filters: {} },
     ])
     expect(newDbValues).toBeDefined()
-    assert(newDbValues)
     expect(newDbValues[0]?.status).toBe('completed')
   })
 
@@ -119,7 +117,7 @@ describe('InMemoryTaskExecutionsStorage', () => {
     }
 
     const results = await Promise.all(
-      handles.map((handle) =>
+      handles.map(async (handle) =>
         handle.waitAndGetFinishedExecution({
           pollingIntervalMs: 100,
         }),

@@ -8,6 +8,8 @@ A storage implementation for [durable-execution](https://github.com/gpahal/durab
 
 ## Installation
 
+Requires Node.js 24.22 or later and `effect` 4.
+
 - npm
 
 ```bash
@@ -93,7 +95,11 @@ import { ConvexTaskExecutionsStorage } from 'durable-execution-storage-convex'
 import { api } from '../convex/_generated/api'
 
 // Create the convex client
-const convexClient = new ConvexHttpClient(process.env.VITE_CONVEX_URL!)
+const convexUrl = process.env.VITE_CONVEX_URL
+if (!convexUrl) {
+  throw new Error('VITE_CONVEX_URL is not set')
+}
+const convexClient = new ConvexHttpClient(convexUrl)
 
 // Create the storage instance
 const storage = new ConvexTaskExecutionsStorage(

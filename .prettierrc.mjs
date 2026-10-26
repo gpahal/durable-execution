@@ -1,6 +1,3 @@
-import baseConfig from '@gpahal/prettier-config/base'
+import { defineConfig } from '@gpahal/prettier-config'
 
-/** @type {import("@gpahal/prettier-config/base").Config} */
-const config = baseConfig
-
-export default config
+export default defineConfig({ root: import.meta.dirname })

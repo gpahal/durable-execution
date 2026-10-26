@@ -19,8 +19,6 @@ import {
 import mysql from 'mysql2/promise'
 import { Pool } from 'pg'
 
-import { waitForExitOrLogActiveHandles } from '@gpahal/std-node/process'
-
 import {
   createMySqlTaskExecutionsStorage,
   createMySqlTaskExecutionsTable,
@@ -32,6 +30,7 @@ import {
 
 const require = createRequire(import.meta.url)
 const { pushSchema, pushSQLiteSchema, generateMySQLDrizzleJson, generateMySQLMigration } =
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- require returns any, and the types come from drizzle-kit/api's declarations
   require('drizzle-kit/api') as {
     pushSchema: typeof pushSchemaType
     pushSQLiteSchema: typeof pushSQLiteSchemaType
@@ -72,7 +71,9 @@ async function benchMySql() {
     })
     const db = drizzleMySql(pool)
 
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- drizzle-kit/api's declarations don't resolve the snapshot type, so the result is error typed
     const emptyDrizzleJson = (await generateMySQLDrizzleJson({})) as Record<string, unknown>
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- drizzle-kit/api's declarations don't resolve the snapshot type, so the result is error typed
     const drizzleJson = (await generateMySQLDrizzleJson({
       taskExecutionsTable,
     })) as Record<string, unknown>
@@ -122,6 +123,21 @@ async function main() {
   } finally {
     await cleanupTemporaryFiles()
   }
+}
+
+/**
+ * Exit with an error, listing the resources that keep the process alive, when it hasn't exited
+ * `timeoutMs` after the bench finished.
+ */
+function waitForExitOrLogActiveHandles(timeoutMs: number): void {
+  setTimeout(() => {
+    console.error(
+      `Process did not exit within ${timeoutMs}ms. Active resources:`,
+      process.getActiveResourcesInfo(),
+    )
+    // eslint-disable-next-line unicorn/no-process-exit -- the bench script exits when leftover resources keep it alive
+    process.exit(1)
+  }, timeoutMs).unref()
 }
 
 await main()

@@ -1,4 +1,5 @@
-import { and, asc, eq, inArray, lt, sql, type SQL, type TablesRelationalConfig } from 'drizzle-orm'
+import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm'
+import type { SQL, TablesRelationalConfig } from 'drizzle-orm'
 import {
   bigint,
   boolean,
@@ -8,25 +9,25 @@ import {
   pgTable,
   text,
   uniqueIndex,
-  type PgDatabase,
-  type PgQueryResultHKT,
 } from 'drizzle-orm/pg-core'
-import {
-  TaskExecutionsStorageWithBatching,
-  type DurableExecutionErrorStorageValue,
-  type TaskExecutionCloseStatus,
-  type TaskExecutionOnChildrenFinishedProcessingStatus,
-  type TaskExecutionsStorage,
-  type TaskExecutionsStorageWithoutBatching,
-  type TaskExecutionStatus,
-  type TaskExecutionStorageGetByIdFilters,
-  type TaskExecutionStorageUpdate,
-  type TaskExecutionStorageValue,
-  type TaskExecutionSummary,
-  type TaskRetryOptions,
+import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
+import { TaskExecutionsStorageWithBatching } from 'durable-execution'
+import type {
+  DurableExecutionErrorStorageValue,
+  TaskExecutionCloseStatus,
+  TaskExecutionOnChildrenFinishedProcessingStatus,
+  TaskExecutionsStorage,
+  TaskExecutionsStorageWithoutBatching,
+  TaskExecutionStatus,
+  TaskExecutionStorageGetByIdFilters,
+  TaskExecutionStorageUpdate,
+  TaskExecutionStorageValue,
+  TaskExecutionSummary,
+  TaskRetryOptions,
 } from 'durable-execution'
 
 import {
+  compareStringsByCodeUnits,
   taskExecutionDBValueToStorageValue,
   taskExecutionStorageUpdateToDBUpdate,
   taskExecutionStorageValueToDBValue,
@@ -208,8 +209,7 @@ class PgTaskExecutionsStorage<
   TQueryResult extends PgQueryResultHKT,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
-> implements TaskExecutionsStorageWithoutBatching
-{
+> implements TaskExecutionsStorageWithoutBatching {
   private readonly db: PgDatabase<TQueryResult, TFullSchema, TSchema>
   private readonly taskExecutionsTable: TaskExecutionsPgTable
   private readonly enableTestMode: boolean
@@ -249,7 +249,8 @@ class PgTaskExecutionsStorage<
       .from(this.taskExecutionsTable)
       .where(getByIdWhereCondition(this.taskExecutionsTable, executionId, filters))
       .limit(1)
-    return rows.length > 0 ? taskExecutionDBValueToStorageValue(rows[0]!) : undefined
+    const [row] = rows
+    return row ? taskExecutionDBValueToStorageValue(row) : undefined
   }
 
   async getBySleepingTaskUniqueId({
@@ -262,7 +263,8 @@ class PgTaskExecutionsStorage<
       .from(this.taskExecutionsTable)
       .where(eq(this.taskExecutionsTable.sleepingTaskUniqueId, sleepingTaskUniqueId))
       .limit(1)
-    return rows.length > 0 ? taskExecutionDBValueToStorageValue(rows[0]!) : undefined
+    const [row] = rows
+    return row ? taskExecutionDBValueToStorageValue(row) : undefined
   }
 
   async updateById({
@@ -296,7 +298,8 @@ class PgTaskExecutionsStorage<
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     if (childrenTaskExecutionsToInsertIfAnyUpdated.length === 0) {
-      return await this.updateById({ executionId, filters, update })
+      await this.updateById({ executionId, filters, update })
+      return
     }
 
     const rowsToInsert = childrenTaskExecutionsToInsertIfAnyUpdated.map((execution) =>
@@ -463,7 +466,7 @@ class PgTaskExecutionsStorage<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const rows = await tx
         .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
@@ -504,7 +507,7 @@ class PgTaskExecutionsStorage<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const rows = await tx
         .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
@@ -544,7 +547,7 @@ class PgTaskExecutionsStorage<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const rows = await tx
         .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
@@ -658,7 +661,7 @@ class PgTaskExecutionsStorage<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const rows = await tx
         .select()
         .from(this.taskExecutionsTable)
@@ -694,7 +697,10 @@ class PgTaskExecutionsStorage<
         }
 
         if (parentExecutionIdToDecrementValueMap.size > 0) {
-          const parentIds = [...parentExecutionIdToDecrementValueMap.keys()].sort()
+          const parentIds = parentExecutionIdToDecrementValueMap
+            .keys()
+            .toArray()
+            .toSorted(compareStringsByCodeUnits)
           const values = parentIds.map(
             (parentId) =>
               sql`(${parentId}::text, ${parentExecutionIdToDecrementValueMap.get(parentId)}::integer)`,

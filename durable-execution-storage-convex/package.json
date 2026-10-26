@@ -2,17 +2,6 @@
   "name": "durable-execution-storage-convex",
   "version": "0.32.0",
   "description": "Convex storage implementation for durable-execution",
-  "author": "Garvit Pahal <g10pahal@gmail.com>",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/gpahal/durable-execution.git",
-    "directory": "durable-execution-storage-convex"
-  },
-  "homepage": "https://gpahal.github.io/durable-execution",
-  "bugs": {
-    "url": "https://github.com/gpahal/durable-execution/issues"
-  },
   "keywords": [
     "durable-execution",
     "durable-tasks",
@@ -25,6 +14,17 @@
     "convex",
     "storage"
   ],
+  "homepage": "https://gpahal.github.io/durable-execution",
+  "bugs": {
+    "url": "https://github.com/gpahal/durable-execution/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpahal/durable-execution.git",
+    "directory": "durable-execution-storage-convex"
+  },
+  "license": "MIT",
+  "author": "Garvit Pahal <g10pahal@gmail.com>",
   "sideEffects": false,
   "type": "module",
   "exports": {
@@ -38,41 +38,47 @@
       "@convex-dev/component-source": "./src/component/convex.config.ts",
       "types": "./build/component/convex.config.d.ts",
       "default": "./build/component/convex.config.js"
+    },
+    "./_generated/component.js": {
+      "@convex-dev/component-source": "./src/component/_generated/component.ts",
+      "types": "./build/component/_generated/component.d.ts",
+      "default": "./build/component/_generated/component.js"
     }
   },
   "module": "./build/client/index.js",
   "types": "./build/client/index.d.ts",
   "files": [
-    "package.json",
     "src",
     "build"
   ],
   "scripts": {
-    "convex": "pnpm -C ./test convex",
-    "convex-dev": "pnpm -C ./test convex dev --live-component-sources --typecheck-components",
+    "bench": "tsx --env-file=test/.env.local scripts/bench.ts",
     "build": "premove build && tsup",
     "clean": "premove build coverage",
-    "test": "vitest run",
-    "bench": "tsx --env-file=test/.env.local scripts/bench.ts",
-    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/client/index.ts --entryPoints src/component/convex.config.ts",
+    "convex": "pnpm -C ./test convex",
+    "convex-dev": "pnpm -C ./test convex dev --live-component-sources --typecheck-components",
     "lint": "eslint .",
-    "lint-fix": "eslint . --fix"
-  },
-  "peerDependencies": {
-    "convex": "catalog:dev",
-    "durable-execution": "workspace:*",
-    "effect": "catalog:dev"
+    "lint-fix": "eslint . --fix",
+    "test": "vitest run",
+    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/client/index.ts --entryPoints src/component/convex.config.ts"
   },
   "dependencies": {
     "@gpahal/std": "catalog:prod"
   },
   "devDependencies": {
     "@edge-runtime/vm": "catalog:dev",
-    "@gpahal/std-node": "catalog:dev",
     "convex": "catalog:dev",
     "durable-execution": "workspace:*",
     "durable-execution-storage-test-utils": "workspace:*",
     "effect": "catalog:dev",
     "testcontainers": "catalog:dev"
+  },
+  "peerDependencies": {
+    "convex": "catalog:dev",
+    "durable-execution": "workspace:*",
+    "effect": "catalog:dev"
+  },
+  "engines": {
+    "node": ">=24.22.0"
   }
 }

@@ -2,17 +2,6 @@
   "name": "durable-execution-orpc-utils",
   "version": "0.32.0",
   "description": "oRPC utilities for durable-execution to create a separate server process for durable execution",
-  "author": "Garvit Pahal <g10pahal@gmail.com>",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/gpahal/durable-execution.git",
-    "directory": "durable-execution-orpc-utils"
-  },
-  "homepage": "https://gpahal.github.io/durable-execution",
-  "bugs": {
-    "url": "https://github.com/gpahal/durable-execution/issues"
-  },
   "keywords": [
     "orpc",
     "orpc-server",
@@ -26,6 +15,17 @@
     "durable",
     "resilient"
   ],
+  "homepage": "https://gpahal.github.io/durable-execution",
+  "bugs": {
+    "url": "https://github.com/gpahal/durable-execution/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpahal/durable-execution.git",
+    "directory": "durable-execution-orpc-utils"
+  },
+  "license": "MIT",
+  "author": "Garvit Pahal <g10pahal@gmail.com>",
   "sideEffects": false,
   "type": "module",
   "exports": {
@@ -38,24 +38,17 @@
   "module": "./build/index.js",
   "types": "./build/index.d.ts",
   "files": [
-    "package.json",
     "src",
     "build"
   ],
   "scripts": {
     "build": "premove build && tsup",
     "clean": "premove build coverage",
+    "lint": "eslint .",
+    "lint-fix": "eslint . --fix",
     "test": "vitest run",
     "test-coverage": "vitest run --coverage",
-    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/index.ts",
-    "lint": "eslint .",
-    "lint-fix": "eslint . --fix"
-  },
-  "peerDependencies": {
-    "@orpc/client": "catalog:dev",
-    "@orpc/contract": "catalog:dev",
-    "@orpc/server": "catalog:dev",
-    "durable-execution": "workspace:*"
+    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/index.ts"
   },
   "dependencies": {
     "@gpahal/std": "catalog:prod"
@@ -65,5 +58,14 @@
     "@orpc/contract": "catalog:dev",
     "@orpc/server": "catalog:dev",
     "durable-execution": "workspace:*"
+  },
+  "peerDependencies": {
+    "@orpc/client": "catalog:dev",
+    "@orpc/contract": "catalog:dev",
+    "@orpc/server": "catalog:dev",
+    "durable-execution": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24.22.0"
   }
 }

@@ -1,34 +1,29 @@
-import { safe, toORPCError, type ClientRest, type FriendlyClientOptions } from '@orpc/client'
-import {
-  ORPCError,
-  type AnySchema,
-  type ErrorMap,
-  type InferSchemaInput,
-  type InferSchemaOutput,
-  type Meta,
-} from '@orpc/contract'
-import {
-  type,
-  type Builder,
-  type ClientContext,
-  type Context,
-  type DecoratedProcedure,
-  type ProcedureClient,
-  type Schema,
+import { safe, toORPCError } from '@orpc/client'
+import type { ClientRest, FriendlyClientOptions } from '@orpc/client'
+import { ORPCError } from '@orpc/contract'
+import type { AnySchema, ErrorMap, InferSchemaInput, InferSchemaOutput, Meta } from '@orpc/contract'
+import { type } from '@orpc/server'
+import type {
+  Builder,
+  ClientContext,
+  Context,
+  DecoratedProcedure,
+  ProcedureClient,
+  Schema,
 } from '@orpc/server'
-import {
-  DurableExecutionError,
-  DurableExecutionNotFoundError,
-  type AnyTasks,
-  type CommonTaskOptions,
-  type DurableExecutor,
-  type FinishedTaskExecution,
-  type InferTaskInput,
-  type InferTaskOutput,
-  type Task,
-  type TaskEnqueueOptions,
-  type TaskExecution,
-  type WakeupSleepingTaskExecutionOptions,
+import { DurableExecutionError, DurableExecutionNotFoundError } from 'durable-execution'
+import type {
+  AnyTask,
+  AnyTasks,
+  CommonTaskOptions,
+  DurableExecutor,
+  FinishedTaskExecution,
+  InferTaskInput,
+  InferTaskOutput,
+  Task,
+  TaskEnqueueOptions,
+  TaskExecution,
+  WakeupSleepingTaskExecutionOptions,
 } from 'durable-execution'
 
 import { getErrorMessage } from '@gpahal/std/errors'
@@ -138,13 +133,18 @@ export type WakeupSleepingTaskExecutionProcedure<
   >
 }[keyof TTasks]
 
+function isSleepingTask(task: AnyTask): task is Task<unknown, unknown, 'sleepingTask'> {
+  return task.taskType === 'sleepingTask'
+}
+
 function createEnqueueTaskProcedure<
   TTasks extends AnyTasks,
   TInitialContext extends Context,
   TCurrentContext extends Context,
   TErrorMap extends ErrorMap,
   TMeta extends Meta,
-  TBuilder extends Builder<
+>(
+  osBuilder: Builder<
     TInitialContext,
     TCurrentContext,
     Schema<unknown, unknown>,
@@ -152,8 +152,6 @@ function createEnqueueTaskProcedure<
     TErrorMap,
     TMeta
   >,
->(
-  osBuilder: TBuilder,
   executor: DurableExecutor,
   tasks: TTasks,
 ): EnqueueTaskProcedure<TTasks, TInitialContext, TCurrentContext, TErrorMap, TMeta> {
@@ -175,11 +173,7 @@ function createEnqueueTaskProcedure<
       }
 
       try {
-        const handle = await executor.enqueueTask(
-          task,
-          input.input as InferTaskInput<typeof task>,
-          input.options,
-        )
+        const handle = await executor.enqueueTask(task, input.input, input.options)
         return handle.executionId
       } catch (error) {
         if (error instanceof DurableExecutionError) {
@@ -207,7 +201,8 @@ function createGetTaskExecutionProcedure<
   TCurrentContext extends Context,
   TErrorMap extends ErrorMap,
   TMeta extends Meta,
-  TBuilder extends Builder<
+>(
+  osBuilder: Builder<
     TInitialContext,
     TCurrentContext,
     Schema<unknown, unknown>,
@@ -215,11 +210,10 @@ function createGetTaskExecutionProcedure<
     TErrorMap,
     TMeta
   >,
->(
-  osBuilder: TBuilder,
   executor: DurableExecutor,
   tasks: TTasks,
 ): GetTaskExecutionProcedure<TTasks, TInitialContext, TCurrentContext, TErrorMap, TMeta> {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the procedure returns the execution of the task that taskId names, and the procedure type maps each task id to its output type
   return osBuilder
     .input(
       type<{
@@ -265,7 +259,8 @@ function createWakeupSleepingTaskExecutionProcedure<
   TCurrentContext extends Context,
   TErrorMap extends ErrorMap,
   TMeta extends Meta,
-  TBuilder extends Builder<
+>(
+  osBuilder: Builder<
     TInitialContext,
     TCurrentContext,
     Schema<unknown, unknown>,
@@ -273,8 +268,6 @@ function createWakeupSleepingTaskExecutionProcedure<
     TErrorMap,
     TMeta
   >,
->(
-  osBuilder: TBuilder,
   executor: DurableExecutor,
   tasks: TTasks,
 ): WakeupSleepingTaskExecutionProcedure<
@@ -284,6 +277,7 @@ function createWakeupSleepingTaskExecutionProcedure<
   TErrorMap,
   TMeta
 > {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the procedure returns the execution of the task that taskId names, and the procedure type maps each task id to its output type
   return osBuilder
     .input(
       type<{
@@ -300,7 +294,7 @@ function createWakeupSleepingTaskExecutionProcedure<
           message: `Task ${input.taskId} not found`,
         })
       }
-      if (task.taskType !== 'sleepingTask') {
+      if (!isSleepingTask(task)) {
         throw new ORPCError('BAD_REQUEST', {
           message: `Task ${input.taskId} is not a sleeping task`,
         })
@@ -308,7 +302,7 @@ function createWakeupSleepingTaskExecutionProcedure<
 
       try {
         return await executor.wakeupSleepingTaskExecution(
-          task as Task<unknown, unknown, 'sleepingTask'>,
+          task,
           input.sleepingTaskUniqueId,
           input.options,
         )
@@ -418,6 +412,7 @@ export function createTasksRouter<
   TCurrentContext extends Context,
   TErrorMap extends ErrorMap,
   TMeta extends Meta,
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- public API: typing the builder parameter directly would change how callers' context, error map and meta types are inferred
   TBuilder extends Builder<
     TInitialContext,
     TCurrentContext,
@@ -496,7 +491,7 @@ const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504])
  * @returns A task that executes the procedure when run
  */
 export function convertProcedureClientToTask<
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches a procedure client of any client context
   TProcedure extends ProcedureClient<any, AnySchema, AnySchema, ErrorMap>,
 >(
   executor: DurableExecutor,
@@ -506,7 +501,7 @@ export function convertProcedureClientToTask<
     ? [options?: FriendlyClientOptions<TClientContext>]
     : never
 ): TProcedure extends ProcedureClient<
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches a procedure client of any client context
   any,
   infer TInputSchema,
   infer TOutputSchema,
@@ -514,10 +509,12 @@ export function convertProcedureClientToTask<
 >
   ? Task<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>>
   : never {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the task runs the procedure, so its input and output types are the procedure's
   return executor.task({
     ...taskOptions,
     run: async (_, input) => {
-      const context = rest.length > 0 ? rest[0]! : undefined
+      const context = rest[0]
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the task input is the procedure's input and the rest parameter is typed by the procedure's client context
       const procedureRest = [input, context] as unknown as TProcedure extends ProcedureClient<
         infer TClientContext,
         infer TInputSchema,
@@ -526,7 +523,7 @@ export function convertProcedureClientToTask<
       >
         ? ClientRest<TClientContext, InferSchemaInput<TInputSchema>>
         : never
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- the procedure type has an `any` client context, so its result is typed `any`
       const { error, data, isSuccess } = await safe(procedure(...procedureRest))
       if (error) {
         const orpcError = toORPCError(error)
@@ -544,8 +541,9 @@ export function convertProcedureClientToTask<
         }
 
         throw new DurableExecutionError(orpcError.message, { isRetryable, isInternal })
-      } else if (isSuccess) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+      }
+      if (isSuccess) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the data is the output of the procedure, typed `any` by its `any` client context
         return data as TProcedure extends ProcedureClient<
           ClientContext,
           AnySchema,
@@ -554,11 +552,10 @@ export function convertProcedureClientToTask<
         >
           ? InferSchemaOutput<TOutputSchema>
           : never
-      } else {
-        throw DurableExecutionError.nonRetryable('Unknown error')
       }
+      throw DurableExecutionError.nonRetryable('Unknown error')
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches a procedure client of any client context
   }) as TProcedure extends ProcedureClient<any, infer TInputSchema, infer TOutputSchema, ErrorMap>
     ? Task<InferSchemaInput<TInputSchema>, InferSchemaOutput<TOutputSchema>>
     : never

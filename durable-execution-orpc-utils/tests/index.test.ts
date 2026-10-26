@@ -4,9 +4,8 @@ import {
   DurableExecutionNotFoundError,
   DurableExecutor,
   InMemoryTaskExecutionsStorage,
-  type FinishedTaskExecution,
-  type Task,
 } from 'durable-execution'
+import type { FinishedTaskExecution, Task } from 'durable-execution'
 
 import { sleep } from '@gpahal/std/promises'
 
@@ -18,7 +17,7 @@ async function waitAndGetFinishedExecution<TInput, TOutput>(
   executionId: string,
 ): Promise<FinishedTaskExecution<TOutput>> {
   const handle = await executor.getTaskExecutionHandle(task, executionId)
-  return await handle.waitAndGetFinishedExecution({ pollingIntervalMs: 25 })
+  return handle.waitAndGetFinishedExecution({ pollingIntervalMs: 25 })
 }
 
 describe('server', () => {
@@ -64,7 +63,7 @@ describe('server', () => {
     expect(execution.status).toBe('completed')
     assert(execution.status === 'completed')
     expect(execution.output).toBeDefined()
-    expect(execution.output.n).toEqual(1)
+    expect(execution.output.n).toBe(1)
   })
 
   it('should handle invalid task id to enqueue', async () => {
@@ -202,7 +201,7 @@ describe('server', () => {
         sleepingTaskUniqueId: 'unique_id',
         options: {
           status: 'completed',
-          output: { n: 1 } as never,
+          output: { n: 1 },
         },
       }),
     ).rejects.toThrow('Task regularTask is not a sleeping task')
@@ -259,7 +258,7 @@ describe('server', () => {
     expect(finishedExecution.status).toBe('completed')
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.output).toBeDefined()
-    expect(finishedExecution.output.n).toEqual(1)
+    expect(finishedExecution.output.n).toBe(1)
   })
 
   it('should handle procedureClientTask generic error', async () => {
@@ -774,7 +773,7 @@ describe('convertProcedureClientToTask', () => {
       .output(type<{ n: number }>())
       .handler(() => {
         executionCount++
-        // eslint-disable-next-line @typescript-eslint/only-throw-error
+        // eslint-disable-next-line @typescript-eslint/only-throw-error -- the test checks how a thrown non-error value is handled
         throw 'Unknown error type'
       })
 

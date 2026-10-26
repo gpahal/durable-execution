@@ -1,16 +1,20 @@
-import { Deferred, Effect, Either, Ref } from 'effect'
+import { Deferred, Effect, Array as EffectArray, Ref, Result } from 'effect'
 
 import { getErrorMessage } from '@gpahal/std/errors'
 
 import { makeBackgroundProcessor } from './background-processor'
 import { convertErrorToDurableExecutionError, DurableExecutionError } from './errors'
-import { makeFiberPool, type FiberPool } from './fiber-pool'
+import { makeFiberPool } from './fiber-pool'
+import type { FiberPool } from './fiber-pool'
 
 export type BatchRequest<TInput, TOutput> = {
   input: TInput
   weight: number
   deferred: Deferred.Deferred<TOutput, DurableExecutionError>
 }
+
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- processors built with Effect.fn that return nothing are typed `Effect<void>`, which means "no results"
+type EmptyBatchResult = undefined | null | void
 
 export type BackgroundBatchProcessorOptions<TInput, TOutput> = {
   readonly executorId: string
@@ -21,15 +25,15 @@ export type BackgroundBatchProcessorOptions<TInput, TOutput> = {
   readonly processBatchRequests: (
     requests: ReadonlyArray<TInput>,
   ) => undefined extends TOutput
-    ? Effect.Effect<ReadonlyArray<TOutput> | undefined | null | void, unknown>
+    ? Effect.Effect<ReadonlyArray<TOutput> | EmptyBatchResult, unknown>
     : null extends TOutput
-      ? Effect.Effect<ReadonlyArray<TOutput> | undefined | null | void, unknown>
-      : void extends TOutput
-        ? Effect.Effect<ReadonlyArray<TOutput> | undefined | null | void, unknown>
-        : Effect.Effect<ReadonlyArray<TOutput>, unknown>
+      ? Effect.Effect<ReadonlyArray<TOutput> | EmptyBatchResult, unknown>
+      : Effect.Effect<ReadonlyArray<TOutput>, unknown>
   readonly skipInitialSleep?: boolean
   readonly shutdownTimeoutMs?: number
 }
+
+const isArray = (value: unknown): value is ReadonlyArray<unknown> => Array.isArray(value)
 
 type BackgroundBatchProcessorState<TInput, TOutput> = {
   readonly pendingRequestsBatches: Array<{
@@ -45,11 +49,12 @@ const processBatchRequestsIteration = Effect.fn(function* <TInput, TOutput>(
   fiberPool: FiberPool,
 ) {
   const pendingRequestBatches = yield* Ref.modify(stateRef, (state) => {
+    const [firstBatch] = state.pendingRequestsBatches
     const shouldSkipBatch =
-      state.pendingRequestsBatches.length === 0 ||
+      firstBatch === undefined ||
       (state.pendingRequestsBatches.length === 1 &&
         state.skippedBatchCount < 3 &&
-        state.pendingRequestsBatches[0]!.weight < options.batchWeight / 3)
+        firstBatch.weight < options.batchWeight / 3)
     return [
       shouldSkipBatch ? [] : state.pendingRequestsBatches.map((batch) => batch.requests),
       shouldSkipBatch
@@ -72,45 +77,47 @@ const processBatchRequestsIteration = Effect.fn(function* <TInput, TOutput>(
       pendingRequestBatches,
       (batch: Array<BatchRequest<TInput, TOutput>>) =>
         Effect.gen(function* () {
-          const resultEither = yield* options
+          const resultResult = yield* options
             .processBatchRequests(batch.map((r) => r.input))
-            .pipe(Effect.mapError(convertErrorToDurableExecutionError), Effect.either)
-          if (Either.isLeft(resultEither)) {
-            return yield* Effect.fail(resultEither.left)
+            .pipe(Effect.mapError(convertErrorToDurableExecutionError), Effect.result)
+          if (Result.isFailure(resultResult)) {
+            return yield* Effect.fail(resultResult.failure)
           }
 
-          const result = resultEither.right
+          const result = resultResult.success
           if (result == null) {
             return yield* Effect.forEach(
               batch,
-              (r) => Deferred.succeed(r.deferred, undefined as TOutput),
+              (r) =>
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- processBatchRequests can return no results only when TOutput accepts undefined or null
+                Deferred.succeed(r.deferred, undefined as TOutput),
               {
                 concurrency: 'unbounded',
                 discard: true,
               },
             )
-          } else if (Array.isArray(result)) {
-            return yield* result.length !== batch.length
-              ? Effect.fail(
-                  DurableExecutionError.nonRetryable(
-                    `Invalid number of results returned from processBatchRequests [returned=${result.length}] [expected=${batch.length}]`,
-                  ),
-                )
-              : Effect.forEach(
-                  batch,
-                  (r, i) => Deferred.succeed(r.deferred, result[i]! as TOutput),
+          }
+          if (isArray(result)) {
+            return yield* result.length === batch.length
+              ? Effect.forEach(
+                  EffectArray.zip(batch, result),
+                  ([r, output]) => Deferred.succeed(r.deferred, output),
                   {
                     concurrency: 'unbounded',
                     discard: true,
                   },
                 )
-          } else {
-            return yield* Effect.fail(
-              DurableExecutionError.nonRetryable(
-                `Invalid return type returned from processBatchRequests [returnType=${typeof result}]`,
-              ),
-            )
+              : Effect.fail(
+                  DurableExecutionError.nonRetryable(
+                    `Invalid number of results returned from processBatchRequests [returned=${result.length}] [expected=${batch.length}]`,
+                  ),
+                )
           }
+          return yield* Effect.fail(
+            DurableExecutionError.nonRetryable(
+              `Invalid return type returned from processBatchRequests [returnType=${typeof result}]`,
+            ),
+          )
         }).pipe(
           Effect.tapError((error) =>
             Effect.gen(function* () {
@@ -129,7 +136,7 @@ const processBatchRequestsIteration = Effect.fn(function* <TInput, TOutput>(
               )
             }),
           ),
-          Effect.catchAll(() => Effect.void),
+          Effect.catch(() => Effect.void),
         ),
       {
         concurrency: 25,
@@ -139,149 +146,147 @@ const processBatchRequestsIteration = Effect.fn(function* <TInput, TOutput>(
   )
 })
 
-const processRequestWithoutBatching = Effect.fn(
-  <TInput, TOutput>({
-    options,
-    input,
-  }: {
-    options: BackgroundBatchProcessorOptions<TInput, TOutput>
-    input: TInput
-  }) =>
-    Effect.gen(function* () {
-      const resultEither = yield* options
-        .processBatchRequests([input])
-        .pipe(Effect.mapError(convertErrorToDurableExecutionError), Effect.either)
-      if (Either.isLeft(resultEither)) {
-        return yield* Effect.fail(resultEither.left)
-      }
+const processRequestWithoutBatching = Effect.fn(function* <TInput, TOutput>({
+  options,
+  input,
+}: {
+  options: BackgroundBatchProcessorOptions<TInput, TOutput>
+  input: TInput
+}) {
+  const resultResult = yield* options
+    .processBatchRequests([input])
+    .pipe(Effect.mapError(convertErrorToDurableExecutionError), Effect.result)
+  if (Result.isFailure(resultResult)) {
+    return yield* Effect.fail(resultResult.failure)
+  }
 
-      const result = resultEither.right
-      if (result == null) {
-        return undefined as TOutput
-      } else if (Array.isArray(result)) {
-        if (result.length !== 1) {
-          return yield* Effect.fail(
-            DurableExecutionError.nonRetryable(
-              `Invalid number of results returned from processBatchRequests [returned=${result.length}] [expected=1]`,
+  const result = resultResult.success
+  if (result == null) {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- processBatchRequests can return no results only when TOutput accepts undefined or null
+    return undefined as TOutput
+  }
+  if (isArray(result)) {
+    if (result.length !== 1 || !EffectArray.isReadonlyArrayNonEmpty(result)) {
+      return yield* Effect.fail(
+        DurableExecutionError.nonRetryable(
+          `Invalid number of results returned from processBatchRequests [returned=${result.length}] [expected=1]`,
+        ),
+      )
+    }
+    return EffectArray.headNonEmpty(result)
+  }
+  return yield* Effect.fail(
+    DurableExecutionError.nonRetryable(
+      `Invalid return type returned from processBatchRequests [returnType=${typeof result}]`,
+    ),
+  )
+})
+
+export const makeBackgroundBatchProcessor = Effect.fn(function* <TInput, TOutput>(
+  options: BackgroundBatchProcessorOptions<TInput, TOutput>,
+) {
+  return yield* options.enableBatching
+    ? Effect.acquireRelease(
+        Effect.gen(function* () {
+          const stateRef = yield* Ref.make<BackgroundBatchProcessorState<TInput, TOutput>>({
+            pendingRequestsBatches: [],
+            skippedBatchCount: 0,
+          })
+
+          const fiberPool = yield* makeFiberPool({
+            executorId: options.executorId,
+            processName: 'BackgroundBatchProcessor',
+            shutdownTimeoutMs: options.shutdownTimeoutMs,
+          })
+
+          const { isRunning, start, shutdown } = yield* makeBackgroundProcessor({
+            executorId: options.executorId,
+            processName: options.processName,
+            intraIterationSleepMs: options.intraBatchSleepMs,
+            iterationEffect: processBatchRequestsIteration(options, stateRef, fiberPool).pipe(
+              Effect.map(() => ({ hasMore: false })),
             ),
-          )
-        }
-        return result[0] as TOutput
-      } else {
-        return yield* Effect.fail(
-          DurableExecutionError.nonRetryable(
-            `Invalid return type returned from processBatchRequests [returnType=${typeof result}]`,
-          ),
-        )
-      }
-    }),
-)
+            skipInitialSleep: options.skipInitialSleep,
+            shutdownTimeoutMs: options.shutdownTimeoutMs,
+          })
 
-export const makeBackgroundBatchProcessor = Effect.fn(
-  <TInput, TOutput>(options: BackgroundBatchProcessorOptions<TInput, TOutput>) =>
-    options.enableBatching
-      ? Effect.acquireRelease(
-          Effect.gen(function* () {
-            const stateRef = yield* Ref.make<BackgroundBatchProcessorState<TInput, TOutput>>({
-              pendingRequestsBatches: [],
-              skippedBatchCount: 0,
-            })
-
-            const fiberPool = yield* makeFiberPool({
-              executorId: options.executorId,
-              processName: 'BackgroundBatchProcessor',
-              shutdownTimeoutMs: options.shutdownTimeoutMs,
-            })
-
-            const { isRunning, start, shutdown } = yield* makeBackgroundProcessor({
-              executorId: options.executorId,
-              processName: options.processName,
-              intraIterationSleepMs: options.intraBatchSleepMs,
-              iterationEffect: processBatchRequestsIteration(options, stateRef, fiberPool).pipe(
-                Effect.map(() => ({ hasMore: false })),
-              ),
-              skipInitialSleep: options.skipInitialSleep,
-              shutdownTimeoutMs: options.shutdownTimeoutMs,
-            })
-
-            const addBatchRequest = Effect.fn(function* (request: BatchRequest<TInput, TOutput>) {
-              yield* Ref.update(stateRef, (state) => {
-                if (state.pendingRequestsBatches.length === 0) {
-                  return {
-                    ...state,
-                    pendingRequestsBatches: [
-                      {
-                        requests: [request],
-                        weight: request.weight,
-                      },
-                    ],
-                  }
-                } else {
-                  let lastBatch = state.pendingRequestsBatches.at(-1)!
-                  if (lastBatch.weight + request.weight > options.batchWeight) {
-                    state.pendingRequestsBatches.push({
+          const addBatchRequest = Effect.fn(function* (request: BatchRequest<TInput, TOutput>) {
+            yield* Ref.update(stateRef, (state) => {
+              const lastBatch = state.pendingRequestsBatches.at(-1)
+              if (lastBatch === undefined) {
+                return {
+                  ...state,
+                  pendingRequestsBatches: [
+                    {
                       requests: [request],
                       weight: request.weight,
-                    })
-                  } else {
-                    lastBatch.requests.push(request)
-                    lastBatch.weight += request.weight
-                  }
-                  lastBatch = state.pendingRequestsBatches.at(-1)!
-                  return {
-                    ...state,
-                    pendingRequestsBatches: state.pendingRequestsBatches,
-                  }
+                    },
+                  ],
                 }
-              })
-            })
-
-            const processRequest = Effect.fn(function* ({
-              input,
-              weight = 1,
-              enableBatching = true,
-            }: {
-              input: TInput
-              weight?: number
-              enableBatching?: boolean
-            }) {
-              if (!enableBatching || !(yield* isRunning)) {
-                return yield* processRequestWithoutBatching({ options, input })
               }
 
-              const request = {
-                input,
-                weight: weight == null ? 1 : weight,
-                deferred: yield* Deferred.make<TOutput, DurableExecutionError>(),
+              if (lastBatch.weight + request.weight > options.batchWeight) {
+                state.pendingRequestsBatches.push({
+                  requests: [request],
+                  weight: request.weight,
+                })
+              } else {
+                lastBatch.requests.push(request)
+                lastBatch.weight += request.weight
               }
-              yield* addBatchRequest(request)
-              return yield* Deferred.await(request.deferred)
+              return {
+                ...state,
+                pendingRequestsBatches: state.pendingRequestsBatches,
+              }
             })
+          })
 
-            const shutdownWrapper = Effect.all([shutdown, fiberPool.shutdown])
-
-            return { processRequest, isRunning, start, shutdown: shutdownWrapper }
-          }),
-          (backgroundBatchProcessor) => backgroundBatchProcessor.shutdown,
-        )
-      : Effect.sync(() => {
-          return {
-            processRequest: Effect.fn(function* ({
-              input,
-            }: {
-              input: TInput
-              weight?: number
-              enableBatching?: boolean
-            }) {
+          const processRequest = Effect.fn(function* ({
+            input,
+            weight = 1,
+            enableBatching = true,
+          }: {
+            input: TInput
+            weight?: number
+            enableBatching?: boolean
+          }) {
+            if (!enableBatching || !(yield* isRunning)) {
               return yield* processRequestWithoutBatching({ options, input })
-            }),
-            isRunning: Effect.succeed(true),
-            start: Effect.void,
-            shutdown: Effect.void,
-          }
-        }),
-)
+            }
 
-export type BackgroundBatchProcessor<TInput, TOutput> = Effect.Effect.Success<
+            const request = {
+              input,
+              weight,
+              deferred: yield* Deferred.make<TOutput, DurableExecutionError>(),
+            }
+            yield* addBatchRequest(request)
+            return yield* Deferred.await(request.deferred)
+          })
+
+          const shutdownWrapper = Effect.all([shutdown, fiberPool.shutdown])
+
+          return { processRequest, isRunning, start, shutdown: shutdownWrapper }
+        }),
+        (backgroundBatchProcessor) => backgroundBatchProcessor.shutdown,
+      )
+    : Effect.sync(() => {
+        return {
+          processRequest: Effect.fn(function* ({
+            input,
+          }: {
+            input: TInput
+            weight?: number
+            enableBatching?: boolean
+          }) {
+            return yield* processRequestWithoutBatching({ options, input })
+          }),
+          isRunning: Effect.succeed(true),
+          start: Effect.void,
+          shutdown: Effect.void,
+        }
+      })
+})
+
+export type BackgroundBatchProcessor<TInput, TOutput> = Effect.Success<
   ReturnType<typeof makeBackgroundBatchProcessor<TInput, TOutput>>
 >

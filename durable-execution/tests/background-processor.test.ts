@@ -1,6 +1,6 @@
 import { Effect, Exit, Fiber, Ref } from 'effect'
-import { DurableExecutionCancelledError } from 'src'
 
+import { DurableExecutionCancelledError } from '../src'
 import { makeBackgroundProcessor } from '../src/background-processor'
 
 describe('backgroundProcessor', () => {
@@ -140,7 +140,7 @@ describe('backgroundProcessor', () => {
           yield* processor.start
 
           yield* Effect.gen(function* () {
-            while (true) {
+            for (;;) {
               const isStarted = yield* Ref.get(isStartedRef)
               if (isStarted) break
               yield* Effect.sleep('10 millis')

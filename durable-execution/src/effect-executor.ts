@@ -1,11 +1,22 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
-import { Clock, Duration, Effect, Either, Fiber, Logger, LogLevel, Ref, Schema } from 'effect'
+import {
+  Clock,
+  Duration,
+  Effect,
+  Fiber,
+  Option,
+  Predicate,
+  Ref,
+  References,
+  Result,
+  Schema,
+  SchemaGetter,
+} from 'effect'
 
 import { getErrorMessage } from '@gpahal/std/errors'
-import { isFunction } from '@gpahal/std/functions'
-import { isString } from '@gpahal/std/strings'
 
 import { makeBackgroundProcessor } from './background-processor'
+import type { DurableExecutionErrorStorageValue } from './errors'
 import {
   convertDurableExecutionErrorToStorageValue,
   convertErrorToDurableExecutionError,
@@ -19,33 +30,30 @@ import { makeSerializerInternal } from './serializer'
 import {
   convertTaskExecutionStorageValueToTaskExecution,
   createTaskExecutionStorageValue,
-  type TaskExecutionsStorage,
-  type TaskExecutionStorageValue,
 } from './storage'
-import {
-  makeTaskExecutionsStorageInternal,
-  type TaskExecutionStorageUpdateInternal,
-} from './storage-internal'
-import {
-  childTask,
-  FINISHED_TASK_EXECUTION_STATUSES,
-  type AnyTask,
-  type ChildTask,
-  type DefaultParentTaskOutput,
-  type FinishedChildTaskExecution,
-  type FinishedTaskExecution,
-  type InferTaskInput,
-  type InferTaskOutput,
-  type LastTaskElementInArray,
-  type ParentTaskOptions,
-  type SequentialTasks,
-  type SleepingTaskOptions,
-  type Task,
-  type TaskEnqueueOptions,
-  type TaskExecutionSummary,
-  type TaskOptions,
-  type TaskRunContext,
-  type WakeupSleepingTaskExecutionOptions,
+import type { TaskExecutionsStorage, TaskExecutionStorageValue } from './storage'
+import { makeTaskExecutionsStorageInternal } from './storage-internal'
+import type { TaskExecutionStorageUpdateInternal } from './storage-internal'
+import { childTask, FINISHED_TASK_EXECUTION_STATUSES } from './task'
+import type {
+  AnyTask,
+  ChildTask,
+  DefaultParentTaskOutput,
+  FinishedChildTaskExecution,
+  FinishedTaskExecution,
+  InferTaskInput,
+  InferTaskOutput,
+  LastTaskElementInArray,
+  ParentTaskOptions,
+  SequentialTasks,
+  SleepingTaskOptions,
+  Task,
+  TaskEnqueueOptions,
+  TaskExecution,
+  TaskExecutionSummary,
+  TaskOptions,
+  TaskRunContext,
+  WakeupSleepingTaskExecutionOptions,
 } from './task'
 import {
   addTaskInternal,
@@ -56,13 +64,14 @@ import {
   overrideTaskEnqueueOptions,
   runParentWithTimeout,
   validateEnqueueOptions,
-  type TaskInternal,
 } from './task-internal'
+import type { TaskInternal } from './task-internal'
 import {
   convertMaybePromiseOrEffectToEffect,
   convertMaybePromiseToEffect,
   convertPromiseToEffect,
   generateId,
+  isNonEmptyString,
   summarizeStandardSchemaIssues,
 } from './utils'
 
@@ -71,8 +80,8 @@ import {
  *
  * @category Executor
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type AnySchema = StandardSchemaV1 | Schema.Schema<any, any, never>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- an Effect Schema codec of any type and encoded type is accepted
+export type AnySchema = StandardSchemaV1 | Schema.Codec<any, any>
 
 function isStandardSchema<TInput, TOutput>(
   schema: AnySchema,
@@ -80,7 +89,7 @@ function isStandardSchema<TInput, TOutput>(
   return '~standard' in schema
 }
 
-function isEffectSchema<A, I>(schema: AnySchema): schema is Schema.Schema<A, I, never> {
+function isEffectSchema<A, I>(schema: AnySchema): schema is Schema.Codec<A, I> {
   return 'ast' in schema
 }
 
@@ -92,8 +101,8 @@ function isEffectSchema<A, I>(schema: AnySchema): schema is Schema.Schema<A, I, 
 export type InferSchemaInput<TSchema extends AnySchema> =
   TSchema extends StandardSchemaV1<infer Input>
     ? Input
-    : // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      TSchema extends Schema.Schema<any, infer Input, never>
+    : // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches an Effect Schema codec of any type
+      TSchema extends Schema.Codec<any, infer Input>
       ? Input
       : never
 
@@ -105,10 +114,53 @@ export type InferSchemaInput<TSchema extends AnySchema> =
 export type InferSchemaOutput<TSchema extends AnySchema> =
   TSchema extends StandardSchemaV1<infer Output>
     ? Output
-    : // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      TSchema extends Schema.Schema<infer Output, any, never>
+    : // eslint-disable-next-line @typescript-eslint/no-explicit-any -- matches an Effect Schema codec of any type
+      TSchema extends Schema.Codec<infer Output, any>
       ? Output
       : never
+
+/**
+ * Makes a struct field optional and nullish on the encoded side, and fills in the default value
+ * when the field is missing, `undefined` or `null` during decoding.
+ */
+function optionalNullishWithDefault<S extends Schema.Top>(
+  schema: S,
+  defaultValue: () => S['Type'],
+) {
+  return Schema.optional(Schema.NullOr(schema)).pipe(
+    Schema.decodeTo(Schema.toType(schema), {
+      decode: SchemaGetter.transformOptional((value) =>
+        value.pipe(Option.filter(Predicate.isNotNullish), Option.orElseSome(defaultValue)),
+      ),
+      encode: SchemaGetter.required(),
+    }),
+  )
+}
+
+/**
+ * Gets the first child task execution of a parent task. The children are the executions of the
+ * tasks that the parent task enqueued, so the caller knows the output type of the child.
+ */
+function getFirstChildTaskExecution<TOutput>(
+  children: ReadonlyArray<FinishedChildTaskExecution>,
+): Effect.Effect<FinishedChildTaskExecution<TOutput>, DurableExecutionError> {
+  const [child] = children
+  if (child === undefined) {
+    return Effect.fail(DurableExecutionError.nonRetryable('No child task execution found'))
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the child is the execution of a task whose output type is TOutput
+  return Effect.succeed(child as FinishedChildTaskExecution<TOutput>)
+}
+
+function getErrorStorageValueMessage(error: DurableExecutionErrorStorageValue | undefined): string {
+  return error == null || error.message === '' ? 'Unknown error' : error.message
+}
+
+function isFinishedTaskExecution<TOutput>(
+  execution: TaskExecution<TOutput>,
+): execution is FinishedTaskExecution<TOutput> {
+  return FINISHED_TASK_EXECUTION_STATUSES.includes(execution.status)
+}
 
 /**
  * Schema for the options for the effect durable executor.
@@ -116,93 +168,67 @@ export type InferSchemaOutput<TSchema extends AnySchema> =
  * @category Executor
  */
 export const EffectDurableExecutorOptionsSchema = Schema.Struct({
-  logLevel: Schema.Literal('debug', 'info', 'error').pipe(
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 'info' as const),
+  logLevel: optionalNullishWithDefault(
+    Schema.Literals(['debug', 'info', 'error']),
+    () => 'info' as const,
   ),
-  expireLeewayMs: Schema.Number.pipe(
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 300_000),
+  expireLeewayMs: optionalNullishWithDefault(Schema.Number, () => 300_000),
+  backgroundProcessIntraBatchSleepMs: optionalNullishWithDefault(Schema.Number, () => 500),
+  maxConcurrentTaskExecutions: optionalNullishWithDefault(Schema.Number, () => 5000),
+  maxTaskExecutionsPerBatch: optionalNullishWithDefault(Schema.Number, () => 100),
+  processOnChildrenFinishedTaskExecutionsBatchSize: optionalNullishWithDefault(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 })),
+    () => 100,
   ),
-  backgroundProcessIntraBatchSleepMs: Schema.Number.pipe(
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 500),
+  markFinishedTaskExecutionsAsCloseStatusReadyBatchSize: optionalNullishWithDefault(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 })),
+    () => 100,
   ),
-  maxConcurrentTaskExecutions: Schema.Number.pipe(
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 5000),
+  closeFinishedTaskExecutionsBatchSize: optionalNullishWithDefault(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 })),
+    () => 100,
   ),
-  maxTaskExecutionsPerBatch: Schema.Number.pipe(
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 100),
+  cancelNeedsPromiseCancellationTaskExecutionsBatchSize: optionalNullishWithDefault(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 })),
+    () => 100,
   ),
-  processOnChildrenFinishedTaskExecutionsBatchSize: Schema.Int.pipe(
-    Schema.between(1, 200),
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 100),
+  retryExpiredTaskExecutionsBatchSize: optionalNullishWithDefault(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 })),
+    () => 100,
   ),
-  markFinishedTaskExecutionsAsCloseStatusReadyBatchSize: Schema.Int.pipe(
-    Schema.between(1, 200),
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 100),
+  maxChildrenPerTaskExecution: optionalNullishWithDefault(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1000 })),
+    () => 1000,
   ),
-  closeFinishedTaskExecutionsBatchSize: Schema.Int.pipe(
-    Schema.between(1, 200),
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 100),
+  maxSerializedInputDataSize: optionalNullishWithDefault(
+    Schema.Int.check(Schema.isBetween({ minimum: 1024, maximum: 10 * 1024 * 1024 })), // 1KB to 10MB
+    () => 1024 * 1024, // 1MB
   ),
-  cancelNeedsPromiseCancellationTaskExecutionsBatchSize: Schema.Int.pipe(
-    Schema.between(1, 200),
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 100),
+  maxSerializedOutputDataSize: optionalNullishWithDefault(
+    Schema.Int.check(Schema.isBetween({ minimum: 1024, maximum: 10 * 1024 * 1024 })), // 1KB to 10MB
+    () => 1024 * 1024, // 1MB
   ),
-  retryExpiredTaskExecutionsBatchSize: Schema.Int.pipe(
-    Schema.between(1, 200),
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 100),
+  enableStorageBatching: optionalNullishWithDefault(Schema.Boolean, () => false),
+  enableStorageStats: optionalNullishWithDefault(Schema.Boolean, () => false),
+  storageBackgroundBatchingProcessIntraBatchSleepMs: optionalNullishWithDefault(
+    Schema.Number.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+    () => 10,
   ),
-  maxChildrenPerTaskExecution: Schema.Int.pipe(
-    Schema.between(1, 1000),
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 1000),
-  ),
-  maxSerializedInputDataSize: Schema.Int.pipe(
-    Schema.between(1024, 10 * 1024 * 1024), // 1KB to 10MB
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 1024 * 1024), // 1MB
-  ),
-  maxSerializedOutputDataSize: Schema.Int.pipe(
-    Schema.between(1024, 10 * 1024 * 1024), // 1KB to 10MB
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 1024 * 1024), // 1MB
-  ),
-  enableStorageBatching: Schema.Boolean.pipe(
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => false),
-  ),
-  enableStorageStats: Schema.Boolean.pipe(
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => false),
-  ),
-  storageBackgroundBatchingProcessIntraBatchSleepMs: Schema.Number.pipe(
-    Schema.between(1, 100),
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 10),
-  ),
-  storageMaxRetryAttempts: Schema.Number.pipe(
-    Schema.between(0, 10),
-    Schema.optionalWith({ nullable: true }),
-    Schema.withDecodingDefault(() => 1),
+  storageMaxRetryAttempts: optionalNullishWithDefault(
+    Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 10 })),
+    () => 1,
   ),
 })
-const decodeEffectDurableExecutorOptions = Schema.decodeUnknown(EffectDurableExecutorOptionsSchema)
+const decodeEffectDurableExecutorOptions = Schema.decodeUnknownEffect(
+  EffectDurableExecutorOptionsSchema,
+)
 
 /**
  * The options for the effect durable executor.
  *
  * @category Executor
  */
-export type EffectDurableExecutorOptions = Schema.Schema.Encoded<
+export type EffectDurableExecutorOptions = Schema.Codec.Encoded<
   typeof EffectDurableExecutorOptionsSchema
 >
 
@@ -237,11 +263,15 @@ type EffectDurableExecutorState = {
  *
  * @example
  * ```ts
- * import { makeEffectDurableExecutor } from 'durable-execution'
- * import { Schema } from 'effect'
+ * import {
+ *   InMemoryTaskExecutionsStorage,
+ *   makeEffectDurableExecutor,
+ *   TaskExecutionsStorageService,
+ * } from 'durable-execution'
+ * import { Effect, Schema } from 'effect'
  *
- * const main = Effect.fn(() => Effect.gen(function* () {
- *   const executor = yield* makeEffectDurableExecutor(storage)
+ * const main = Effect.gen(function* () {
+ *   const executor = yield* makeEffectDurableExecutor()
  *
  *   // Create tasks
  *   const extractFileTitle = yield* executor
@@ -315,19 +345,22 @@ type EffectDurableExecutorState = {
  *     })
  *
  *   // Start the durable executor
- *   yield* executor.start()
+ *   yield* executor.start
  *
  *   // Enqueue task and manage its execution lifecycle
  *   const uploadFileHandle = yield* executor.enqueueTask(uploadFile, {
  *     filePath: 'file.txt',
  *     uploadUrl: 'https://example.com/upload',
  *   })
- *   const uploadFileExecution = yield* uploadFileHandle.getExecution()
+ *   const uploadFileExecution = yield* uploadFileHandle.getExecution
  *   const uploadFileFinishedExecution = yield* uploadFileHandle.waitAndGetFinishedExecution()
- *   yield* uploadFileHandle.cancel()
+ *   yield* uploadFileHandle.cancel
  *
  *   yield* Effect.log(uploadFileExecution)
- * }).pipe(Effect.scoped)
+ * }).pipe(
+ *   Effect.scoped,
+ *   Effect.provideService(TaskExecutionsStorageService, new InMemoryTaskExecutionsStorage()),
+ * )
  * ```
  *
  * @category Executor
@@ -378,7 +411,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
     const shutdownController = new AbortController()
 
     const taskInternalsMap = new Map<string, TaskInternal>()
-    const runningTaskExecutionsMap = new Map<string, Fiber.RuntimeFiber<void, never> | undefined>()
+    const runningTaskExecutionsMap = new Map<string, Fiber.Fiber<void> | undefined>()
 
     const fiberPool = yield* makeFiberPool({
       executorId,
@@ -422,13 +455,14 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         Effect.annotateLogs('taskId', taskInternal.id),
         Effect.annotateLogs('taskType', taskInternal.taskType),
       )
-      return {
+      const task: Task<TInput, TOutput, 'task'> = {
         taskType: 'task',
         id: taskInternal.id,
         retryOptions: taskInternal.retryOptions,
         sleepMsBeforeRun: taskInternal.sleepMsBeforeRun,
         timeoutMs: taskInternal.timeoutMs,
-      } as Task<TInput, TOutput, 'task'>
+      }
+      return task
     })
 
     const task = Effect.fn(function* <TInput = undefined, TOutput = unknown>(
@@ -454,13 +488,14 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         Effect.annotateLogs('taskId', taskInternal.id),
         Effect.annotateLogs('taskType', taskInternal.taskType),
       )
-      return {
+      const task: Task<TInput, TOutput, 'sleepingTask'> = {
         taskType: 'sleepingTask',
         id: taskInternal.id,
         retryOptions: taskInternal.retryOptions,
         sleepMsBeforeRun: taskInternal.sleepMsBeforeRun,
         timeoutMs: taskInternal.timeoutMs,
-      } as Task<TInput, TOutput, 'sleepingTask'>
+      }
+      return task
     })
 
     const sleepingTask = Effect.fn(function* <TOutput = unknown>(
@@ -478,11 +513,10 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       TTaskType extends 'parentTask' | 'sequentialTasks' = 'parentTask',
     >(
       taskOptions: ParentTaskOptions<TRunInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
-      validateInputFn?: (
-        id: string,
-        input: TInput,
-      ) => Effect.Effect<TRunInput, DurableExecutionError>,
-      taskType?: TTaskType,
+      validateInputFn:
+        | ((id: string, input: TInput) => Effect.Effect<TRunInput, DurableExecutionError>)
+        | undefined,
+      taskType: TTaskType,
     ) {
       yield* errorIfShutdown
 
@@ -490,7 +524,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         taskOptions,
         validateInputFn,
       )
-      if (taskType && taskType !== 'parentTask') {
+      if (taskType !== 'parentTask') {
         taskOptionsInternal.taskType = taskType
       }
       const taskInternal = yield* addTaskInternal(taskInternalsMap, taskOptionsInternal)
@@ -500,13 +534,14 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         Effect.annotateLogs('taskId', taskInternal.id),
         Effect.annotateLogs('taskType', taskInternal.taskType),
       )
-      return {
-        taskType: taskType ?? 'parentTask',
+      const task: Task<TInput, TOutput, TTaskType> = {
+        taskType,
         id: taskInternal.id,
         retryOptions: taskInternal.retryOptions,
         sleepMsBeforeRun: taskInternal.sleepMsBeforeRun,
         timeoutMs: taskInternal.timeoutMs,
-      } as Task<TInput, TOutput, TTaskType>
+      }
+      return task
     })
 
     const parentTask = Effect.fn(function* <
@@ -515,7 +550,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       TOutput = DefaultParentTaskOutput<TRunOutput>,
       TFinalizeTaskRunOutput = unknown,
     >(taskOptions: ParentTaskOptions<TInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>) {
-      return yield* parentTaskInternal(taskOptions)
+      return yield* parentTaskInternal(taskOptions, undefined, 'parentTask')
     })
 
     const sequentialTasksInternal = Effect.fnUntraced(function* <
@@ -609,11 +644,10 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
               output: input,
               children: [
                 childTask(iterationTask, input.input, {
-                  sleepMsBeforeRun: (sleepMsBeforeRun && isFunction(sleepMsBeforeRun)
-                    ? sleepMsBeforeRun(input.attempt)
-                    : sleepMsBeforeRun != null
-                      ? sleepMsBeforeRun
-                      : iterationTask.sleepMsBeforeRun) as number | undefined,
+                  sleepMsBeforeRun:
+                    typeof sleepMsBeforeRun === 'function'
+                      ? sleepMsBeforeRun(input.attempt)
+                      : (sleepMsBeforeRun ?? iterationTask.sleepMsBeforeRun),
                 }),
               ],
             }
@@ -623,9 +657,9 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
           timeoutMs: 30_000,
           runParent: (_, { output: input, children }) =>
             Effect.gen(function* () {
-              const child = children[0]! as FinishedChildTaskExecution<
+              const child = yield* getFirstChildTaskExecution<
                 { isDone: false } | { isDone: true; output: TOutput }
-              >
+              >(children)
               if (child.status !== 'completed') {
                 return yield* Effect.fail(
                   DurableExecutionError.nonRetryable(
@@ -658,9 +692,9 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
                 return { isSuccess: false }
               }
 
-              const child = children[0]! as FinishedChildTaskExecution<
+              const child = yield* getFirstChildTaskExecution<
                 { isSuccess: false } | { isSuccess: true; output: TOutput }
-              >
+              >(children)
               if (child.status !== 'completed') {
                 return yield* Effect.fail(DurableExecutionError.nonRetryable(child.error.message))
               }
@@ -688,9 +722,9 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
             }),
           finalize: ({ children }) =>
             Effect.gen(function* () {
-              const child = children[0]! as FinishedChildTaskExecution<
+              const child = yield* getFirstChildTaskExecution<
                 { isSuccess: false } | { isSuccess: true; output: TOutput }
-              >
+              >(children)
               if (child.status !== 'completed') {
                 return yield* Effect.fail(DurableExecutionError.nonRetryable(child.error.message))
               }
@@ -699,6 +733,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
             }),
         },
         validateInputFn,
+        'parentTask',
       )
       return loopingTask
     })
@@ -732,7 +767,8 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
             TOutput,
             TFinalizeTaskRunOutput
           >,
-        ) => parentTaskInternal(parentTaskOptions, validateInputFn),
+        ) => parentTaskInternal(parentTaskOptions, validateInputFn, 'parentTask'),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the conditional return type rejects tasks whose first input doesn't match the validated input, which TypeScript can't relate to the implementation
         sequentialTasks: (<TSequentialTasks extends ReadonlyArray<AnyTask>>(
           id: string,
           tasks: SequentialTasks<TSequentialTasks>,
@@ -740,6 +776,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
           return sequentialTasksInternal(
             id,
             tasks,
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the return type of sequentialTasks only allows calls where the validated input fits the first task
             validateInputFn as (
               id: string,
               input: TInput,
@@ -751,8 +788,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         ) => InferTaskInput<TSequentialTasks[0]> extends TRunInput
           ? Effect.Effect<
               Task<TInput, InferTaskOutput<LastTaskElementInArray<TSequentialTasks>>>,
-              DurableExecutionError,
-              never
+              DurableExecutionError
             >
           : never,
         loopingTask: <TOutput = unknown>(
@@ -778,7 +814,10 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       ) => TRunInput | Promise<TRunInput> | Effect.Effect<TRunInput, unknown>,
     ) => {
       const finalValidateInputfn = Effect.fnUntraced(function* (id: string, input: TInput) {
-        return yield* convertMaybePromiseOrEffectToEffect(() => validateInputFn(input)).pipe(
+        return yield* convertMaybePromiseOrEffectToEffect(
+          (): TRunInput | Promise<TRunInput> | Effect.Effect<TRunInput, unknown> =>
+            validateInputFn(input),
+        ).pipe(
           Effect.mapError((error) =>
             convertErrorToDurableExecutionError(error, {
               isRetryable: false,
@@ -796,8 +835,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       type TInput = InferSchemaInput<TInputSchema>
 
       const finalValidateInputfn = Effect.fnUntraced(function* (id: string, input: TInput) {
-        if (isStandardSchema(inputSchema)) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-return
+        if (isStandardSchema<TInput, TRunInput>(inputSchema)) {
           return yield* convertPromiseToEffect(async () => {
             const validateResult = await inputSchema['~standard'].validate(input)
             if (validateResult.issues != null) {
@@ -805,8 +843,8 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
                 summarizeStandardSchemaIssues(validateResult.issues),
               )
             }
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-            return validateResult.value as TRunInput
+
+            return validateResult.value
           }).pipe(
             Effect.mapError((error) =>
               convertErrorToDurableExecutionError(error, {
@@ -815,19 +853,18 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
               }),
             ),
           )
-        } else if (isEffectSchema(inputSchema)) {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-          return (yield* Schema.decodeUnknown(inputSchema)(input).pipe(
+        }
+        if (isEffectSchema<TRunInput, TInput>(inputSchema)) {
+          return yield* Schema.decodeUnknownEffect(inputSchema)(input).pipe(
             Effect.mapError((error) =>
               convertErrorToDurableExecutionError(error, {
                 isRetryable: false,
                 prefix: `Invalid input to task ${id}`,
               }),
             ),
-          )) as TRunInput
-        } else {
-          return yield* Effect.fail(DurableExecutionError.nonRetryable('Invalid schema'))
+          )
         }
+        return yield* Effect.fail(DurableExecutionError.nonRetryable('Invalid schema'))
       })
 
       return validateInputInternal(finalValidateInputfn)
@@ -840,11 +877,11 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       if (input == null) {
         return yield* Effect.fail(
           DurableExecutionError.nonRetryable(
-            `A unique id string is required to enqueue a sleeping task [taskId=${taskId}] [input=${input}]`,
+            `A unique id string is required to enqueue a sleeping task [taskId=${taskId}] [input=${String(input)}]`,
           ),
         )
       }
-      if (!isString(input)) {
+      if (typeof input !== 'string') {
         return yield* Effect.fail(
           DurableExecutionError.nonRetryable(
             `Input must be a unique id string for sleeping task [taskId=${taskId}] [input=${typeof input}]`,
@@ -868,6 +905,23 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       return input
     })
 
+    const convertTaskExecutionStorageValueToFinishedTaskExecution = Effect.fnUntraced(function* <
+      TOutput,
+    >(execution: TaskExecutionStorageValue) {
+      const taskExecution = yield* convertTaskExecutionStorageValueToTaskExecution<TOutput>(
+        execution,
+        serializer,
+      )
+      if (!isFinishedTaskExecution(taskExecution)) {
+        return yield* Effect.fail(
+          DurableExecutionError.nonRetryable(
+            `Task execution is not finished [executionId=${execution.executionId}] [status=${execution.status}]`,
+          ),
+        )
+      }
+      return taskExecution
+    })
+
     const getTaskExecutionHandleInternal = <TOutput>(taskId: string, executionId: string) => {
       return {
         taskId,
@@ -886,47 +940,47 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
             serializer,
           )
         }),
-        waitAndGetFinishedExecution: Effect.fn(
-          ({
-            pollingIntervalMs,
-          }: {
-            pollingIntervalMs?: number
-          } = {}) => {
-            const resolvedPollingInterval = Duration.millis(
-              Math.max(50, pollingIntervalMs && pollingIntervalMs > 0 ? pollingIntervalMs : 2500),
-            )
-            return Effect.gen(function* () {
-              const execution = yield* storage.getById({ executionId })
-              if (!execution) {
-                return yield* Effect.fail(
-                  new DurableExecutionNotFoundError(
-                    `Task execution not found [executionId=${executionId}]`,
-                  ),
-                )
-              }
-
-              if (FINISHED_TASK_EXECUTION_STATUSES.includes(execution.status)) {
-                return (yield* convertTaskExecutionStorageValueToTaskExecution(
-                  execution,
-                  serializer,
-                )) as FinishedTaskExecution<TOutput>
-              }
-
-              yield* Effect.logDebug('Waiting for task to be finished').pipe(
-                Effect.annotateLogs('service', 'effect-executor'),
-                Effect.annotateLogs('executorId', executorId),
-                Effect.annotateLogs('executionId', executionId),
-                Effect.annotateLogs('status', execution.status),
+        waitAndGetFinishedExecution: Effect.fn(function* ({
+          pollingIntervalMs,
+        }: {
+          pollingIntervalMs?: number
+        } = {}) {
+          const resolvedPollingInterval = Duration.millis(
+            Math.max(
+              50,
+              pollingIntervalMs != null && pollingIntervalMs > 0 ? pollingIntervalMs : 2500,
+            ),
+          )
+          return yield* Effect.gen(function* () {
+            const execution = yield* storage.getById({ executionId })
+            if (!execution) {
+              return yield* Effect.fail(
+                new DurableExecutionNotFoundError(
+                  `Task execution not found [executionId=${executionId}]`,
+                ),
               )
-              yield* Effect.sleep(resolvedPollingInterval)
-              return undefined
-            }).pipe(
-              Effect.repeat({
-                until: (output): output is FinishedTaskExecution<TOutput> => output != null,
-              }),
+            }
+
+            if (FINISHED_TASK_EXECUTION_STATUSES.includes(execution.status)) {
+              return yield* convertTaskExecutionStorageValueToFinishedTaskExecution<TOutput>(
+                execution,
+              )
+            }
+
+            yield* Effect.logDebug('Waiting for task to be finished').pipe(
+              Effect.annotateLogs('service', 'effect-executor'),
+              Effect.annotateLogs('executorId', executorId),
+              Effect.annotateLogs('executionId', executionId),
+              Effect.annotateLogs('status', execution.status),
             )
-          },
-        ),
+            yield* Effect.sleep(resolvedPollingInterval)
+            return undefined
+          }).pipe(
+            Effect.repeat({
+              until: (output): output is FinishedTaskExecution<TOutput> => output != null,
+            }),
+          )
+        }),
         cancel: Effect.gen(function* () {
           const now = yield* Clock.currentTimeMillis
           yield* storage.updateById(now, {
@@ -969,13 +1023,14 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       yield* errorIfShutdown
 
       const task = rest[0]
-      const input = rest.length > 1 ? rest[1]! : undefined
-      const options = rest.length > 2 ? rest[2]! : undefined
       if (!taskInternalsMap.has(task.id)) {
         return yield* Effect.fail(
           new DurableExecutionNotFoundError(`Task not found [taskId=${task.id}]`),
         )
       }
+
+      const input = rest[1]
+      const options = rest[2]
 
       const sleepingTaskUniqueId =
         task.taskType === 'sleepingTask'
@@ -985,13 +1040,13 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       const validatedEnqueueOptions = yield* validateEnqueueOptions(task.id, options)
       const finalEnqueueOptions = overrideTaskEnqueueOptions(task, validatedEnqueueOptions)
       const now = yield* Clock.currentTimeMillis
-      let insertMany = storage.insertMany
-      if (options?.taskExecutionsStorageTransaction) {
-        insertMany = (requests) =>
-          convertMaybePromiseToEffect(() =>
-            options.taskExecutionsStorageTransaction!.insertMany(requests),
-          )
-      }
+      const taskExecutionsStorageTransaction = options?.taskExecutionsStorageTransaction
+      const insertMany = taskExecutionsStorageTransaction
+        ? (requests: ReadonlyArray<TaskExecutionStorageValue>) =>
+            convertMaybePromiseToEffect(async () =>
+              taskExecutionsStorageTransaction.insertMany(requests),
+            )
+        : storage.insertMany
 
       yield* insertMany([
         createTaskExecutionStorageValue({
@@ -1059,6 +1114,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
 
       type TOutput = InferTaskOutput<TTask>
 
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- public API: JavaScript callers can pass a task of another type
       if (task.taskType !== 'sleepingTask') {
         return yield* Effect.fail(
           new DurableExecutionError(`Task is not a sleeping task [taskId=${task.id}]`),
@@ -1081,17 +1137,16 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         )
       }
       if (execution.isFinished) {
-        return (yield* convertTaskExecutionStorageValueToTaskExecution(
-          execution,
-          serializer,
-        )) as FinishedTaskExecution<TOutput>
+        return yield* convertTaskExecutionStorageValueToFinishedTaskExecution<TOutput>(execution)
       }
 
       const update: TaskExecutionStorageUpdateInternal = {
         status: options.status,
       }
+      const status: string = options.status
       if (options.status === 'completed') {
         update.output = yield* serializeOutput(options.output)
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- public API: JavaScript callers can pass any status
       } else if (options.status === 'failed') {
         update.error = convertDurableExecutionErrorToStorageValue(
           DurableExecutionError.nonRetryable(getErrorMessage(options.error)),
@@ -1099,8 +1154,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       } else {
         return yield* Effect.fail(
           DurableExecutionError.nonRetryable(
-            // @ts-expect-error - This is safe
-            `Invalid status for sleeping task execution [executionId=${execution.executionId}] [status=${options.status}]`,
+            `Invalid status for sleeping task execution [executionId=${execution.executionId}] [status=${status}]`,
           ),
         )
       }
@@ -1134,10 +1188,9 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
           ),
         )
       }
-      return (yield* convertTaskExecutionStorageValueToTaskExecution(
+      return yield* convertTaskExecutionStorageValueToFinishedTaskExecution<TOutput>(
         finishedExecution,
-        serializer,
-      )) as FinishedTaskExecution<TOutput>
+      )
     })
 
     const processReadyTaskExecutionsIteration = Effect.gen(function* () {
@@ -1199,7 +1252,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       yield* fiberPool
         .fork(
           runTaskExecution(execution).pipe(
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.gen(function* () {
                 const durableExecutionError = convertErrorToDurableExecutionError(error, {
                   isRetryable: false,
@@ -1242,11 +1295,13 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
           ),
         )
         .pipe(
-          Effect.tap((fiber) => {
-            if (runningTaskExecutionsMap.has(executionId)) {
-              runningTaskExecutionsMap.set(executionId, fiber)
-            }
-          }),
+          Effect.tap((fiber) =>
+            Effect.sync(() => {
+              if (runningTaskExecutionsMap.has(executionId)) {
+                runningTaskExecutionsMap.set(executionId, fiber)
+              }
+            }),
+          ),
           Effect.tapError(() =>
             Effect.sync(() => {
               runningTaskExecutionsMap.delete(executionId)
@@ -1279,10 +1334,10 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         taskRunCtx,
         yield* serializer.deserialize(execution.input),
         execution.timeoutMs,
-      ).pipe(Effect.either)
-      return yield* Either.isLeft(result)
-        ? onRunTaskExecutionWithContextError(execution, result.left)
-        : onRunTaskExecutionWithContextResult(execution, taskInternal, result.right).pipe(
+      ).pipe(Effect.result)
+      return yield* Result.isFailure(result)
+        ? onRunTaskExecutionWithContextError(execution, result.failure)
+        : onRunTaskExecutionWithContextResult(execution, taskInternal, result.success).pipe(
             Effect.tapError((error) => onRunTaskExecutionWithContextError(execution, error)),
           )
     })
@@ -1309,11 +1364,9 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       const now = yield* Clock.currentTimeMillis
       if (childrenTasks.length === 0) {
         if (taskInternal.finalize) {
-          if (isFunction(taskInternal.finalize)) {
-            const finalizeFn = taskInternal.finalize as (
-              input: DefaultParentTaskOutput,
-            ) => Effect.Effect<unknown, DurableExecutionError>
-            const finalizeOutputEither = yield* finalizeFn({
+          if (typeof taskInternal.finalize === 'function') {
+            const finalizeFn = taskInternal.finalize
+            const finalizeOutputResult = yield* finalizeFn({
               output: runOutput,
               children: [],
             }).pipe(
@@ -1322,40 +1375,32 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
                   DurableExecutionError.nonRetryable(getErrorMessage(error)),
                 ),
               ),
-              Effect.either,
+              Effect.result,
             )
 
-            yield* Either.isLeft(finalizeOutputEither)
-              ? storage.updateById(
-                  now,
-                  {
-                    executionId: execution.executionId,
-                    filters: { status: 'running' },
-                    update: {
+            yield* storage.updateById(
+              now,
+              {
+                executionId: execution.executionId,
+                filters: { status: 'running' },
+                update: Result.isFailure(finalizeOutputResult)
+                  ? {
                       status: 'finalize_failed',
-                      error: finalizeOutputEither.left,
+                      error: finalizeOutputResult.failure,
                       waitingForFinalizeStartedAt: now,
                       children: [],
-                    },
-                  },
-                  execution,
-                )
-              : storage.updateById(
-                  now,
-                  {
-                    executionId: execution.executionId,
-                    filters: { status: 'running' },
-                    update: {
+                    }
+                  : {
                       status: 'completed',
-                      output: yield* serializeOutput(finalizeOutputEither.right),
+                      output: yield* serializeOutput(finalizeOutputResult.success),
                       waitingForFinalizeStartedAt: now,
                       children: [],
                     },
-                  },
-                  execution,
-                )
+              },
+              execution,
+            )
           } else {
-            const finalizeTaskInternal = taskInternal.finalize as TaskInternal
+            const finalizeTaskInternal = taskInternal.finalize
             if (finalizeTaskInternal.taskType === 'sleepingTask') {
               return yield* Effect.fail(
                 DurableExecutionError.nonRetryable(
@@ -1452,7 +1497,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
             )
           }
 
-          if (taskInternal.taskType !== 'sequentialTasks' || index === 0) {
+          if (index === 0 || taskInternal.taskType !== 'sequentialTasks') {
             const isChildSleepingTask = childTaskInternal.taskType === 'sleepingTask'
             const childSleepingTaskUniqueId = isChildSleepingTask
               ? yield* getSleepingTaskUniqueIdInternal(child.task.id, child.input)
@@ -1503,7 +1548,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
             update: {
               status: 'waiting_for_children',
               runOutput: yield* serializeOutput(runOutput),
-              children: children,
+              children,
               activeChildrenCount: childrenStorageValues.length,
             },
             childrenTaskExecutionsToInsertIfAnyUpdated: childrenStorageValues,
@@ -1533,7 +1578,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         const maxDelayMs = execution.retryOptions.maxDelayMs
         let delayMs = baseDelayMs
         if (execution.retryAttempts > 0 && delayMs > 0) {
-          delayMs *= Math.pow(delayMultiplier, execution.retryAttempts)
+          delayMs *= delayMultiplier ** execution.retryAttempts
         }
         if (maxDelayMs != null) {
           delayMs = Math.min(delayMs, maxDelayMs)
@@ -1639,7 +1684,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         execution: TaskExecutionStorageValue,
         error: DurableExecutionError,
         status?: 'failed' | 'finalize_failed',
-      ) => Effect.Effect<void, DurableExecutionError, never>,
+      ) => Effect.Effect<void, DurableExecutionError>,
     ) {
       const taskInternal = taskInternalsMap.get(execution.taskId)
       if (!taskInternal) {
@@ -1669,13 +1714,11 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         | undefined
       let finalizeTaskInternal: TaskInternal | undefined
       if (taskInternal.finalize) {
-        if (isFunction(taskInternal.finalize)) {
-          finalizeFn = taskInternal.finalize as (
-            input: DefaultParentTaskOutput,
-          ) => Effect.Effect<unknown, DurableExecutionError>
+        if (typeof taskInternal.finalize === 'function') {
+          finalizeFn = taskInternal.finalize
         } else {
-          finalizeTaskInternal = taskInternal.finalize as TaskInternal
-          if (finalizeTaskInternal?.taskType === 'sleepingTask') {
+          finalizeTaskInternal = taskInternal.finalize
+          if (finalizeTaskInternal.taskType === 'sleepingTask') {
             return yield* markExecutionAsFailed(
               execution,
               new DurableExecutionNotFoundError(
@@ -1696,7 +1739,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         )
         childrenTaskExecutions = execution.children
           .map((child) => childrenTaskExecutionsMap.get(child.executionId))
-          .filter(Boolean) as Array<TaskExecutionStorageValue>
+          .filter((child) => child !== undefined)
         if (childrenTaskExecutions.length !== execution.children.length) {
           return yield* markExecutionAsFailed(
             execution,
@@ -1708,25 +1751,26 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
 
         childrenTaskExecutionsForFinalize = yield* Effect.forEach(
           childrenTaskExecutions,
-          // eslint-disable-next-line unicorn/no-array-method-this-argument
+
           (child) =>
             Effect.gen(function* () {
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the children are finished when the parent's children-finished processing runs
               return {
                 taskId: child.taskId,
                 executionId: child.executionId,
                 status: child.status,
                 output:
-                  child.status === 'completed' && child.output
+                  child.status === 'completed' && isNonEmptyString(child.output)
                     ? yield* serializer.deserialize(child.output)
                     : undefined,
                 error:
                   child.status !== 'completed'
-                    ? child.error ||
+                    ? (child.error ??
                       convertDurableExecutionErrorToStorageValue(
                         DurableExecutionError.nonRetryable(
                           `Unknown child task execution error [childTaskId=${child.taskId}]`,
                         ),
-                      )
+                      ))
                     : undefined,
               } as FinishedChildTaskExecution
             }),
@@ -1745,7 +1789,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
               output:
                 taskInternal.taskType === 'parentTask'
                   ? yield* serializeOutput({
-                      output: execution.runOutput
+                      output: isNonEmptyString(execution.runOutput)
                         ? yield* serializer.deserialize(execution.runOutput)
                         : undefined,
                       children: childrenTaskExecutionsForFinalize,
@@ -1760,51 +1804,43 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       }
 
       const finalizeTaskInput = {
-        output: execution.runOutput
+        output: isNonEmptyString(execution.runOutput)
           ? yield* serializer.deserialize(execution.runOutput)
           : undefined,
         children: childrenTaskExecutionsForFinalize,
       }
       if (finalizeFn) {
-        const finalizeOutputEither = yield* finalizeFn(finalizeTaskInput).pipe(
+        const finalizeOutputResult = yield* finalizeFn(finalizeTaskInput).pipe(
           Effect.mapError((error) =>
             convertDurableExecutionErrorToStorageValue(
               DurableExecutionError.nonRetryable(getErrorMessage(error)),
             ),
           ),
-          Effect.either,
+          Effect.result,
         )
 
         const now = yield* Clock.currentTimeMillis
-        yield* Either.isLeft(finalizeOutputEither)
-          ? storage.updateById(
-              now,
-              {
-                executionId: execution.executionId,
-                filters: { status: 'waiting_for_children' },
-                update: {
+        yield* storage.updateById(
+          now,
+          {
+            executionId: execution.executionId,
+            filters: { status: 'waiting_for_children' },
+            update: Result.isFailure(finalizeOutputResult)
+              ? {
                   status: 'finalize_failed',
-                  error: finalizeOutputEither.left,
+                  error: finalizeOutputResult.failure,
                   waitingForFinalizeStartedAt: now,
                   onChildrenFinishedProcessingStatus: 'processed',
-                },
-              },
-              execution,
-            )
-          : storage.updateById(
-              now,
-              {
-                executionId: execution.executionId,
-                filters: { status: 'waiting_for_children' },
-                update: {
+                }
+              : {
                   status: 'completed',
-                  output: yield* serializeOutput(finalizeOutputEither.right),
+                  output: yield* serializeOutput(finalizeOutputResult.success),
                   waitingForFinalizeStartedAt: now,
                   onChildrenFinishedProcessingStatus: 'processed',
                 },
-              },
-              execution,
-            )
+          },
+          execution,
+        )
         return
       }
 
@@ -1858,12 +1894,18 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         execution: TaskExecutionStorageValue,
         error: DurableExecutionError,
         status?: 'failed' | 'finalize_failed',
-      ) => Effect.Effect<void, DurableExecutionError, never>,
+      ) => Effect.Effect<void, DurableExecutionError>,
     ) {
-      const firstDummyChildIdx = (execution.children || []).findIndex(
-        (child) => child.executionId === 'dummy',
-      )
-      if (firstDummyChildIdx === 0) {
+      const children = execution.children ?? []
+      const firstDummyChildIdx = children.findIndex((child) => child.executionId === 'dummy')
+      const lastChild = children.at(-1)
+      const firstDummyChild = children[firstDummyChildIdx]
+      const prevChild = children[firstDummyChildIdx - 1]
+      if (
+        !lastChild ||
+        firstDummyChildIdx === 0 ||
+        (firstDummyChildIdx > 0 && (!firstDummyChild || !prevChild))
+      ) {
         return yield* markExecutionAsFailed(
           execution,
           DurableExecutionError.nonRetryable(
@@ -1872,8 +1914,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         )
       }
 
-      if (firstDummyChildIdx > 0) {
-        const firstDummyChild = execution.children![firstDummyChildIdx]!
+      if (firstDummyChild && prevChild) {
         const childTaskInternal = taskInternalsMap.get(firstDummyChild.taskId)
         if (!childTaskInternal) {
           yield* Effect.logWarning('Child task not found during sequential processing').pipe(
@@ -1893,7 +1934,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         }
 
         const prevChildTaskExecution = yield* storage.getById({
-          executionId: execution.children![firstDummyChildIdx - 1]!.executionId,
+          executionId: prevChild.executionId,
         })
         if (!prevChildTaskExecution) {
           yield* Effect.logWarning(
@@ -1916,7 +1957,18 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
           return yield* markExecutionAsFailed(
             execution,
             DurableExecutionError.nonRetryable(
-              `Sequential task failed [parentTaskId=${execution.taskId}] [index=${firstDummyChildIdx - 1}]: ${prevChildTaskExecution.error?.message || 'Unknown error'}`,
+              `Sequential task failed [parentTaskId=${execution.taskId}] [index=${firstDummyChildIdx - 1}]: ${getErrorStorageValueMessage(prevChildTaskExecution.error)}`,
+            ),
+            'finalize_failed',
+          )
+        }
+
+        const prevChildOutput = prevChildTaskExecution.output
+        if (prevChildOutput == null) {
+          return yield* markExecutionAsFailed(
+            execution,
+            DurableExecutionError.nonRetryable(
+              `Sequential task output not found [parentTaskId=${execution.taskId}] [index=${firstDummyChildIdx - 1}]`,
             ),
             'finalize_failed',
           )
@@ -1928,7 +1980,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         const childSleepingTaskUniqueId = isChildSleepingTask
           ? yield* getSleepingTaskUniqueIdInternal(
               childTaskInternal.id,
-              yield* serializer.deserialize(prevChildTaskExecution.output!),
+              yield* serializer.deserialize(prevChildOutput),
             )
           : undefined
         const now = yield* Clock.currentTimeMillis
@@ -1938,7 +1990,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
             executionId: execution.executionId,
             filters: { status: 'waiting_for_children' },
             update: {
-              children: execution.children!,
+              children,
               activeChildrenCount: 1,
               onChildrenFinishedProcessingStatus: 'idle',
             },
@@ -1960,9 +2012,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
                 sleepMsBeforeRun: childTaskInternal.sleepMsBeforeRun,
                 timeoutMs: childTaskInternal.timeoutMs,
                 areChildrenSequential: childTaskInternal.taskType === 'sequentialTasks',
-                input: isChildSleepingTask
-                  ? yield* serializeInput(undefined)
-                  : prevChildTaskExecution.output!,
+                input: isChildSleepingTask ? yield* serializeInput(undefined) : prevChildOutput,
               }),
             ],
           },
@@ -1970,7 +2020,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
         )
       } else {
         const prevChildTaskExecution = yield* storage.getById({
-          executionId: execution.children![execution.children!.length - 1]!.executionId,
+          executionId: lastChild.executionId,
         })
         if (!prevChildTaskExecution) {
           yield* Effect.logWarning(
@@ -1980,12 +2030,12 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
             Effect.annotateLogs('executorId', executorId),
             Effect.annotateLogs('parentTaskId', execution.taskId),
             Effect.annotateLogs('executionId', execution.executionId),
-            Effect.annotateLogs('missingChildIndex', execution.children!.length - 1),
+            Effect.annotateLogs('missingChildIndex', children.length - 1),
           )
           return yield* markExecutionAsFailed(
             execution,
             new DurableExecutionNotFoundError(
-              `Sequential task not found [parentTaskId=${execution.taskId}] [index=${execution.children!.length - 1}]`,
+              `Sequential task not found [parentTaskId=${execution.taskId}] [index=${children.length - 1}]`,
             ),
           )
         }
@@ -2008,7 +2058,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
           return yield* markExecutionAsFailed(
             execution,
             DurableExecutionError.nonRetryable(
-              `Sequential task failed [parentTaskId=${execution.taskId}] [index=${execution.children!.length - 1}]: ${prevChildTaskExecution.error?.message || 'Unknown error'}`,
+              `Sequential task failed [parentTaskId=${execution.taskId}] [index=${children.length - 1}]: ${getErrorStorageValueMessage(prevChildTaskExecution.error)}`,
             ),
             'finalize_failed',
           )
@@ -2079,13 +2129,12 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       execution: TaskExecutionStorageValue,
     ) {
       execution.closeStatus = 'closing'
-      let now = yield* Clock.currentTimeMillis
       yield* Effect.all([
         closeFinishedTaskExecutionParent(execution),
         closeFinishedTaskExecutionChildren(execution),
       ])
 
-      now = yield* Clock.currentTimeMillis
+      const now = yield* Clock.currentTimeMillis
       yield* storage.updateById(
         now,
         {
@@ -2107,31 +2156,26 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
       }
 
       const now = yield* Clock.currentTimeMillis
-      yield* execution.status === 'completed'
-        ? storage.updateById(now, {
-            executionId: execution.parent.executionId,
-            filters: { status: 'waiting_for_finalize' },
-            update: {
-              status: 'completed',
-              output: execution.output ?? undefined,
-            },
-          })
-        : storage.updateById(now, {
-            executionId: execution.parent.executionId,
-            filters: {
-              status: 'waiting_for_finalize',
-            },
-            update: {
-              status: 'finalize_failed',
-              error:
-                execution.error ||
-                convertDurableExecutionErrorToStorageValue(
-                  DurableExecutionError.nonRetryable(
-                    `Finalize task failed with an unknown error [parentTaskId=${execution.parent.taskId}] [finalizeTaskId=${execution.taskId}] [finalizeExecutionId=${execution.executionId}]`,
+      yield* storage.updateById(now, {
+        executionId: execution.parent.executionId,
+        filters: { status: 'waiting_for_finalize' },
+        update:
+          execution.status === 'completed'
+            ? {
+                status: 'completed',
+                output: execution.output ?? undefined,
+              }
+            : {
+                status: 'finalize_failed',
+                error:
+                  execution.error ??
+                  convertDurableExecutionErrorToStorageValue(
+                    DurableExecutionError.nonRetryable(
+                      `Finalize task failed with an unknown error [parentTaskId=${execution.parent.taskId}] [finalizeTaskId=${execution.taskId}] [finalizeExecutionId=${execution.executionId}]`,
+                    ),
                   ),
-                ),
-            },
-          })
+              },
+      })
     })
 
     const closeFinishedTaskExecutionChildren = Effect.fn(function* (
@@ -2152,7 +2196,7 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
           status: 'cancelled',
           error: convertDurableExecutionErrorToStorageValue(
             new DurableExecutionCancelledError(
-              `Parent task failed [parentTaskId=${execution.taskId}] [parentExecutionId=${execution.executionId}]: ${execution.error?.message || 'Unknown error'}`,
+              `Parent task failed [parentTaskId=${execution.taskId}] [parentExecutionId=${execution.executionId}]: ${getErrorStorageValueMessage(execution.error)}`,
             ),
           ),
           needsPromiseCancellation: true,
@@ -2193,19 +2237,21 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
 
       const processExecution = Effect.fn(function* (execution: TaskExecutionStorageValue) {
         const fiber = runningTaskExecutionsMap.get(execution.executionId)
-        if (fiber) {
-          try {
-            yield* Fiber.interrupt(fiber)
-          } catch (error) {
-            yield* Effect.logError('Error in cancelling task execution').pipe(
-              Effect.annotateLogs('service', 'effect-executor'),
-              Effect.annotateLogs('executorId', executorId),
-              Effect.annotateLogs('executionId', execution.executionId),
-              Effect.annotateLogs('error', error),
-            )
-          }
-          runningTaskExecutionsMap.delete(execution.executionId)
+        if (!fiber) {
+          return
         }
+
+        try {
+          yield* Fiber.interrupt(fiber)
+        } catch (error) {
+          yield* Effect.logError('Error in cancelling task execution').pipe(
+            Effect.annotateLogs('service', 'effect-executor'),
+            Effect.annotateLogs('executorId', executorId),
+            Effect.annotateLogs('executionId', execution.executionId),
+            Effect.annotateLogs('error', error),
+          )
+        }
+        runningTaskExecutionsMap.delete(execution.executionId)
       })
 
       yield* Effect.forEach(executions, processExecution, {
@@ -2440,12 +2486,9 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
 
   return yield* Effect.acquireRelease(
     effect.pipe(
-      Logger.withMinimumLogLevel(
-        logLevel === 'debug'
-          ? LogLevel.Debug
-          : logLevel === 'error'
-            ? LogLevel.Error
-            : LogLevel.Info,
+      Effect.provideService(
+        References.MinimumLogLevel,
+        logLevel === 'debug' ? 'Debug' : logLevel === 'error' ? 'Error' : 'Info',
       ),
     ),
     (effectDurableExecutor) => effectDurableExecutor.shutdown,
@@ -2459,6 +2502,4 @@ export const makeEffectDurableExecutor = Effect.fn(function* (
  *
  * @category Executor
  */
-export type EffectDurableExecutor = Effect.Effect.Success<
-  ReturnType<typeof makeEffectDurableExecutor>
->
+export type EffectDurableExecutor = Effect.Success<ReturnType<typeof makeEffectDurableExecutor>>

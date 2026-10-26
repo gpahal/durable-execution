@@ -33,7 +33,7 @@ import { convertMaybePromiseOrEffectToEffect } from './utils'
  * @category Serializer
  */
 export type Serializer = {
-  serialize: <T>(value: T) => string | Promise<string> | Effect.Effect<string, unknown>
+  serialize: (value: unknown) => string | Promise<string> | Effect.Effect<string, unknown>
   deserialize: <T>(value: string) => T | Promise<T> | Effect.Effect<T, unknown>
 }
 
@@ -42,10 +42,9 @@ export type Serializer = {
  *
  * @category Serializer
  */
-export class SerializerService extends Context.Tag('SerializerService')<
-  SerializerService,
-  Serializer
->() {}
+export class SerializerService extends Context.Service<SerializerService, Serializer>()(
+  'SerializerService',
+) {}
 
 /**
  * Create a serializer using Superjson for enhanced type preservation.
@@ -108,8 +107,10 @@ export const makeSerializerInternal = Effect.gen(function* () {
     ? createSuperjsonSerializer()
     : serializerOption.value
 
-  const serialize = Effect.fn(function* <T>(value: T, maxSerializedDataSize?: number) {
-    const result = yield* convertMaybePromiseOrEffectToEffect(() => serializer.serialize(value))
+  const serialize = Effect.fn(function* (value: unknown, maxSerializedDataSize?: number) {
+    const result = yield* convertMaybePromiseOrEffectToEffect(
+      (): string | Promise<string> | Effect.Effect<string, unknown> => serializer.serialize(value),
+    )
 
     // Quick size check: assume worst case of 4 bytes per character (UTF-8). This avoids expensive
     // Buffer.byteLength() call in most cases
@@ -131,11 +132,12 @@ export const makeSerializerInternal = Effect.gen(function* () {
   })
 
   const deserialize = Effect.fn(function* <T>(value: string) {
-    const result = yield* convertMaybePromiseOrEffectToEffect(() => serializer.deserialize(value))
-    return result as T
+    return yield* convertMaybePromiseOrEffectToEffect(
+      (): T | Promise<T> | Effect.Effect<T, unknown> => serializer.deserialize<T>(value),
+    )
   })
 
   return { serialize, deserialize }
 })
 
-export type SerializerInternal = Effect.Effect.Success<typeof makeSerializerInternal>
+export type SerializerInternal = Effect.Success<typeof makeSerializerInternal>

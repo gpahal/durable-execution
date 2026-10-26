@@ -7,7 +7,11 @@ import { sleep } from '@gpahal/std/promises'
 import { api } from '../convex/_generated/api'
 
 async function main() {
-  const convexClient = new ConvexHttpClient(process.env.VITE_CONVEX_URL!)
+  const convexUrl = process.env.VITE_CONVEX_URL
+  if (convexUrl === undefined || convexUrl === '') {
+    throw new Error('VITE_CONVEX_URL is not set')
+  }
+  const convexClient = new ConvexHttpClient(convexUrl)
   const storage = new ConvexTaskExecutionsStorage(
     convexClient,
     'SUPER_SECRET',
@@ -49,6 +53,7 @@ async function runWithExecutor(executor: DurableExecutor) {
   const handle = await executor.enqueueTask(task)
 
   const finishedExecution = await handle.waitAndGetFinishedExecution()
+  // eslint-disable-next-line no-console -- this dev script prints the finished execution
   console.log(finishedExecution)
 }
 

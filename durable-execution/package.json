@@ -2,17 +2,6 @@
   "name": "durable-execution",
   "version": "0.32.0",
   "description": "A durable execution engine for running tasks durably and resiliently",
-  "author": "Garvit Pahal <g10pahal@gmail.com>",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/gpahal/durable-execution.git",
-    "directory": "durable-execution"
-  },
-  "homepage": "https://gpahal.github.io/durable-execution",
-  "bugs": {
-    "url": "https://github.com/gpahal/durable-execution/issues"
-  },
   "keywords": [
     "durable-execution",
     "durable-tasks",
@@ -23,6 +12,17 @@
     "durable",
     "resilient"
   ],
+  "homepage": "https://gpahal.github.io/durable-execution",
+  "bugs": {
+    "url": "https://github.com/gpahal/durable-execution/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpahal/durable-execution.git",
+    "directory": "durable-execution"
+  },
+  "license": "MIT",
+  "author": "Garvit Pahal <g10pahal@gmail.com>",
   "sideEffects": false,
   "type": "module",
   "exports": {
@@ -35,7 +35,6 @@
   "module": "./build/index.js",
   "types": "./build/index.d.ts",
   "files": [
-    "package.json",
     "src",
     "build"
   ],
@@ -43,18 +42,15 @@
     "build": "premove build && tsup",
     "build-docs": "tsx scripts/build-docs.ts",
     "clean": "premove build coverage",
+    "lint": "eslint .",
+    "lint-fix": "eslint . --fix",
     "test": "vitest run",
     "test-coverage": "vitest run --coverage",
-    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/index.ts",
-    "lint": "eslint .",
-    "lint-fix": "eslint . --fix"
+    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/index.ts"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm pre-commit",
     "pre-push": "pnpm pre-commit"
-  },
-  "peerDependencies": {
-    "effect": "catalog:dev"
   },
   "dependencies": {
     "@gpahal/std": "catalog:prod",
@@ -65,5 +61,11 @@
   },
   "devDependencies": {
     "effect": "catalog:dev"
+  },
+  "peerDependencies": {
+    "effect": "catalog:dev"
+  },
+  "engines": {
+    "node": ">=24.22.0"
   }
 }

@@ -1,28 +1,31 @@
-import { Effect, Exit, Runtime, Scope } from 'effect'
+import type { Context } from 'effect'
+import { Effect, Exit, Scope } from 'effect'
 
-import {
-  makeEffectDurableExecutor,
-  type AnySchema,
-  type EffectDurableExecutor,
-  type EffectDurableExecutorOptions,
-  type InferSchemaInput,
-  type InferSchemaOutput,
+import { makeEffectDurableExecutor } from './effect-executor'
+import type {
+  AnySchema,
+  EffectDurableExecutor,
+  EffectDurableExecutorOptions,
+  InferSchemaInput,
+  InferSchemaOutput,
 } from './effect-executor'
 import { convertCauseToDurableExecutionError, DurableExecutionCancelledError } from './errors'
-import { SerializerService, type Serializer } from './serializer'
-import { TaskExecutionsStorageService, type TaskExecutionsStorage } from './storage'
-import {
-  type AnyTask,
-  type DefaultParentTaskOutput,
-  type InferTaskInput,
-  type InferTaskOutput,
-  type ParentTaskOptions,
-  type SequentialTasks,
-  type SleepingTaskOptions,
-  type Task,
-  type TaskEnqueueOptions,
-  type TaskOptions,
-  type WakeupSleepingTaskExecutionOptions,
+import { SerializerService } from './serializer'
+import type { Serializer } from './serializer'
+import { TaskExecutionsStorageService } from './storage'
+import type { TaskExecutionsStorage } from './storage'
+import type {
+  AnyTask,
+  DefaultParentTaskOutput,
+  InferTaskInput,
+  InferTaskOutput,
+  ParentTaskOptions,
+  SequentialTasks,
+  SleepingTaskOptions,
+  Task,
+  TaskEnqueueOptions,
+  TaskOptions,
+  WakeupSleepingTaskExecutionOptions,
 } from './task'
 
 /**
@@ -154,18 +157,18 @@ export type DurableExecutorOptions = EffectDurableExecutorOptions & {
 export class DurableExecutor {
   readonly id: string
   private readonly effectExecutor: EffectDurableExecutor
-  private readonly scope: Scope.CloseableScope
-  private readonly runtime: Runtime.Runtime<never>
+  private readonly scope: Scope.Closeable
+  private readonly context: Context.Context<never>
 
   private constructor(
     effectExecutor: EffectDurableExecutor,
-    scope: Scope.CloseableScope,
-    runtime: Runtime.Runtime<never>,
+    scope: Scope.Closeable,
+    context: Context.Context<never>,
   ) {
     this.id = effectExecutor.id
     this.effectExecutor = effectExecutor
     this.scope = scope
-    this.runtime = runtime
+    this.context = context
   }
 
   /**
@@ -216,7 +219,7 @@ export class DurableExecutor {
    */
   static async make(storage: TaskExecutionsStorage, options: DurableExecutorOptions = {}) {
     const { serializer, ...otherOptions } = options
-    const { effectExecutor, scope, runtime } = await Effect.runPromise(
+    const { effectExecutor, scope, context } = await Effect.runPromise(
       Effect.gen(function* () {
         const scope = yield* Scope.make()
 
@@ -227,24 +230,24 @@ export class DurableExecutor {
           effect = effect.pipe(Effect.provideService(SerializerService, serializer))
         }
         const effectExecutor = yield* effect.pipe(Effect.provideService(Scope.Scope, scope))
-        const runtime = yield* Effect.runtime<never>()
-        return { effectExecutor, scope, runtime }
+        const context = yield* Effect.context()
+        return { effectExecutor, scope, context }
       }),
     )
 
-    return new DurableExecutor(effectExecutor, scope, runtime)
+    return new DurableExecutor(effectExecutor, scope, context)
   }
 
-  private runSync<T>(effect: Effect.Effect<T, unknown, never>) {
-    const exit = Runtime.runSyncExit(this.runtime, effect)
+  private runSync<T>(effect: Effect.Effect<T, unknown>) {
+    const exit = Effect.runSyncExitWith(this.context)(effect)
     if (Exit.isFailure(exit)) {
       throw convertCauseToDurableExecutionError(exit.cause)
     }
     return exit.value
   }
 
-  private async runPromise<T>(effect: Effect.Effect<T, unknown, never>) {
-    const exit = await Runtime.runPromiseExit(this.runtime, effect)
+  private async runPromise<T>(effect: Effect.Effect<T, unknown>) {
+    const exit = await Effect.runPromiseExitWith(this.context)(effect)
     if (Exit.isFailure(exit)) {
       throw convertCauseToDurableExecutionError(exit.cause)
     }
@@ -307,6 +310,7 @@ export class DurableExecutor {
    *
    * The tasks list cannot be empty.
    *
+   * @param id - The id of the sequential task.
    * @param tasks - The tasks to run sequentially.
    * @returns The sequential task.
    */
@@ -405,7 +409,7 @@ export class DurableExecutor {
   }
 
   private convertEffectTaskExecutionHandleToPromiseTaskExecutionHandle<TOutput>(
-    effectTaskExecutionHandle: Effect.Effect.Success<
+    effectTaskExecutionHandle: Effect.Success<
       ReturnType<typeof this.effectExecutor.getTaskExecutionHandle<Task<unknown, TOutput>>>
     >,
   ) {
@@ -423,14 +427,14 @@ export class DurableExecutor {
           pollingIntervalMs: options?.pollingIntervalMs,
         })
         if (!options?.signal) {
-          return await this.runPromise(effect)
+          return this.runPromise(effect)
         }
 
         const signal = options.signal
         const effectMapped = effect.pipe(
           Effect.map((value) => ({ _tag: 'result' as const, value })),
         )
-        const abortEffect = Effect.async<void, never, never>((resume) => {
+        const abortEffect = Effect.callback<unknown>((resume) => {
           if (signal.aborted) {
             resume(Effect.void)
             return undefined
@@ -441,7 +445,7 @@ export class DurableExecutor {
             signal.removeEventListener('abort', onAbort)
           })
         }).pipe(Effect.as({ _tag: 'aborted' as const }))
-        return await this.runPromise(
+        return this.runPromise(
           Effect.race(effectMapped, abortEffect).pipe(
             Effect.flatMap((res) =>
               res._tag === 'aborted'
@@ -452,7 +456,7 @@ export class DurableExecutor {
         )
       },
       cancel: async () => {
-        return await this.runPromise(effectTaskExecutionHandle.cancel)
+        await this.runPromise(effectTaskExecutionHandle.cancel)
       },
     }
   }
@@ -480,14 +484,10 @@ export class DurableExecutor {
           },
         ]
   ) {
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion -- TypeScript doesn't infer TTask through the spread of the conditional rest tuple, so the assertion gives the handle its output type
     const effectTaskExecutionHandle = (await this.runPromise(
-      this.effectExecutor.enqueueTask(
-        ...(rest as Parameters<typeof this.effectExecutor.enqueueTask<TTask>>),
-      ),
-    )) as Effect.Effect.Success<
-      ReturnType<typeof this.effectExecutor.getTaskExecutionHandle<TTask>>
-    >
+      this.effectExecutor.enqueueTask(...rest),
+    )) as Effect.Success<ReturnType<typeof this.effectExecutor.getTaskExecutionHandle<TTask>>>
     return this.convertEffectTaskExecutionHandleToPromiseTaskExecutionHandle<
       InferTaskOutput<TTask>
     >(effectTaskExecutionHandle)
@@ -532,7 +532,7 @@ export class DurableExecutor {
    * Start the durable executor. Use {@link DurableExecutor.shutdown} to stop the durable executor.
    */
   async start() {
-    return await this.runPromise(this.effectExecutor.start)
+    await this.runPromise(this.effectExecutor.start)
   }
 
   /**
@@ -546,7 +546,7 @@ export class DurableExecutor {
    *   that can be used to gracefully shutdown the task when executor is shutting down.
    */
   async shutdown() {
-    return await Effect.runPromise(Scope.close(this.scope, Exit.void))
+    await Effect.runPromise(Scope.close(this.scope, Exit.void))
   }
 
   /**
@@ -573,6 +573,6 @@ export class DurableExecutor {
    * @returns The storage metrics.
    */
   async getStorageMetrics() {
-    return await this.runPromise(this.effectExecutor.getStorageMetrics)
+    return this.runPromise(this.effectExecutor.getStorageMetrics)
   }
 }

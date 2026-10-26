@@ -13,30 +13,30 @@ This is a TypeScript library for testing durable-execution storage implementatio
 
 ### Build & Type Checking
 
-- `npm run build` - Build the project (cleans and runs tsup)
-- `npm run type-check` - Run TypeScript compiler and typedoc checks
-- `npm run clean` - Clean build and coverage directories
+- `pnpm build` - Build the project (cleans and runs tsup)
+- `pnpm type-check` - Run TypeScript compiler and typedoc checks
+- `pnpm clean` - Clean build and coverage directories
 
 ### Testing
 
-- `npm run test` - Run tests with Vitest
-- `npm run test-coverage` - Run tests with coverage reporting
+- `pnpm test` - Run tests with Vitest
+- `pnpm test-coverage` - Run tests with coverage reporting
 
 ### Linting
 
-- `npm run lint` - Run ESLint
-- `npm run lint-fix` - Run ESLint with auto-fix
+- `pnpm lint` - Run ESLint
+- `pnpm lint-fix` - Run ESLint with auto-fix
 
 ### Benchmarking
 
-- `npm run bench` - Run benchmark scripts
+- `pnpm bench` - Run benchmark scripts
 
 ## Code Conventions
 
 - **Language**: TypeScript with ES modules (`"type": "module"`)
 - **Build tool**: tsup for building
 - **Testing**: Vitest with global APIs
-- **Linting**: ESLint with @gpahal/eslint-config/base
+- **Linting**: ESLint with `@gpahal/eslint-config`'s `defineConfig`
 - **TypeScript config**: Extends @gpahal/tsconfig/base.json
 - **File structure**: Single index.ts entry point in src/
 - **Imports**: Use node: protocol for Node.js built-ins
@@ -55,7 +55,7 @@ This library provides:
 
 - **Peer dependencies**: durable-execution (workspace)
 - **Runtime**: @gpahal/std, nanoid
-- **Dev**: @gpahal/std-node, TypeScript, Vitest, ESLint
+- **Dev**: durable-execution, effect, TypeScript, Vitest, ESLint
 
 ## Notes
 

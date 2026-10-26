@@ -1,22 +1,19 @@
-import { Duration, Effect, Schema } from 'effect'
-
-import { isFunction } from '@gpahal/std/functions'
+import { Duration, Effect, Schema, SchemaTransformation } from 'effect'
 
 import { DurableExecutionError, DurableExecutionTimedOutError } from './errors'
-import {
-  isFinalizeTaskOptionsParentTaskOptions,
-  isFinalizeTaskOptionsTaskOptions,
-  type ChildTask,
-  type CommonTaskOptions,
-  type DefaultParentTaskOutput,
-  type FinalizeTaskOptions,
-  type ParentTaskOptions,
-  type SleepingTaskOptions,
-  type TaskEnqueueOptions,
-  type TaskOptions,
-  type TaskRetryOptions,
-  type TaskRunContext,
-  type TaskType,
+import { isFinalizeTaskOptionsParentTaskOptions, isFinalizeTaskOptionsTaskOptions } from './task'
+import type {
+  ChildTask,
+  CommonTaskOptions,
+  DefaultParentTaskOutput,
+  FinalizeTaskOptions,
+  ParentTaskOptions,
+  SleepingTaskOptions,
+  TaskEnqueueOptions,
+  TaskOptions,
+  TaskRetryOptions,
+  TaskRunContext,
+  TaskType,
 } from './task'
 import { convertMaybePromiseOrEffectToEffect, generateId } from './utils'
 
@@ -26,9 +23,7 @@ export type TaskOptionsInternal = {
   retryOptions: TaskRetryOptions | undefined
   sleepMsBeforeRun: number | undefined
   timeoutMs: number
-  validateInputFn:
-    | ((id: string, input: unknown) => Effect.Effect<unknown, DurableExecutionError>)
-    | undefined
+  validateInputFn: ValidateInputFnInternal | undefined
   runParent: (
     ctx: TaskRunContext,
     input: unknown,
@@ -40,16 +35,31 @@ export type TaskOptionsInternal = {
     DurableExecutionError
   >
   finalize:
-    | ((input: DefaultParentTaskOutput) => Effect.Effect<unknown, DurableExecutionError, never>)
+    | ((input: DefaultParentTaskOutput) => Effect.Effect<unknown, DurableExecutionError>)
     | TaskOptionsInternal
     | undefined
 }
 
-export function convertTaskOptionsToOptionsInternal<TRunInput, TInput, TOutput>(
+type ValidateInputFnInternal = (
+  id: string,
+  input: unknown,
+) => Effect.Effect<unknown, DurableExecutionError>
+
+/**
+ * Erases the input and output types of a validate input function.
+ */
+function toValidateInputFnInternal(
+  validateInputFn:
+    ((id: string, input: never) => Effect.Effect<unknown, DurableExecutionError>) | undefined,
+): ValidateInputFnInternal | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the executor calls it only with the input of an enqueued task, which the task's types restrict to the function's input type
+  return validateInputFn as ValidateInputFnInternal | undefined
+}
+
+export function convertTaskOptionsToOptionsInternal<TRunInput, TOutput>(
   taskOptions: TaskOptions<TRunInput, TOutput>,
   validateInputFn:
-    | ((id: string, input: TInput) => Effect.Effect<TRunInput, DurableExecutionError>)
-    | undefined,
+    ((id: string, input: never) => Effect.Effect<TRunInput, DurableExecutionError>) | undefined,
 ): TaskOptionsInternal {
   return {
     taskType: 'task',
@@ -57,13 +67,13 @@ export function convertTaskOptionsToOptionsInternal<TRunInput, TInput, TOutput>(
     retryOptions: taskOptions.retryOptions,
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
     timeoutMs: taskOptions.timeoutMs,
-    validateInputFn: validateInputFn as
-      | ((id: string, input: unknown) => Effect.Effect<unknown, DurableExecutionError>)
-      | undefined,
+    validateInputFn: toValidateInputFnInternal(validateInputFn),
     runParent: (ctx, input) =>
       Effect.gen(function* () {
-        const runOutput = yield* convertMaybePromiseOrEffectToEffect(() =>
-          taskOptions.run(ctx, input as TRunInput),
+        const runOutput = yield* convertMaybePromiseOrEffectToEffect(
+          (): TOutput | Promise<TOutput> | Effect.Effect<TOutput, unknown> =>
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the executor passes the validated input of the task, which is TRunInput
+            taskOptions.run(ctx, input as TRunInput),
         )
         return {
           output: runOutput,
@@ -74,9 +84,10 @@ export function convertTaskOptionsToOptionsInternal<TRunInput, TInput, TOutput>(
   }
 }
 
-export function convertSleepingTaskOptionsToOptionsInternal<TInput, TOutput>(
+export function convertSleepingTaskOptionsToOptionsInternal<TOutput>(
   taskOptions: SleepingTaskOptions<TOutput>,
-  validateInputFn: ((id: string, input: TInput) => Effect.Effect<string, unknown>) | undefined,
+  validateInputFn:
+    ((id: string, input: never) => Effect.Effect<string, DurableExecutionError>) | undefined,
 ): TaskOptionsInternal {
   return {
     taskType: 'sleepingTask',
@@ -84,9 +95,7 @@ export function convertSleepingTaskOptionsToOptionsInternal<TInput, TOutput>(
     retryOptions: undefined,
     sleepMsBeforeRun: undefined,
     timeoutMs: taskOptions.timeoutMs,
-    validateInputFn: validateInputFn as
-      | ((id: string, input: unknown) => Effect.Effect<unknown, DurableExecutionError>)
-      | undefined,
+    validateInputFn: toValidateInputFnInternal(validateInputFn),
     runParent: () =>
       Effect.fail(new DurableExecutionError('Sleeping tasks cannot be run', { isInternal: true })),
     finalize: undefined,
@@ -95,34 +104,30 @@ export function convertSleepingTaskOptionsToOptionsInternal<TInput, TOutput>(
 
 export function convertParentTaskOptionsToOptionsInternal<
   TRunInput,
-  TInput,
   TRunOutput,
   TOutput,
   TFinalizeTaskRunOutput,
 >(
   taskOptions: ParentTaskOptions<TRunInput, TRunOutput, TOutput, TFinalizeTaskRunOutput>,
-  validateInputFn: ((id: string, input: TInput) => Effect.Effect<TRunInput, unknown>) | undefined,
+  validateInputFn:
+    ((id: string, input: never) => Effect.Effect<TRunInput, DurableExecutionError>) | undefined,
 ): TaskOptionsInternal {
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the executor calls finalize with the run output of this task and its children, so the erased run output type matches
+  const taskFinalize = taskOptions.finalize as
+    ((input: DefaultParentTaskOutput) => unknown) | FinalizeTaskOptions | undefined
   let finalize:
-    | ((input: DefaultParentTaskOutput) => Effect.Effect<unknown, DurableExecutionError, never>)
+    | ((input: DefaultParentTaskOutput) => Effect.Effect<unknown, DurableExecutionError>)
     | TaskOptionsInternal
-    | undefined = undefined
-  if (isFunction(taskOptions.finalize)) {
+    | undefined
+  if (typeof taskFinalize === 'function') {
     finalize = (input: DefaultParentTaskOutput) =>
-      convertMaybePromiseOrEffectToEffect(() =>
-        (taskOptions.finalize as (input: DefaultParentTaskOutput) => unknown)(input),
-      )
-  } else if (taskOptions.finalize != null) {
-    finalize = isFinalizeTaskOptionsParentTaskOptions(taskOptions.finalize as FinalizeTaskOptions)
-      ? convertParentTaskOptionsToOptionsInternal(
-          taskOptions.finalize as ParentTaskOptions<unknown, unknown, unknown, unknown>,
-          undefined,
-        )
-      : isFinalizeTaskOptionsTaskOptions(taskOptions.finalize as FinalizeTaskOptions)
-        ? convertTaskOptionsToOptionsInternal(
-            taskOptions.finalize as TaskOptions<unknown, unknown>,
-            undefined,
-          )
+      convertMaybePromiseOrEffectToEffect(() => taskFinalize.call(taskOptions, input))
+  } else if (taskFinalize != null) {
+    finalize = isFinalizeTaskOptionsParentTaskOptions(taskFinalize)
+      ? convertParentTaskOptionsToOptionsInternal(taskFinalize, undefined)
+      : // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- public API: JavaScript callers can pass finalize options with both or neither of `run` and `runParent`
+        isFinalizeTaskOptionsTaskOptions(taskFinalize)
+        ? convertTaskOptionsToOptionsInternal(taskFinalize, undefined)
         : undefined
   }
 
@@ -132,13 +137,13 @@ export function convertParentTaskOptionsToOptionsInternal<
     retryOptions: taskOptions.retryOptions,
     sleepMsBeforeRun: taskOptions.sleepMsBeforeRun,
     timeoutMs: taskOptions.timeoutMs,
-    validateInputFn: validateInputFn as
-      | ((id: string, input: unknown) => Effect.Effect<unknown, DurableExecutionError>)
-      | undefined,
+    validateInputFn: toValidateInputFnInternal(validateInputFn),
     runParent: (ctx, input) =>
       Effect.gen(function* () {
-        const runParentOutput = yield* convertMaybePromiseOrEffectToEffect(() =>
-          taskOptions.runParent(ctx, input as TRunInput),
+        const runParentOutput = yield* convertMaybePromiseOrEffectToEffect(
+          (): ReturnType<typeof taskOptions.runParent> =>
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- the executor passes the validated input of the task, which is TRunInput
+            taskOptions.runParent(ctx, input as TRunInput),
         )
         return {
           output: runParentOutput.output,
@@ -155,9 +160,7 @@ export type TaskInternal = {
   retryOptions: TaskRetryOptions
   sleepMsBeforeRun: number
   timeoutMs: number
-  validateInputFn:
-    | ((id: string, input: unknown) => Effect.Effect<unknown, DurableExecutionError>)
-    | undefined
+  validateInputFn: ValidateInputFnInternal | undefined
   runParent: (
     ctx: TaskRunContext,
     input: unknown,
@@ -169,7 +172,7 @@ export type TaskInternal = {
     DurableExecutionError
   >
   finalize:
-    | ((input: DefaultParentTaskOutput) => Effect.Effect<unknown, DurableExecutionError, never>)
+    | ((input: DefaultParentTaskOutput) => Effect.Effect<unknown, DurableExecutionError>)
     | TaskInternal
     | undefined
 }
@@ -177,7 +180,7 @@ export type TaskInternal = {
 export const addTaskInternal: (
   taskInternalsMap: Map<string, TaskInternal>,
   optionsInternal: TaskOptionsInternal,
-) => Effect.Effect<TaskInternal, DurableExecutionError, never> = Effect.fn(function* (
+) => Effect.Effect<TaskInternal, DurableExecutionError> = Effect.fn(function* (
   taskInternalsMap: Map<string, TaskInternal>,
   optionsInternal: TaskOptionsInternal,
 ) {
@@ -193,12 +196,10 @@ export const addTaskInternal: (
   let finalize: TaskInternal['finalize']
   if (optionsInternal.finalize == null) {
     finalize = undefined
-  } else if (isFunction(optionsInternal.finalize)) {
-    finalize = optionsInternal.finalize as (
-      input: DefaultParentTaskOutput,
-    ) => Effect.Effect<unknown, DurableExecutionError, never>
+  } else if (typeof optionsInternal.finalize === 'function') {
+    finalize = optionsInternal.finalize
   } else {
-    finalize = yield* addTaskInternal(taskInternalsMap, optionsInternal.finalize as TaskInternal)
+    finalize = yield* addTaskInternal(taskInternalsMap, optionsInternal.finalize)
   }
 
   const taskInternal = {
@@ -212,37 +213,46 @@ export const addTaskInternal: (
   return taskInternal
 })
 
-const RetryOptionsSchema = Schema.Struct({
-  maxAttempts: Schema.Int.pipe(Schema.between(0, 1000)),
-  baseDelayMs: Schema.Int.pipe(
-    Schema.between(0, 3_600_000), // 0 to 1 hour
-    Schema.optionalWith({ nullable: true }),
-  ),
-  delayMultiplier: Schema.Number.pipe(
-    Schema.between(0.1, 10),
-    Schema.optionalWith({ nullable: true }),
-  ),
-  maxDelayMs: Schema.Int.pipe(
-    Schema.between(0, 86_400_000), // 0 to 24 hours
-    Schema.optionalWith({ nullable: true }),
-  ),
-}).pipe(
-  Schema.filter((val) => {
-    if (val.maxDelayMs != null && val.baseDelayMs != null && val.maxDelayMs < val.baseDelayMs) {
-      return `maxDelayMs must be greater than or equal to baseDelayMs`
-    }
-    return true
-  }),
-  Schema.NullishOr,
-  Schema.transform(
-    Schema.Struct({
-      maxAttempts: Schema.Int,
-      baseDelayMs: Schema.Int.pipe(Schema.optional),
-      delayMultiplier: Schema.Number.pipe(Schema.optional),
-      maxDelayMs: Schema.Int.pipe(Schema.optional),
+const RetryOptionsInputSchema = Schema.NullishOr(
+  Schema.Struct({
+    maxAttempts: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1000 })),
+    baseDelayMs: Schema.optional(
+      Schema.NullOr(
+        Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3_600_000 })), // 0 to 1 hour
+      ),
+    ),
+    delayMultiplier: Schema.optional(
+      Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0.1, maximum: 10 }))),
+    ),
+    maxDelayMs: Schema.optional(
+      Schema.NullOr(
+        Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 86_400_000 })), // 0 to 24 hours
+      ),
+    ),
+  }).check(
+    Schema.makeFilter((val) => {
+      if (val.maxDelayMs != null && val.baseDelayMs != null && val.maxDelayMs < val.baseDelayMs) {
+        return `maxDelayMs must be greater than or equal to baseDelayMs`
+      }
+      return true
     }),
-    {
-      strict: true,
+  ),
+)
+
+const RetryOptionsOutputSchema = Schema.Struct({
+  maxAttempts: Schema.Int,
+  baseDelayMs: Schema.optional(Schema.Int),
+  delayMultiplier: Schema.optional(Schema.Number),
+  maxDelayMs: Schema.optional(Schema.Int),
+})
+
+const RetryOptionsSchema = RetryOptionsInputSchema.pipe(
+  Schema.decodeTo(
+    RetryOptionsOutputSchema,
+    SchemaTransformation.transform<
+      typeof RetryOptionsOutputSchema.Type,
+      typeof RetryOptionsInputSchema.Type
+    >({
       encode: (val) => {
         return {
           maxAttempts: val.maxAttempts,
@@ -263,36 +273,38 @@ const RetryOptionsSchema = Schema.Struct({
 
         return {
           maxAttempts: val.maxAttempts,
-          baseDelayMs: val.baseDelayMs,
-          delayMultiplier: val.delayMultiplier,
-          maxDelayMs: val.maxDelayMs,
+          baseDelayMs: val.baseDelayMs ?? undefined,
+          delayMultiplier: val.delayMultiplier ?? undefined,
+          maxDelayMs: val.maxDelayMs ?? undefined,
         }
       },
-    },
+    }),
   ),
 )
-const decodeRetryOptions = Schema.decodeUnknown(RetryOptionsSchema)
+const decodeRetryOptions = Schema.decodeUnknownEffect(RetryOptionsSchema)
 
-const SleepMsBeforeRunSchema = Schema.Number.pipe(
-  Schema.greaterThanOrEqualTo(0),
-  Schema.NullishOr,
-  Schema.transform(Schema.Number, {
-    strict: true,
-    encode: (val) => {
-      return val
-    },
-    decode: (val) => {
-      if (val == null) {
-        return 0
-      }
-      return val
-    },
-  }),
+const SleepMsBeforeRunSchema = Schema.NullishOr(
+  Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+).pipe(
+  Schema.decodeTo(
+    Schema.Number,
+    SchemaTransformation.transform<number, number | null | undefined>({
+      encode: (val) => {
+        return val
+      },
+      decode: (val) => {
+        if (val == null) {
+          return 0
+        }
+        return val
+      },
+    }),
+  ),
 )
-const decodeSleepMsBeforeRun = Schema.decodeUnknown(SleepMsBeforeRunSchema)
+const decodeSleepMsBeforeRun = Schema.decodeUnknownEffect(SleepMsBeforeRunSchema)
 
-const TimeoutMsSchema = Schema.Int.pipe(Schema.greaterThanOrEqualTo(1))
-const decodeTimeoutMs = Schema.decodeUnknown(TimeoutMsSchema)
+const TimeoutMsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
+const decodeTimeoutMs = Schema.decodeUnknownEffect(TimeoutMsSchema)
 
 export const runParentWithTimeout = Effect.fn(function* (
   taskInternal: TaskInternal,
@@ -317,9 +329,9 @@ export const runParentWithTimeout = Effect.fn(function* (
       return result
     }),
   ).pipe(
-    Effect.timeoutFail({
+    Effect.timeoutOrElse({
       duration: Duration.millis(timeoutMs),
-      onTimeout: () => new DurableExecutionTimedOutError() as DurableExecutionError,
+      orElse: () => Effect.fail(new DurableExecutionTimedOutError()),
     }),
   )
 })
@@ -412,16 +424,9 @@ export function overrideTaskEnqueueOptions(
   timeoutMs: number
 } {
   return {
-    retryOptions:
-      overrideOptions?.retryOptions == null
-        ? existingOptions.retryOptions
-        : overrideOptions.retryOptions,
-    sleepMsBeforeRun:
-      overrideOptions?.sleepMsBeforeRun == null
-        ? existingOptions.sleepMsBeforeRun
-        : overrideOptions.sleepMsBeforeRun,
-    timeoutMs:
-      overrideOptions?.timeoutMs == null ? existingOptions.timeoutMs : overrideOptions.timeoutMs,
+    retryOptions: overrideOptions?.retryOptions ?? existingOptions.retryOptions,
+    sleepMsBeforeRun: overrideOptions?.sleepMsBeforeRun ?? existingOptions.sleepMsBeforeRun,
+    timeoutMs: overrideOptions?.timeoutMs ?? existingOptions.timeoutMs,
   }
 }
 

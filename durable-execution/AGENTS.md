@@ -43,7 +43,7 @@ This is the **durable-execution** package - a TypeScript library for durable tas
 
 ### Dependencies
 
-- **Core**: Uses Effect Schema for validation, superjson for serialization, nanoid for IDs
+- **Core**: Built on Effect 4 (`effect` is a peer dependency), with Effect Schema for validation, superjson for serialization, nanoid for IDs
 - **Testing**: Vitest with v8 coverage provider
 - **Build**: tsup for bundling
 
