@@ -1,4 +1,4 @@
-import { Cause, Duration, Effect, Either, Exit, Fiber, Ref, Schedule, Scope } from 'effect'
+import { Cause, Duration, Effect, Exit, Fiber, Ref, Result, Scope } from 'effect'
 
 import { convertErrorToDurableExecutionError, DurableExecutionCancelledError } from './errors'
 import { getDurationWithJitter } from './utils'
@@ -19,115 +19,113 @@ type BackgroundProcessorState = {
   readonly isShutdown: boolean
 }
 
-const runBackgroundProcess = Effect.fn(
-  (options: BackgroundProcessorOptions, stateRef: Ref.Ref<BackgroundProcessorState>) =>
-    Effect.gen(function* () {
-      const localStateRef = yield* Ref.make({
+const runBackgroundProcess = Effect.fn(function* (
+  options: BackgroundProcessorOptions,
+  stateRef: Ref.Ref<BackgroundProcessorState>,
+) {
+  return yield* Effect.gen(function* () {
+    const localStateRef = yield* Ref.make({
+      consecutiveErrorsCount: 0,
+      intraIterationSleepMs: options.intraIterationSleepMs,
+    })
+
+    if (!options.skipInitialSleep) {
+      yield* Effect.sleep(getDurationWithJitter(options.intraIterationSleepMs * 0.1, 0.5))
+    }
+    yield* Effect.gen(function* () {
+      const result = yield* options.iterationEffect.pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            const durableExecutionError = convertErrorToDurableExecutionError(error)
+            if (durableExecutionError instanceof DurableExecutionCancelledError) {
+              const state = yield* Ref.get(stateRef)
+              if (state.isShutdown) {
+                return { hasMore: false }
+              }
+            }
+
+            return yield* Effect.fail(durableExecutionError)
+          }),
+        ),
+        Effect.result,
+      )
+
+      if (Result.isFailure(result)) {
+        yield* Effect.logError('Error in iteration effect').pipe(
+          Effect.annotateLogs('service', 'background-processor'),
+          Effect.annotateLogs('executorId', options.executorId),
+          Effect.annotateLogs('processName', options.processName),
+          Effect.annotateLogs('error', result.failure),
+        )
+
+        const localState = yield* Ref.updateAndGet(localStateRef, (state) => {
+          const consecutiveErrorsCount = state.consecutiveErrorsCount + 1
+          const intraIterationSleepMs =
+            consecutiveErrorsCount >= BACKGROUND_PROCESSOR_MAX_CONSECUTIVE_ERRORS_COUNT
+              ? Math.min(state.intraIterationSleepMs * 1.25, options.intraIterationSleepMs * 5)
+              : state.intraIterationSleepMs
+          return {
+            consecutiveErrorsCount,
+            intraIterationSleepMs,
+          }
+        })
+
+        yield* Effect.sleep(getDurationWithJitter(localState.intraIterationSleepMs, 0.1))
+        return
+      }
+
+      yield* Ref.set(localStateRef, {
         consecutiveErrorsCount: 0,
         intraIterationSleepMs: options.intraIterationSleepMs,
       })
-
-      if (!options.skipInitialSleep) {
-        yield* Effect.sleep(getDurationWithJitter(options.intraIterationSleepMs * 0.1, 0.5))
-      }
-      yield* Effect.gen(function* () {
-        const result = yield* options.iterationEffect.pipe(
-          Effect.catchAll((error) =>
-            Effect.gen(function* () {
-              const durableExecutionError = convertErrorToDurableExecutionError(error)
-              if (durableExecutionError instanceof DurableExecutionCancelledError) {
-                const state = yield* Ref.get(stateRef)
-                if (state.isShutdown) {
-                  return { hasMore: false }
-                }
-              }
-
-              return yield* Effect.fail(durableExecutionError)
-            }),
-          ),
-          Effect.either,
-        )
-
-        if (Either.isLeft(result)) {
-          yield* Effect.logError('Error in iteration effect').pipe(
-            Effect.annotateLogs('service', 'background-processor'),
-            Effect.annotateLogs('executorId', options.executorId),
-            Effect.annotateLogs('processName', options.processName),
-            Effect.annotateLogs('error', result.left),
-          )
-
-          const localState = yield* Ref.updateAndGet(localStateRef, (state) => {
-            const consecutiveErrorsCount = state.consecutiveErrorsCount + 1
-            const intraIterationSleepMs =
-              consecutiveErrorsCount >= BACKGROUND_PROCESSOR_MAX_CONSECUTIVE_ERRORS_COUNT
-                ? Math.min(state.intraIterationSleepMs * 1.25, options.intraIterationSleepMs * 5)
-                : state.intraIterationSleepMs
-            return {
-              consecutiveErrorsCount,
-              intraIterationSleepMs,
-            }
-          })
-
-          yield* Effect.sleep(getDurationWithJitter(localState.intraIterationSleepMs, 0.1))
+      if (result.success.hasMore) {
+        yield* Effect.yieldNow
+      } else {
+        const state = yield* Ref.get(stateRef)
+        if (state.isShutdown) {
           return
         }
 
-        yield* Ref.set(localStateRef, {
-          consecutiveErrorsCount: 0,
-          intraIterationSleepMs: options.intraIterationSleepMs,
-        })
-        if (result.right.hasMore) {
-          yield* Effect.yieldNow()
-        } else {
-          const state = yield* Ref.get(stateRef)
-          if (state.isShutdown) {
-            return
-          }
-
-          yield* Effect.sleep(getDurationWithJitter(options.intraIterationSleepMs, 0.1))
-        }
-      }).pipe(
-        Effect.catchAll((error) => {
-          return Effect.logError('Uncaught error in iteration effect').pipe(
-            Effect.annotateLogs('service', 'background-processor'),
-            Effect.annotateLogs('executorId', options.executorId),
-            Effect.annotateLogs('processName', options.processName),
-            Effect.annotateLogs('error', error),
-          )
-        }),
-        Effect.repeat(
-          Schedule.recurUntilEffect(() =>
-            Ref.get(stateRef).pipe(Effect.map((state) => state.isShutdown)),
-          ),
-        ),
-      )
+        yield* Effect.sleep(getDurationWithJitter(options.intraIterationSleepMs, 0.1))
+      }
     }).pipe(
-      Effect.catchAllCause((cause) => {
-        if (!Cause.isInterruptedOnly(cause)) {
-          return Effect.logError('Uncaught error in background processor').pipe(
-            Effect.annotateLogs('service', 'background-processor'),
-            Effect.annotateLogs('executorId', options.executorId),
-            Effect.annotateLogs('processName', options.processName),
-            Effect.annotateLogs('cause', cause),
-          )
-        }
-        return Effect.void
+      Effect.catch((error) => {
+        return Effect.logError('Uncaught error in iteration effect').pipe(
+          Effect.annotateLogs('service', 'background-processor'),
+          Effect.annotateLogs('executorId', options.executorId),
+          Effect.annotateLogs('processName', options.processName),
+          Effect.annotateLogs('error', error),
+        )
       }),
-    ),
-)
+      Effect.repeat({
+        until: () => Ref.get(stateRef).pipe(Effect.map((state) => state.isShutdown)),
+      }),
+    )
+  }).pipe(
+    Effect.catchCause((cause) => {
+      if (cause.reasons.length > 0 && !Cause.hasInterruptsOnly(cause)) {
+        return Effect.logError('Uncaught error in background processor').pipe(
+          Effect.annotateLogs('service', 'background-processor'),
+          Effect.annotateLogs('executorId', options.executorId),
+          Effect.annotateLogs('processName', options.processName),
+          Effect.annotateLogs('cause', cause),
+        )
+      }
+      return Effect.void
+    }),
+  )
+})
 
-export const makeBackgroundProcessor = Effect.fn((options: BackgroundProcessorOptions) =>
-  Effect.acquireRelease(
+export const makeBackgroundProcessor = Effect.fn(function* (options: BackgroundProcessorOptions) {
+  return yield* Effect.acquireRelease(
     Effect.gen(function* () {
       const stateRef = yield* Ref.make<BackgroundProcessorState>({
         isStarted: false,
         isShutdown: false,
       })
 
-      const runBackgroundProcessFiberRef = yield* Ref.make<
-        Fiber.RuntimeFiber<void, never> | undefined
-      >(undefined)
-      const scopeRef = yield* Ref.make<Scope.CloseableScope | undefined>(undefined)
+      const runBackgroundProcessFiberRef = yield* Ref.make<Fiber.Fiber<void> | undefined>(undefined)
+      const scopeRef = yield* Ref.make<Scope.Closeable | undefined>(undefined)
 
       const isRunning = Effect.gen(function* () {
         return yield* Ref.get(stateRef).pipe(
@@ -177,16 +175,18 @@ export const makeBackgroundProcessor = Effect.fn((options: BackgroundProcessorOp
         }
 
         const scope = yield* Ref.get(scopeRef)
-        if (scope != null) {
-          yield* Scope.close(scope, Exit.void)
-          yield* Ref.set(scopeRef, undefined)
+        if (scope == null) {
+          return
         }
+
+        yield* Scope.close(scope, Exit.void)
+        yield* Ref.set(scopeRef, undefined)
       })
 
       return { start, isRunning, shutdown }
     }),
     (backgroundProcessor) => backgroundProcessor.shutdown,
-  ),
-)
+  )
+})
 
-export type BackgroundProcessor = Effect.Effect.Success<ReturnType<typeof makeBackgroundProcessor>>
+export type BackgroundProcessor = Effect.Success<ReturnType<typeof makeBackgroundProcessor>>

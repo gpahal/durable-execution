@@ -9,6 +9,8 @@ storage implementations.
 
 ## Installation
 
+Requires Node.js 24.22 or later and `effect` 4.
+
 - npm
 
 ```bash
@@ -150,9 +152,14 @@ import { InMemoryTaskExecutionsStorage } from 'durable-execution'
 await runStorageBench("in memory", () => new InMemoryTaskExecutionsStorage())
 
 // With cleanup for database storage
+const databaseUrl = process.env.DATABASE_URL
+if (!databaseUrl) {
+  throw new Error('DATABASE_URL is not set')
+}
+
 await runStorageBench(
   "custom",
-  () => new CustomTaskExecutionsStorage({ url: process.env.DATABASE_URL! }),
+  () => new CustomTaskExecutionsStorage({ url: databaseUrl }),
   {
     storageCleanup: async (storage) => {
       // Clean up database after benchmark

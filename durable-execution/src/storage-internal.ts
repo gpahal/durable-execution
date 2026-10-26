@@ -1,22 +1,19 @@
-import { Duration, Effect, Metric, Schedule } from 'effect'
+import { Duration, Effect, Metric, Option, Schedule } from 'effect'
 
 import { omitUndefinedValues } from '@gpahal/std/objects'
 
 import { makeBackgroundBatchProcessor } from './background-batch-processor'
 import { DurableExecutionError } from './errors'
-import {
-  TaskExecutionsStorageService,
-  type TaskExecutionCloseStatus,
-  type TaskExecutionOnChildrenFinishedProcessingStatus,
-  type TaskExecutionStorageGetByIdFilters,
-  type TaskExecutionStorageUpdate,
-  type TaskExecutionStorageValue,
+import { TaskExecutionsStorageService } from './storage'
+import type {
+  TaskExecutionCloseStatus,
+  TaskExecutionOnChildrenFinishedProcessingStatus,
+  TaskExecutionStorageGetByIdFilters,
+  TaskExecutionStorageUpdate,
+  TaskExecutionStorageValue,
 } from './storage'
-import {
-  ERRORED_TASK_EXECUTION_STATUSES,
-  FINISHED_TASK_EXECUTION_STATUSES,
-  type TaskExecutionStatus,
-} from './task'
+import { ERRORED_TASK_EXECUTION_STATUSES, FINISHED_TASK_EXECUTION_STATUSES } from './task'
+import type { TaskExecutionStatus } from './task'
 import { convertMaybePromiseToEffect } from './utils'
 
 /**
@@ -119,19 +116,32 @@ export function getTaskExecutionStorageUpdate(
       updateUnset.runOutput = true
       update.finishedAt = now
     }
-    if (internalUpdate.status === 'ready') {
-      updateUnset.runOutput = true
-      updateUnset.startedAt = true
-      updateUnset.expiresAt = true
-    }
-    if (internalUpdate.status === 'running') {
-      update.startedAt = now
-    }
-    if (internalUpdate.status === 'waiting_for_children') {
-      update.waitingForChildrenStartedAt = now
-    }
-    if (internalUpdate.status === 'waiting_for_finalize') {
-      update.waitingForFinalizeStartedAt = now
+    switch (internalUpdate.status) {
+      case 'ready': {
+        updateUnset.runOutput = true
+        updateUnset.startedAt = true
+        updateUnset.expiresAt = true
+        break
+      }
+      case 'running': {
+        update.startedAt = now
+        break
+      }
+      case 'waiting_for_children': {
+        update.waitingForChildrenStartedAt = now
+        break
+      }
+      case 'waiting_for_finalize': {
+        update.waitingForFinalizeStartedAt = now
+        break
+      }
+      case 'failed':
+      case 'timed_out':
+      case 'finalize_failed':
+      case 'completed':
+      case 'cancelled': {
+        break
+      }
     }
     if (
       !ERRORED_TASK_EXECUTION_STATUSES.includes(internalUpdate.status) &&
@@ -194,33 +204,28 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
 
   const storage = yield* TaskExecutionsStorageService
 
-  const metricsMap = new Map<string, Metric.Metric.Summary<number>>()
+  const metricsMap = new Map<string, Metric.Summary<number>>()
 
   const withStats = Effect.fnUntraced(function* <T, E>(
     processName: string,
-    effect: Effect.Effect<T, E, never>,
+    effect: Effect.Effect<T, E>,
   ) {
     const [duration, result] = yield* effect.pipe(Effect.timed)
 
-    if (!metricsMap.has(processName)) {
-      metricsMap.set(
-        processName,
-        Metric.summary({
-          name: processName,
-          maxAge: Duration.minutes(30),
-          maxSize: 100_000,
-          error: 0.025,
-          quantiles: [0.5, 0.9, 0.95],
-        }),
-      )
+    let metric = metricsMap.get(processName)
+    if (!metric) {
+      metric = Metric.summary(processName, {
+        maxAge: Duration.minutes(30),
+        maxSize: 100_000,
+        quantiles: [0.5, 0.9, 0.95],
+      })
+      metricsMap.set(processName, metric)
     }
-
-    const metric = metricsMap.get(processName)!
-    yield* metric(Effect.succeed(Duration.toMillis(duration)))
+    yield* Metric.update(metric, Duration.toMillis(duration))
     return result
   })
 
-  const wrapStorageEffect = <T, E>(processName: string, effect: Effect.Effect<T, E, never>) => {
+  const wrapStorageEffect = <T, E>(processName: string, effect: Effect.Effect<T, E>) => {
     return maxRetryAttempts <= 0
       ? enableStats
         ? withStats(processName, effect)
@@ -229,7 +234,9 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
           Effect.retry({
             times: maxRetryAttempts,
             schedule: Schedule.exponential(Duration.millis(25), 2).pipe(
-              Schedule.modifyDelay(Duration.min(Duration.millis(1000))),
+              Schedule.modifyDelay((metadata) =>
+                Effect.succeed(Duration.min(metadata.duration, Duration.millis(1000))),
+              ),
             ),
             until: (error) => error instanceof DurableExecutionError && !error.isRetryable,
           }),
@@ -244,13 +251,13 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     yield* wrapStorageEffect(
       'insertMany',
-      convertMaybePromiseToEffect(() => storage.insertMany(executions)),
+      convertMaybePromiseToEffect(async () => storage.insertMany(executions)),
     )
   })
 
   const insertManyBackgroundBatchProcessor = yield* makeBackgroundBatchProcessor<
     ReadonlyArray<TaskExecutionStorageValue>,
-    void
+    undefined
   >({
     executorId,
     processName: 'insertMany',
@@ -276,7 +283,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     return yield* wrapStorageEffect(
       'getManyById',
-      convertMaybePromiseToEffect(() => storage.getManyById(requests)),
+      convertMaybePromiseToEffect(async () => storage.getManyById(requests)),
     )
   })
 
@@ -309,7 +316,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     return yield* wrapStorageEffect(
       'getManyBySleepingTaskUniqueId',
-      convertMaybePromiseToEffect(() => storage.getManyBySleepingTaskUniqueId(requests)),
+      convertMaybePromiseToEffect(async () => storage.getManyBySleepingTaskUniqueId(requests)),
     )
   })
 
@@ -345,7 +352,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     yield* wrapStorageEffect(
       'updateManyById',
-      convertMaybePromiseToEffect(() => storage.updateManyById(requests)),
+      convertMaybePromiseToEffect(async () => storage.updateManyById(requests)),
     )
   })
 
@@ -355,7 +362,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
       filters?: TaskExecutionStorageGetByIdFilters
       update: TaskExecutionStorageUpdate
     },
-    void
+    undefined
   >({
     executorId,
     processName: 'updateManyById',
@@ -404,7 +411,9 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     yield* wrapStorageEffect(
       'updateManyByIdAndInsertChildrenIfUpdated',
-      convertMaybePromiseToEffect(() => storage.updateManyByIdAndInsertChildrenIfUpdated(requests)),
+      convertMaybePromiseToEffect(async () =>
+        storage.updateManyByIdAndInsertChildrenIfUpdated(requests),
+      ),
     )
   })
 
@@ -416,7 +425,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
         update: TaskExecutionStorageUpdate
         childrenTaskExecutionsToInsertIfAnyUpdated: ReadonlyArray<TaskExecutionStorageValue>
       },
-      void
+      undefined
     >({
       executorId,
       processName: 'updateManyByIdAndInsertChildrenIfUpdated',
@@ -475,7 +484,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     return yield* wrapStorageEffect(
       'updateByStatusAndStartAtLessThanAndReturn',
-      convertMaybePromiseToEffect(() =>
+      convertMaybePromiseToEffect(async () =>
         storage.updateByStatusAndStartAtLessThanAndReturn({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
@@ -499,7 +508,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
       }
       return yield* wrapStorageEffect(
         'updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn',
-        convertMaybePromiseToEffect(() =>
+        convertMaybePromiseToEffect(async () =>
           storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn(
             {
               ...request,
@@ -523,7 +532,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     return yield* wrapStorageEffect(
       'updateByCloseStatusAndReturn',
-      convertMaybePromiseToEffect(() =>
+      convertMaybePromiseToEffect(async () =>
         storage.updateByCloseStatusAndReturn({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
@@ -547,7 +556,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     return yield* wrapStorageEffect(
       'updateByStatusAndIsSleepingTaskAndExpiresAtLessThan',
-      convertMaybePromiseToEffect(() =>
+      convertMaybePromiseToEffect(async () =>
         storage.updateByStatusAndIsSleepingTaskAndExpiresAtLessThan({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
@@ -569,7 +578,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     return yield* wrapStorageEffect(
       'updateByOnChildrenFinishedProcessingExpiresAtLessThan',
-      convertMaybePromiseToEffect(() =>
+      convertMaybePromiseToEffect(async () =>
         storage.updateByOnChildrenFinishedProcessingExpiresAtLessThan({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
@@ -591,7 +600,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     return yield* wrapStorageEffect(
       'updateByCloseExpiresAtLessThan',
-      convertMaybePromiseToEffect(() =>
+      convertMaybePromiseToEffect(async () =>
         storage.updateByCloseExpiresAtLessThan({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
@@ -611,7 +620,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
   ) {
     return yield* wrapStorageEffect(
       'updateByExecutorIdAndNeedsPromiseCancellationAndReturn',
-      convertMaybePromiseToEffect(() =>
+      convertMaybePromiseToEffect(async () =>
         storage.updateByExecutorIdAndNeedsPromiseCancellationAndReturn({
           ...request,
           update: getTaskExecutionStorageUpdate(now, request.update),
@@ -628,7 +637,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     return yield* wrapStorageEffect(
       'getManyByParentExecutionId',
-      convertMaybePromiseToEffect(() => storage.getManyByParentExecutionId(requests)),
+      convertMaybePromiseToEffect(async () => storage.getManyByParentExecutionId(requests)),
     )
   })
 
@@ -662,7 +671,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     }
     yield* wrapStorageEffect(
       'updateManyByParentExecutionIdAndIsFinished',
-      convertMaybePromiseToEffect(() =>
+      convertMaybePromiseToEffect(async () =>
         storage.updateManyByParentExecutionIdAndIsFinished(requests),
       ),
     )
@@ -671,7 +680,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
   const updateManyByParentExecutionIdAndIsFinishedBackgroundBatchProcessor =
     yield* makeBackgroundBatchProcessor<
       { parentExecutionId: string; isFinished: boolean; update: TaskExecutionStorageUpdate },
-      void
+      undefined
     >({
       executorId,
       processName: 'updateManyByParentExecutionIdAndIsFinished',
@@ -714,7 +723,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
       }
       return yield* wrapStorageEffect(
         'updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus',
-        convertMaybePromiseToEffect(() =>
+        convertMaybePromiseToEffect(async () =>
           storage.updateAndDecrementParentActiveChildrenCountByIsFinishedAndCloseStatus({
             ...request,
             update: getTaskExecutionStorageUpdate(now, request.update),
@@ -745,7 +754,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
 
   const getMetric = Effect.fnUntraced(function* ([processName, metric]: [
     string,
-    Metric.Metric.Summary<number>,
+    Metric.Summary<number>,
   ]) {
     const value = yield* Metric.value(metric)
     return {
@@ -753,7 +762,9 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
       count: value.count,
       min: value.min,
       max: value.max,
-      quantiles: value.quantiles,
+      quantiles: value.quantiles.map(
+        ([quantile, quantileValue]) => [quantile, Option.fromUndefinedOr(quantileValue)] as const,
+      ),
     }
   })
 
@@ -761,8 +772,7 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
     const metrics = yield* Effect.forEach(metricsMap.entries(), getMetric, {
       concurrency: 'unbounded',
     })
-    metrics.sort((a, b) => b.count - a.count)
-    return metrics
+    return metrics.toSorted((a, b) => b.count - a.count)
   })
 
   return {
@@ -787,6 +797,6 @@ export const makeTaskExecutionsStorageInternal = Effect.fn(function* (
   }
 })
 
-export type TaskExecutionsStorageInternal = Effect.Effect.Success<
+export type TaskExecutionsStorageInternal = Effect.Success<
   ReturnType<typeof makeTaskExecutionsStorageInternal>
 >

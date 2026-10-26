@@ -20,7 +20,7 @@ describe('index', () => {
 
   it('should complete with convex storage', { timeout: 300_000 }, async () => {
     const container = await new GenericContainer(
-      'ghcr.io/get-convex/convex-backend:33cef775a8a6228cbacee4a09ac2c4073d62ed13',
+      'ghcr.io/convex/convex-backend:65a94913ee82308e7c6f295c4f964eaa34c0c6d7',
     )
       .withEnvironment({
         INSTANCE_NAME: 'anonymous-convex-self-hosted',

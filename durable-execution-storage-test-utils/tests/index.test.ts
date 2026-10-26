@@ -69,7 +69,7 @@ describe('index', () => {
     })
 
     expect(dir).toBeDefined()
-    assert(dir)
+    assert(dir !== undefined && dir !== '')
     expect(existsSync(dir)).toBe(false)
   })
 
@@ -83,7 +83,7 @@ describe('index', () => {
     })
 
     expect(file).toBeDefined()
-    assert(file)
+    assert(file !== undefined && file !== '')
     expect(existsSync(file)).toBe(false)
   })
 

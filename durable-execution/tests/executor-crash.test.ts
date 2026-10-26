@@ -1,3 +1,4 @@
+/* eslint-disable no-console -- the crash test prints the progress of its child process */
 import { spawn } from 'node:child_process'
 import { rm } from 'node:fs/promises'
 import path from 'node:path'
@@ -16,12 +17,12 @@ describe('executorCrash', () => {
     await rm(storageFilePath, { force: true })
 
     const child = spawn('node', [path.join(testsDir, 'executor-crash-script.js'), storageFilePath])
-    console.log(`Child ${child.pid} spawned`)
+    console.log(`Child ${String(child.pid)} spawned`)
 
     // Wait for crash
     await new Promise((resolve) => {
       child.on('exit', (code) => {
-        console.log(`Child ${child.pid} exited with code ${code}`)
+        console.log(`Child ${String(child.pid)} exited with code ${String(code)}`)
         resolve(undefined)
       })
     })

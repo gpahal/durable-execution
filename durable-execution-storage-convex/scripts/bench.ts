@@ -7,14 +7,13 @@ import { ConvexTaskExecutionsStorage } from 'durable-execution-storage-convex'
 import { runStorageBench, withTemporaryFile } from 'durable-execution-storage-test-utils'
 import { GenericContainer } from 'testcontainers'
 
-import { waitForExitOrLogActiveHandles } from '@gpahal/std-node/process'
 import { sleep } from '@gpahal/std/promises'
 
 import { api } from '../test/convex/_generated/api'
 
 async function benchConvex() {
   const container = await new GenericContainer(
-    'ghcr.io/get-convex/convex-backend:33cef775a8a6228cbacee4a09ac2c4073d62ed13',
+    'ghcr.io/convex/convex-backend:65a94913ee82308e7c6f295c4f964eaa34c0c6d7',
   )
     .withEnvironment({
       INSTANCE_NAME: 'anonymous-convex-self-hosted',
@@ -62,6 +61,21 @@ async function benchConvex() {
 
 async function main() {
   await benchConvex()
+}
+
+/**
+ * Exit with an error, listing the resources that keep the process alive, when it hasn't exited
+ * `timeoutMs` after the bench finished.
+ */
+function waitForExitOrLogActiveHandles(timeoutMs: number): void {
+  setTimeout(() => {
+    console.error(
+      `Process did not exit within ${timeoutMs}ms. Active resources:`,
+      process.getActiveResourcesInfo(),
+    )
+    // eslint-disable-next-line unicorn/no-process-exit -- the bench script exits when leftover resources keep it alive
+    process.exit(1)
+  }, timeoutMs).unref()
 }
 
 await main()

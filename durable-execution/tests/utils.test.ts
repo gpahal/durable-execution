@@ -12,20 +12,22 @@ import {
 describe('utils', () => {
   describe('convertPromiseToEffect', () => {
     it('should convert promise to effect', async () => {
-      const effect = convertPromiseToEffect(() => Promise.resolve('test'))
+      const effect = convertPromiseToEffect(async () => 'test')
       const result = await Effect.runPromise(effect)
       expect(result).toBe('test')
     })
 
     it('should convert promise to effect with error', async () => {
-      const effect = convertPromiseToEffect(() => Promise.reject(new Error('test')))
+      const effect = convertPromiseToEffect(async () => {
+        throw new Error('test')
+      })
       await expect(Effect.runPromise(effect)).rejects.toThrow('test')
     })
   })
 
   describe('convertMaybePromiseToEffect', () => {
     it('should convert promise to effect', async () => {
-      let effect = convertMaybePromiseToEffect(() => Promise.resolve('test'))
+      let effect = convertMaybePromiseToEffect(async () => 'test')
       let result = await Effect.runPromise(effect)
       expect(result).toBe('test')
 
@@ -35,7 +37,9 @@ describe('utils', () => {
     })
 
     it('should convert promise to effect with error', async () => {
-      let effect = convertMaybePromiseToEffect(() => Promise.reject(new Error('test')))
+      let effect = convertMaybePromiseToEffect(async () => {
+        throw new Error('test')
+      })
       await expect(Effect.runPromise(effect)).rejects.toThrow('test')
 
       effect = convertMaybePromiseToEffect(() => {
@@ -47,7 +51,7 @@ describe('utils', () => {
 
   describe('convertMaybePromiseOrEffectToEffect', () => {
     it('should convert promise to effect', async () => {
-      let effect = convertMaybePromiseOrEffectToEffect(() => Promise.resolve('test'))
+      let effect = convertMaybePromiseOrEffectToEffect(async () => 'test')
       let result = await Effect.runPromise(effect)
       expect(result).toBe('test')
 
@@ -61,7 +65,9 @@ describe('utils', () => {
     })
 
     it('should convert promise to effect with error', async () => {
-      let effect = convertMaybePromiseOrEffectToEffect(() => Promise.reject(new Error('test')))
+      let effect = convertMaybePromiseOrEffectToEffect(async () => {
+        throw new Error('test')
+      })
       await expect(Effect.runPromise(effect)).rejects.toThrow('test')
 
       effect = convertMaybePromiseOrEffectToEffect(() => {
@@ -147,7 +153,7 @@ describe('utils', () => {
       ]
 
       const summary = summarizeStandardSchemaIssues(issues)
-      expect(summary).toBe('× General validation error\n' + '× Another error\n  → at field')
+      expect(summary).toBe('× General validation error\n× Another error\n  → at field')
     })
 
     it('should handle empty issues array', () => {
@@ -176,7 +182,7 @@ describe('utils', () => {
       ]
 
       const summary = summarizeStandardSchemaIssues(issues)
-      expect(summary).toBe('× First error\n' + '× Second error\n' + '× Third error')
+      expect(summary).toBe('× First error\n× Second error\n× Third error')
     })
 
     it('should handle single character paths', () => {

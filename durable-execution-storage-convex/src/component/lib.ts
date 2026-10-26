@@ -1,4 +1,5 @@
-import { v, type Infer } from 'convex/values'
+import { v } from 'convex/values'
+import type { Infer } from 'convex/values'
 import type {
   TaskExecutionCloseStatus,
   TaskExecutionOnChildrenFinishedProcessingStatus,
@@ -7,16 +8,20 @@ import type {
 
 import {
   applyTaskExecutionIdFilters,
+  compareStringsByCodeUnits,
+  isNonEmptyString,
+  isTruthyNumber,
   taskExecutionStorageUpdateRequestToDBUpdate,
   vTaskExecutionDBUpdateRequest,
   vTaskExecutionStorageGetByIdFilters,
-  type TaskExecutionDBUpdateRequest,
-  type TaskExecutionDBValue,
 } from '../common'
+import type { TaskExecutionDBUpdateRequest, TaskExecutionDBValue } from '../common'
 import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
-import { action, internalMutation, mutation, query, type MutationCtx } from './_generated/server'
-import { vTaskExecutionDBInsertValue, type TaskExecutionDBInsertValue } from './schema'
+import { action, internalMutation, mutation, query } from './_generated/server'
+import type { MutationCtx } from './_generated/server'
+import { vTaskExecutionDBInsertValue } from './schema'
+import type { TaskExecutionDBInsertValue } from './schema'
 
 const LOCK_EXPIRATION_MS = 60_000
 
@@ -64,7 +69,7 @@ async function insertOneHelper(ctx: MutationCtx, execution: TaskExecutionDBInser
     throw new Error('Execution id already exists')
   }
 
-  if (execution.sleepingTaskUniqueId) {
+  if (isNonEmptyString(execution.sleepingTaskUniqueId)) {
     existingDBValue = await ctx.db
       .query('taskExecutions')
       .withIndex('by_sleepingTaskUniqueId', (q) =>
@@ -82,13 +87,13 @@ async function insertOneHelper(ctx: MutationCtx, execution: TaskExecutionDBInser
   if (execution.startAt < now) {
     execution.startAt = now
   }
-  if (execution.expiresAt && execution.expiresAt < now) {
+  if (isTruthyNumber(execution.expiresAt) && execution.expiresAt < now) {
     execution.expiresAt = now + 1000
   }
-  if (execution.ocfpExpiresAt && execution.ocfpExpiresAt < now) {
+  if (isTruthyNumber(execution.ocfpExpiresAt) && execution.ocfpExpiresAt < now) {
     execution.ocfpExpiresAt = now + 1000
   }
-  if (execution.closeExpiresAt && execution.closeExpiresAt < now) {
+  if (isTruthyNumber(execution.closeExpiresAt) && execution.closeExpiresAt < now) {
     execution.closeExpiresAt = now + 1000
   }
   await ctx.db.insert('taskExecutions', execution)
@@ -112,28 +117,28 @@ async function updateOneHelper(
   if (update.updatedAt < now) {
     update.updatedAt = now
   }
-  if (update.startAt && update.startAt < now) {
+  if (isTruthyNumber(update.startAt) && update.startAt < now) {
     update.startAt = now
   }
-  if (update.startedAt && update.startedAt < now) {
+  if (isTruthyNumber(update.startedAt) && update.startedAt < now) {
     update.startedAt = now
   }
-  if (update.expiresAt && update.expiresAt < now) {
+  if (isTruthyNumber(update.expiresAt) && update.expiresAt < now) {
     update.expiresAt = now + 1000
   }
-  if (update.finishedAt && update.finishedAt < now) {
+  if (isTruthyNumber(update.finishedAt) && update.finishedAt < now) {
     update.finishedAt = now
   }
-  if (update.ocfpExpiresAt && update.ocfpExpiresAt < now) {
+  if (isTruthyNumber(update.ocfpExpiresAt) && update.ocfpExpiresAt < now) {
     update.ocfpExpiresAt = now + 1000
   }
-  if (update.ocfpFinishedAt && update.ocfpFinishedAt < now) {
+  if (isTruthyNumber(update.ocfpFinishedAt) && update.ocfpFinishedAt < now) {
     update.ocfpFinishedAt = now
   }
-  if (update.closeExpiresAt && update.closeExpiresAt < now) {
+  if (isTruthyNumber(update.closeExpiresAt) && update.closeExpiresAt < now) {
     update.closeExpiresAt = now + 1000
   }
-  if (update.closedAt && update.closedAt < now) {
+  if (isTruthyNumber(update.closedAt) && update.closedAt < now) {
     update.closedAt = now
   }
   await ctx.db.patch(dbValue._id, taskExecutionStorageUpdateRequestToDBUpdate(update))
@@ -174,11 +179,7 @@ export const getManyById = query({
         .query('taskExecutions')
         .withIndex('by_executionId', (q) => q.eq('executionId', executionId))
         .first()
-      if (!dbValue || !applyTaskExecutionIdFilters(dbValue, filters)) {
-        dbValues.push(null)
-      } else {
-        dbValues.push(dbValue)
-      }
+      dbValues.push(!dbValue || !applyTaskExecutionIdFilters(dbValue, filters) ? null : dbValue)
     }
     return dbValues
   },
@@ -201,11 +202,7 @@ export const getManyBySleepingTaskUniqueId = query({
           q.eq('sleepingTaskUniqueId', sleepingTaskUniqueId),
         )
         .first()
-      if (!dbValue) {
-        dbValues.push(null)
-      } else {
-        dbValues.push(dbValue)
-      }
+      dbValues.push(dbValue ?? null)
     }
     return dbValues
   },
@@ -616,7 +613,10 @@ export const updateAndDecrementParentACCByIsFinishedAndCloseStatus = mutation(
       }
     }
     if (parentExecutionDocIdToDecrementValueMap.size > 0) {
-      const parentExecutionDocIds = [...parentExecutionDocIdToDecrementValueMap.keys()].sort()
+      // eslint-disable-next-line unicorn/prefer-iterator-to-array, unicorn/no-array-sort -- component functions run in Convex's runtime, which isn't known to support iterator helpers and `toSorted()`
+      const parentExecutionDocIds = [...parentExecutionDocIdToDecrementValueMap.keys()].sort(
+        compareStringsByCodeUnits,
+      )
       for (const parentDBId of parentExecutionDocIds) {
         const parentDBValue = await ctx.db.get(parentDBId)
         if (parentDBValue) {
@@ -669,7 +669,7 @@ export const deleteMany = internalMutation({
 export const deleteAll = action({
   args: {},
   handler: async (ctx) => {
-    while (true) {
+    for (;;) {
       const deletedCount = await ctx.runMutation(internal.lib.deleteMany, { batchSize: 100 })
       if (deletedCount < 100) {
         break

@@ -1,13 +1,7 @@
 import { sleep } from '@gpahal/std/promises'
 
-import {
-  childTask,
-  DurableExecutor,
-  InMemoryTaskExecutionsStorage,
-  type ParentTaskOptions,
-  type TaskOptions,
-  type TaskRunContext,
-} from '../src'
+import { childTask, DurableExecutor, InMemoryTaskExecutionsStorage } from '../src'
+import type { ParentTaskOptions, TaskOptions, TaskRunContext } from '../src'
 
 describe('executor', () => {
   let storage: InMemoryTaskExecutionsStorage
@@ -24,7 +18,8 @@ describe('executor', () => {
   })
 
   afterEach(async () => {
-    if (executor) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- beforeEach can fail before it assigns this
+    if (executor !== undefined) {
       await executor.shutdown()
     }
   })
@@ -101,9 +96,10 @@ describe('executor', () => {
     executor = await DurableExecutor.make(storage, {
       logLevel: 'error',
       serializer: {
-        serialize: <T>(_: T) => {
+        serialize: (_: unknown) => {
           return 'test'
         },
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- the serializer must match the generic signature of `Serializer['deserialize']`
         deserialize: <T>(value: string) => {
           return value as T
         },
@@ -179,17 +175,17 @@ describe('executor', () => {
   })
 
   it('should throw when enqueuing unknown task', async () => {
-    await expect(async () => {
+    await expect(
       // @ts-expect-error - Testing invalid input
-      await executor.enqueueTask({ id: 'unknown' })
-    }).rejects.toThrow('not found')
+      executor.enqueueTask({ id: 'unknown' }),
+    ).rejects.toThrow('not found')
   })
 
   it('should throw when getting handle for unknown task', async () => {
-    await expect(async () => {
+    await expect(
       // @ts-expect-error - Testing invalid input
-      await executor.getTaskExecutionHandle('unknown', 'some-execution-id')
-    }).rejects.toThrow('not found')
+      executor.getTaskExecutionHandle('unknown', 'some-execution-id'),
+    ).rejects.toThrow('not found')
   })
 
   it('should throw when getting handle for non-existent execution', async () => {
@@ -199,9 +195,9 @@ describe('executor', () => {
       run: () => 'test',
     })
 
-    await expect(async () => {
-      await executor.getTaskExecutionHandle(testTask, 'non-existent-execution-id')
-    }).rejects.toThrow('not found')
+    await expect(
+      executor.getTaskExecutionHandle(testTask, 'non-existent-execution-id'),
+    ).rejects.toThrow('not found')
   })
 
   it('should throw when getting handle for execution belonging to different task', async () => {
@@ -220,9 +216,9 @@ describe('executor', () => {
     const handle1 = await executor.enqueueTask(testTask1)
     const execution1 = await handle1.getExecution()
 
-    await expect(async () => {
-      await executor.getTaskExecutionHandle(testTask2, execution1.executionId)
-    }).rejects.toThrow('belongs to another task')
+    await expect(
+      executor.getTaskExecutionHandle(testTask2, execution1.executionId),
+    ).rejects.toThrow('belongs to another task')
   })
 
   it('should throw when getting execution for non-existent execution', async () => {
@@ -261,13 +257,11 @@ describe('executor', () => {
 
     await executor.shutdown()
 
-    await expect(async () => {
-      await executor.enqueueTask(testTask)
-    }).rejects.toThrow('Durable executor shutdown')
+    await expect(executor.enqueueTask(testTask)).rejects.toThrow('Durable executor shutdown')
 
-    await expect(async () => {
-      await executor.getTaskExecutionHandle(testTask, 'some-id')
-    }).rejects.toThrow('Durable executor shutdown')
+    await expect(executor.getTaskExecutionHandle(testTask, 'some-id')).rejects.toThrow(
+      'Durable executor shutdown',
+    )
   })
 
   it('should handle storage insert failures during task enqueueing', async () => {
@@ -290,9 +284,7 @@ describe('executor', () => {
       run: () => 'test',
     })
 
-    await expect(async () => {
-      await failingExecutor.enqueueTask(testTask)
-    }).rejects.toThrow('Storage insert failed')
+    await expect(failingExecutor.enqueueTask(testTask)).rejects.toThrow('Storage insert failed')
 
     expect(insertCallCount).toBeGreaterThan(0)
 
@@ -373,9 +365,7 @@ describe('executor', () => {
     const handle = await failingExecutor.enqueueTask(testTask)
 
     shouldFail = true
-    await expect(async () => {
-      await handle.getExecution()
-    }).rejects.toThrow('Storage getManyById failed')
+    await expect(handle.getExecution()).rejects.toThrow('Storage getManyById failed')
 
     shouldFail = false
     const execution = await handle.getExecution()
@@ -559,16 +549,16 @@ describe('executor', () => {
     })
     expect(finishedExecution.status).toBe('failed')
     assert(finishedExecution.status === 'failed')
-    expect(finishedExecution.error?.message).toContain('Task not found [taskId=test]')
+    expect(finishedExecution.error.message).toContain('Task not found [taskId=test]')
   })
 
   it('should handle non-existent parent task in executor', async () => {
-    const originalFn =
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn
-    storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
-      () => {
-        return Promise.resolve([])
-      }
+    const updateSpy = vi
+      .spyOn(
+        storage,
+        'updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn',
+      )
+      .mockResolvedValue([])
 
     try {
       const child = executor.task({
@@ -603,15 +593,15 @@ describe('executor', () => {
         logLevel: 'error',
         backgroundProcessIntraBatchSleepMs: 50,
       })
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
-        originalFn
+      updateSpy.mockRestore()
 
       const execution = await handle.getExecution()
       expect(execution.status).toBe('waiting_for_children')
       assert(execution.status === 'waiting_for_children')
       expect(execution.children).toHaveLength(1)
-      expect(execution.children[0]!.taskId).toBe('child')
-      expect(execution.children[0]!.executionId).toMatch(/^te_/)
+      const [executionChild1] = execution.children
+      expect(executionChild1!.taskId).toBe('child')
+      expect(executionChild1!.executionId).toMatch(/^te_/)
       await executor.start()
 
       const finishedExecution = await handle.waitAndGetFinishedExecution({
@@ -619,20 +609,19 @@ describe('executor', () => {
       })
       expect(finishedExecution.status).toBe('failed')
       assert(finishedExecution.status === 'failed')
-      expect(finishedExecution.error?.message).toContain('Task not found [taskId=parent]')
+      expect(finishedExecution.error.message).toContain('Task not found [taskId=parent]')
     } finally {
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
-        originalFn
+      updateSpy.mockRestore()
     }
   })
 
   it('should handle missing children task executions in storage', async () => {
-    const originalFn =
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn
-    storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
-      () => {
-        return Promise.resolve([])
-      }
+    const updateSpy = vi
+      .spyOn(
+        storage,
+        'updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn',
+      )
+      .mockResolvedValue([])
 
     try {
       const childTaskOptions: TaskOptions<undefined, string> = {
@@ -642,7 +631,7 @@ describe('executor', () => {
       }
       const child = executor.task(childTaskOptions)
 
-      const parentTaskOptions: ParentTaskOptions<undefined, string, string, unknown> = {
+      const parentTaskOptions: ParentTaskOptions<undefined, string, string> = {
         id: 'parent',
         timeoutMs: 10_000,
         runParent: () => {
@@ -672,17 +661,17 @@ describe('executor', () => {
       await executor.start()
       executor.task(childTaskOptions)
       executor.parentTask(parentTaskOptions)
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
-        originalFn
+      updateSpy.mockRestore()
 
       const execution = await handle.getExecution()
       expect(execution.status).toBe('waiting_for_children')
       assert(execution.status === 'waiting_for_children')
       expect(execution.children).toHaveLength(1)
-      expect(execution.children[0]!.taskId).toBe('child')
-      expect(execution.children[0]!.executionId).toMatch(/^te_/)
+      const [executionChild1] = execution.children
+      expect(executionChild1!.taskId).toBe('child')
+      expect(executionChild1!.executionId).toMatch(/^te_/)
 
-      const childTaskExecutionId = execution.children[0]!.executionId
+      const childTaskExecutionId = executionChild1!.executionId
       await storage.deleteById({ executionId: childTaskExecutionId })
       await executor.start()
 
@@ -691,10 +680,9 @@ describe('executor', () => {
       })
       expect(finishedExecution.status).toBe('failed')
       assert(finishedExecution.status === 'failed')
-      expect(finishedExecution.error?.message).toContain('Some children task executions not found')
+      expect(finishedExecution.error.message).toContain('Some children task executions not found')
     } finally {
-      storage.updateByStatusAndOnChildrenFinishedProcessingStatusAndActiveChildrenCountZeroAndReturn =
-        originalFn
+      updateSpy.mockRestore()
     }
   })
 })

@@ -1,6 +1,5 @@
-/* eslint-disable unicorn/throw-new-error */
-
-import { Cause, Schema } from 'effect'
+import type { Cause, Effect, Option, SchemaIssue } from 'effect'
+import { Schema } from 'effect'
 
 import { getErrorMessage } from '@gpahal/std/errors'
 
@@ -73,13 +72,14 @@ export type DurableExecutionErrorType = 'generic' | 'not_found' | 'timed_out' | 
  *
  * @category Errors
  */
+// eslint-disable-next-line unicorn/throw-new-error -- Schema.TaggedError builds a class, it doesn't create an error
 export class DurableExecutionError extends Schema.TaggedError<DurableExecutionError>(
   'DurableExecutionError',
 )('DurableExecutionError', {
   message: Schema.String,
   isRetryable: Schema.Boolean,
   isInternal: Schema.Boolean,
-  cause: Schema.optionalWith(Schema.Unknown, { nullable: true }),
+  cause: Schema.optional(Schema.Unknown),
 }) {
   constructor(
     message: string,
@@ -118,6 +118,32 @@ export class DurableExecutionError extends Schema.TaggedError<DurableExecutionEr
   getErrorType(): DurableExecutionErrorType {
     return 'generic'
   }
+
+  // The schema class constructors inherited from `Schema.TaggedError` are hidden from the
+  // documentation as their comments link to effect internals.
+
+  /** @internal */
+  declare static readonly make: (
+    input: DurableExecutionErrorFields,
+    options?: Schema.MakeOptions,
+  ) => DurableExecutionError
+  /** @internal */
+  declare static readonly makeOption: (
+    input: DurableExecutionErrorFields,
+    options?: Schema.MakeOptions,
+  ) => Option.Option<DurableExecutionError>
+  /** @internal */
+  declare static readonly makeEffect: (
+    input: DurableExecutionErrorFields,
+    options?: Schema.MakeOptions,
+  ) => Effect.Effect<DurableExecutionError, SchemaIssue.Issue>
+}
+
+type DurableExecutionErrorFields = {
+  readonly message: string
+  readonly isRetryable: boolean
+  readonly isInternal: boolean
+  readonly cause?: unknown
 }
 
 /**
@@ -321,7 +347,8 @@ export function convertErrorToDurableExecutionError(
   }: { isRetryable?: boolean; isInternal?: boolean; prefix?: string } = {},
 ): DurableExecutionError {
   if (error instanceof DurableExecutionError) {
-    const newMessage = prefix ? `${prefix}: ${error.message}` : error.message
+    const newMessage =
+      prefix != null && prefix !== '' ? `${prefix}: ${error.message}` : error.message
     return error instanceof DurableExecutionNotFoundError
       ? new DurableExecutionNotFoundError(newMessage, { cause: error.cause })
       : error instanceof DurableExecutionTimedOutError
@@ -329,16 +356,18 @@ export function convertErrorToDurableExecutionError(
         : error instanceof DurableExecutionCancelledError
           ? new DurableExecutionCancelledError(newMessage, { cause: error.cause })
           : new DurableExecutionError(newMessage, {
-              isRetryable: isRetryable != null ? isRetryable : error.isRetryable,
-              isInternal: isInternal != null ? isInternal : error.isInternal,
+              isRetryable: isRetryable ?? error.isRetryable,
+              isInternal: isInternal ?? error.isInternal,
               cause: error.cause,
             })
   }
   return new DurableExecutionError(
-    prefix ? `${prefix}: ${getErrorMessage(error)}` : getErrorMessage(error),
+    prefix != null && prefix !== ''
+      ? `${prefix}: ${getErrorMessage(error)}`
+      : getErrorMessage(error),
     {
-      isRetryable: isRetryable != null ? isRetryable : true,
-      isInternal: isInternal != null ? isInternal : false,
+      isRetryable: isRetryable ?? true,
+      isInternal: isInternal ?? false,
       cause: error,
     },
   )
@@ -348,16 +377,17 @@ export function convertErrorToDurableExecutionError(
  * Converts an effect `Cause` into a {@link DurableExecutionError}.
  *
  * This function handles the conversion of effect framework's Cause type (which represents various
- * failure scenarios) into standardized DurableExecutionError instances. It properly handles
- * different cause types including failures, defects, interruptions, and composite errors.
+ * failure scenarios as a flat list of reasons) into standardized DurableExecutionError instances.
+ * It properly handles the different reason types including failures, defects and interruptions,
+ * as well as causes with no reasons or multiple reasons.
  *
- * ## Cause Type Handling
+ * ## Cause Handling
  *
- * - **Empty**: Unknown error (non-retryable)
+ * - **No reasons**: Unknown error (non-retryable)
  * - **Fail**: Regular failure (converted via {@link convertErrorToDurableExecutionError})
  * - **Die**: Defect/crash (converted via {@link convertErrorToDurableExecutionError})
  * - **Interrupt**: Fiber interruption (non-retryable)
- * - **Sequential/Parallel**: Multiple errors combined into single error message (non-retryable)
+ * - **Multiple reasons**: Multiple errors combined into single error message (non-retryable)
  *
  * @example
  * ```ts
@@ -380,20 +410,25 @@ export function convertErrorToDurableExecutionError(
 export function convertCauseToDurableExecutionError(
   cause: Cause.Cause<unknown>,
 ): DurableExecutionError {
-  return Cause.reduceWithContext(cause, void 0, {
-    emptyCase: () => DurableExecutionError.nonRetryable('Unknown error'),
-    failCase: (_, error) => convertErrorToDurableExecutionError(error),
-    dieCase: (_, defect) => convertErrorToDurableExecutionError(defect),
-    interruptCase: (_) => DurableExecutionError.nonRetryable(`Fiber interrupted`),
-    sequentialCase: (_, left, right) =>
-      DurableExecutionError.nonRetryable(
-        `Multiple errors:\n${getErrorMessage(left)}\n${getErrorMessage(right)}`,
-      ),
-    parallelCase: (_, left, right) =>
-      DurableExecutionError.nonRetryable(
-        `Multiple errors:\n${getErrorMessage(left)}\n${getErrorMessage(right)}`,
-      ),
+  const errors = cause.reasons.map((reason) => {
+    if (reason._tag === 'Fail') {
+      return convertErrorToDurableExecutionError(reason.error)
+    }
+    if (reason._tag === 'Die') {
+      return convertErrorToDurableExecutionError(reason.defect)
+    }
+    return DurableExecutionError.nonRetryable(`Fiber interrupted`)
   })
+  const [firstError, ...otherErrors] = errors
+  if (!firstError) {
+    return DurableExecutionError.nonRetryable('Unknown error')
+  }
+  if (otherErrors.length === 0) {
+    return firstError
+  }
+  return DurableExecutionError.nonRetryable(
+    `Multiple errors:\n${errors.map((error) => getErrorMessage(error)).join('\n')}`,
+  )
 }
 
 /**

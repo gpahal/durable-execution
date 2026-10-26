@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 
-import { type CommonTaskOptions, type TaskEnqueueOptions } from '../src'
+import type { CommonTaskOptions, TaskEnqueueOptions } from '../src'
 import {
   generateTaskExecutionId,
   overrideTaskEnqueueOptions,
@@ -270,12 +270,12 @@ describe('validateEnqueueOptions', () => {
 })
 
 const validateTaskIdPromise = (id: string) => {
-  return validateTaskId(id).pipe(Effect.runSync)
+  validateTaskId(id).pipe(Effect.runSync)
 }
 
 describe('validateTaskId', () => {
   it('should validate an valid id', () => {
-    expect(validateTaskIdPromise('valid_id')).toBeUndefined()
+    expect(() => validateTaskIdPromise('valid_id')).not.toThrow()
   })
 
   it('should throw an error if the id is empty', () => {

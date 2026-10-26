@@ -13,13 +13,14 @@ import { convertErrorToDurableExecutionError } from './errors'
  *
  * @internal
  */
-export const convertPromiseToEffect = Effect.fn(
-  <T>(promiseFn: (signal?: AbortSignal) => Promise<T>) =>
-    Effect.tryPromise({
-      try: promiseFn,
-      catch: (error) => convertErrorToDurableExecutionError(error),
-    }),
-)
+export const convertPromiseToEffect = Effect.fn(function* <T>(
+  promiseFn: (signal?: AbortSignal) => Promise<T>,
+) {
+  return yield* Effect.tryPromise({
+    try: promiseFn,
+    catch: (error) => convertErrorToDurableExecutionError(error),
+  })
+})
 
 /**
  * Converts a function that may return a value or Promise to an Effect.
@@ -32,15 +33,16 @@ export const convertPromiseToEffect = Effect.fn(
  *
  * @internal
  */
-export const convertMaybePromiseToEffect = Effect.fn(
-  <T>(maybePromiseFn: (signal?: AbortSignal) => T | Promise<T>) =>
-    Effect.tryPromise({
-      try: async (signal: AbortSignal) => {
-        return await maybePromiseFn(signal)
-      },
-      catch: (error) => convertErrorToDurableExecutionError(error),
-    }),
-)
+export const convertMaybePromiseToEffect = Effect.fn(function* <T>(
+  maybePromiseFn: (signal?: AbortSignal) => T | Promise<T>,
+) {
+  return yield* Effect.tryPromise({
+    try: async (signal: AbortSignal) => {
+      return maybePromiseFn(signal)
+    },
+    catch: (error) => convertErrorToDurableExecutionError(error),
+  })
+})
 
 /**
  * Converts a function that may return a value, Promise, or Effect to an Effect.
@@ -57,24 +59,23 @@ export const convertMaybePromiseToEffect = Effect.fn(
  *
  * @internal
  */
-export const convertMaybePromiseOrEffectToEffect = Effect.fn(
-  <T>(maybePromiseFn: (signal?: AbortSignal) => T | Promise<T> | Effect.Effect<T, unknown>) =>
-    Effect.gen(function* () {
-      const returnValue = yield* Effect.tryPromise({
-        try: async (signal: AbortSignal) => {
-          return await maybePromiseFn(signal)
-        },
-        catch: (error) => convertErrorToDurableExecutionError(error),
-      })
+export const convertMaybePromiseOrEffectToEffect = Effect.fn(function* <T>(
+  maybePromiseFn: (signal?: AbortSignal) => T | Promise<T> | Effect.Effect<T, unknown>,
+) {
+  const returnValue = yield* Effect.tryPromise({
+    try: async (signal: AbortSignal) => {
+      return maybePromiseFn(signal)
+    },
+    catch: (error) => convertErrorToDurableExecutionError(error),
+  })
 
-      // If the function returned an Effect, we need to run it and map any errors
-      if (Effect.isEffect(returnValue)) {
-        return yield* returnValue.pipe(Effect.mapError(convertErrorToDurableExecutionError))
-      }
+  // If the function returned an Effect, we need to run it and map any errors
+  if (Effect.isEffect(returnValue)) {
+    return yield* returnValue.pipe(Effect.mapError(convertErrorToDurableExecutionError))
+  }
 
-      return returnValue
-    }),
-)
+  return returnValue
+})
 
 /**
  * Converts an Effect to a Promise with error handling.
@@ -95,8 +96,32 @@ export async function convertEffectToPromise<T, E>(effect: Effect.Effect<T, E>):
   }
 }
 
-export function getDurationWithJitter(duration: Duration.DurationInput, jitterRatio: number) {
+export function getDurationWithJitter(duration: Duration.Input, jitterRatio: number) {
   return Duration.millis(Duration.toMillis(duration) * (1 + jitterRatio * (Math.random() * 2 - 1)))
+}
+
+/**
+ * Checks whether a number is set and truthy, that is not `undefined`, `null`, `0` or `NaN`.
+ *
+ * @param value - The number to check
+ * @returns Whether the number is truthy
+ *
+ * @internal
+ */
+export function isTruthyNumber(value: number | null | undefined): value is number {
+  return value != null && value !== 0 && !Number.isNaN(value)
+}
+
+/**
+ * Checks whether a string is set and not empty, that is truthy.
+ *
+ * @param value - The string to check
+ * @returns Whether the string is truthy
+ *
+ * @internal
+ */
+export function isNonEmptyString(value: string | null | undefined): value is string {
+  return value != null && value !== ''
 }
 
 const _ALPHABET = '0123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz'
@@ -159,7 +184,7 @@ export function summarizeStandardSchemaIssues(
 
     summary += `× ${issue.message}`
     const dotPath = getDotPath(issue)
-    if (dotPath) {
+    if (dotPath != null && dotPath !== '') {
       summary += `\n  → at ${dotPath}`
     }
   }

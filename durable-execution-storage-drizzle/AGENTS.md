@@ -20,20 +20,20 @@ This is a TypeScript library that provides Drizzle ORM storage implementation fo
 
 ### Build & Development
 
-- `npm run build` - Build the project (uses tsup)
-- `npm run clean` - Clean build and coverage directories
-- `npm run type-check` - Run TypeScript type checking and typedoc validation
+- `pnpm build` - Build the project (uses tsup)
+- `pnpm clean` - Clean build and coverage directories
+- `pnpm type-check` - Run TypeScript type checking and typedoc validation
 
 ### Testing Conventions
 
-- `npm test` - Run tests (uses Vitest)
-- `npm run test-coverage` - Run tests with coverage report
-- `npm run bench` - Run benchmark scripts
+- `pnpm test` - Run tests (uses Vitest)
+- `pnpm test-coverage` - Run tests with coverage report
+- `pnpm bench` - Run benchmark scripts
 
 ### Code Quality
 
-- `npm run lint` - Run ESLint
-- `npm run lint-fix` - Run ESLint with auto-fix
+- `pnpm lint` - Run ESLint
+- `pnpm lint-fix` - Run ESLint with auto-fix
 
 ## Technology Stack
 
@@ -58,7 +58,7 @@ This is a TypeScript library that provides Drizzle ORM storage implementation fo
 - Tests are in `tests/` directory
 - Uses Vitest for testing
 - Supports test containers for database testing
-- Run `npm test` to execute tests
+- Run `pnpm test` to execute tests
 
 ### Database Support
 

@@ -1,29 +1,27 @@
-import { and, asc, eq, inArray, lt, sql, type SQL, type TablesRelationalConfig } from 'drizzle-orm'
-import {
-  index,
-  integer,
-  sqliteTable,
-  text,
-  uniqueIndex,
-  type BaseSQLiteDatabase,
-} from 'drizzle-orm/sqlite-core'
+import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm'
+import type { SQL, TablesRelationalConfig } from 'drizzle-orm'
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core'
 import {
   TaskExecutionsStorageWithBatching,
   TaskExecutionsStorageWithMutex,
-  type DurableExecutionErrorStorageValue,
-  type TaskExecutionCloseStatus,
-  type TaskExecutionOnChildrenFinishedProcessingStatus,
-  type TaskExecutionsStorage,
-  type TaskExecutionsStorageWithoutBatching,
-  type TaskExecutionStatus,
-  type TaskExecutionStorageGetByIdFilters,
-  type TaskExecutionStorageUpdate,
-  type TaskExecutionStorageValue,
-  type TaskExecutionSummary,
-  type TaskRetryOptions,
+} from 'durable-execution'
+import type {
+  DurableExecutionErrorStorageValue,
+  TaskExecutionCloseStatus,
+  TaskExecutionOnChildrenFinishedProcessingStatus,
+  TaskExecutionsStorage,
+  TaskExecutionsStorageWithoutBatching,
+  TaskExecutionStatus,
+  TaskExecutionStorageGetByIdFilters,
+  TaskExecutionStorageUpdate,
+  TaskExecutionStorageValue,
+  TaskExecutionSummary,
+  TaskRetryOptions,
 } from 'durable-execution'
 
 import {
+  compareStringsByCodeUnits,
   taskExecutionDBValueToStorageValue,
   taskExecutionStorageUpdateToDBUpdate,
   taskExecutionStorageValueToDBValue,
@@ -240,8 +238,7 @@ class SQLiteTaskExecutionsStorageNonAtomic<
   TRunResult,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
-> implements TaskExecutionsStorageWithoutBatching
-{
+> implements TaskExecutionsStorageWithoutBatching {
   private readonly db: BaseSQLiteDatabase<'async', TRunResult, TFullSchema, TSchema>
   private readonly taskExecutionsTable: TaskExecutionsSQLiteTable
   private readonly enableTestMode: boolean
@@ -281,7 +278,8 @@ class SQLiteTaskExecutionsStorageNonAtomic<
       .from(this.taskExecutionsTable)
       .where(getByIdWhereCondition(this.taskExecutionsTable, executionId, filters))
       .limit(1)
-    return rows.length > 0 ? taskExecutionDBValueToStorageValue(rows[0]!) : undefined
+    const [row] = rows
+    return row ? taskExecutionDBValueToStorageValue(row) : undefined
   }
 
   async getBySleepingTaskUniqueId({
@@ -294,7 +292,8 @@ class SQLiteTaskExecutionsStorageNonAtomic<
       .from(this.taskExecutionsTable)
       .where(eq(this.taskExecutionsTable.sleepingTaskUniqueId, sleepingTaskUniqueId))
       .limit(1)
-    return rows.length > 0 ? taskExecutionDBValueToStorageValue(rows[0]!) : undefined
+    const [row] = rows
+    return row ? taskExecutionDBValueToStorageValue(row) : undefined
   }
 
   async updateById({
@@ -328,7 +327,8 @@ class SQLiteTaskExecutionsStorageNonAtomic<
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     if (childrenTaskExecutionsToInsertIfAnyUpdated.length === 0) {
-      return await this.updateById({ executionId, filters, update })
+      await this.updateById({ executionId, filters, update })
+      return
     }
 
     const rowsToInsert = childrenTaskExecutionsToInsertIfAnyUpdated.map((execution) =>
@@ -492,7 +492,7 @@ class SQLiteTaskExecutionsStorageNonAtomic<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const rows = await tx
         .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
@@ -532,7 +532,7 @@ class SQLiteTaskExecutionsStorageNonAtomic<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const rows = await tx
         .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
@@ -571,7 +571,7 @@ class SQLiteTaskExecutionsStorageNonAtomic<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const rows = await tx
         .select({ executionId: this.taskExecutionsTable.executionId })
         .from(this.taskExecutionsTable)
@@ -683,7 +683,7 @@ class SQLiteTaskExecutionsStorageNonAtomic<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const rows = await tx
         .select()
         .from(this.taskExecutionsTable)
@@ -718,7 +718,10 @@ class SQLiteTaskExecutionsStorageNonAtomic<
         }
 
         if (parentExecutionIdToDecrementValueMap.size > 0) {
-          const parentIds = [...parentExecutionIdToDecrementValueMap.keys()].sort()
+          const parentIds = parentExecutionIdToDecrementValueMap
+            .keys()
+            .toArray()
+            .toSorted(compareStringsByCodeUnits)
           const caseStatements = parentIds.map(
             (parentId) =>
               sql`WHEN ${parentId} THEN ${parentExecutionIdToDecrementValueMap.get(parentId)}`,

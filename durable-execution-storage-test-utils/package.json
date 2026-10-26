@@ -2,17 +2,6 @@
   "name": "durable-execution-storage-test-utils",
   "version": "0.32.0",
   "description": "Test utilities for validating durable-execution storage implementations",
-  "author": "Garvit Pahal <g10pahal@gmail.com>",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/gpahal/durable-execution.git",
-    "directory": "durable-execution-storage-test-utils"
-  },
-  "homepage": "https://gpahal.github.io/durable-execution",
-  "bugs": {
-    "url": "https://github.com/gpahal/durable-execution/issues"
-  },
   "keywords": [
     "durable-execution",
     "durable-tasks",
@@ -27,6 +16,17 @@
     "testing",
     "test-utils"
   ],
+  "homepage": "https://gpahal.github.io/durable-execution",
+  "bugs": {
+    "url": "https://github.com/gpahal/durable-execution/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpahal/durable-execution.git",
+    "directory": "durable-execution-storage-test-utils"
+  },
+  "license": "MIT",
+  "author": "Garvit Pahal <g10pahal@gmail.com>",
   "sideEffects": false,
   "type": "module",
   "exports": {
@@ -39,30 +39,31 @@
   "module": "./build/index.js",
   "types": "./build/index.d.ts",
   "files": [
-    "package.json",
     "src",
     "build"
   ],
   "scripts": {
+    "bench": "tsx scripts/bench.ts",
     "build": "premove build && tsup",
     "clean": "premove build coverage",
+    "lint": "eslint .",
+    "lint-fix": "eslint . --fix",
     "test": "vitest run",
     "test-coverage": "vitest run --coverage",
-    "bench": "tsx scripts/bench.ts",
-    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/index.ts",
-    "lint": "eslint .",
-    "lint-fix": "eslint . --fix"
-  },
-  "peerDependencies": {
-    "durable-execution": "workspace:*"
+    "type-check": "tsc --noEmit && typedoc --options ../typedoc.json --emit none --entryPoints src/index.ts"
   },
   "dependencies": {
     "@gpahal/std": "catalog:prod",
     "nanoid": "catalog:prod"
   },
   "devDependencies": {
-    "@gpahal/std-node": "catalog:dev",
     "durable-execution": "workspace:*",
     "effect": "catalog:dev"
+  },
+  "peerDependencies": {
+    "durable-execution": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24.22.0"
   }
 }

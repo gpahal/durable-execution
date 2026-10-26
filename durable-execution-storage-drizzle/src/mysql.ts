@@ -1,4 +1,5 @@
-import { and, asc, eq, inArray, lt, sql, type SQL, type TablesRelationalConfig } from 'drizzle-orm'
+import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm'
+import type { SQL, TablesRelationalConfig } from 'drizzle-orm'
 import {
   bigint,
   boolean,
@@ -10,27 +11,30 @@ import {
   serial,
   uniqueIndex,
   varchar,
-  type MySqlDatabase,
-  type MySqlQueryResultHKT,
-  type MySqlQueryResultKind,
-  type PreparedQueryHKTBase,
 } from 'drizzle-orm/mysql-core'
-import {
-  TaskExecutionsStorageWithBatching,
-  type DurableExecutionErrorStorageValue,
-  type TaskExecutionCloseStatus,
-  type TaskExecutionOnChildrenFinishedProcessingStatus,
-  type TaskExecutionsStorage,
-  type TaskExecutionsStorageWithoutBatching,
-  type TaskExecutionStatus,
-  type TaskExecutionStorageGetByIdFilters,
-  type TaskExecutionStorageUpdate,
-  type TaskExecutionStorageValue,
-  type TaskExecutionSummary,
-  type TaskRetryOptions,
+import type {
+  MySqlDatabase,
+  MySqlQueryResultHKT,
+  MySqlQueryResultKind,
+  PreparedQueryHKTBase,
+} from 'drizzle-orm/mysql-core'
+import { TaskExecutionsStorageWithBatching } from 'durable-execution'
+import type {
+  DurableExecutionErrorStorageValue,
+  TaskExecutionCloseStatus,
+  TaskExecutionOnChildrenFinishedProcessingStatus,
+  TaskExecutionsStorage,
+  TaskExecutionsStorageWithoutBatching,
+  TaskExecutionStatus,
+  TaskExecutionStorageGetByIdFilters,
+  TaskExecutionStorageUpdate,
+  TaskExecutionStorageValue,
+  TaskExecutionSummary,
+  TaskRetryOptions,
 } from 'durable-execution'
 
 import {
+  compareStringsByCodeUnits,
   taskExecutionDBValueToStorageValue,
   taskExecutionStorageUpdateToDBUpdate,
   taskExecutionStorageValueToDBValue,
@@ -245,8 +249,7 @@ class MySqlTaskExecutionsStorage<
   TPreparedQueryHKT extends PreparedQueryHKTBase,
   TFullSchema extends Record<string, unknown>,
   TSchema extends TablesRelationalConfig,
-> implements TaskExecutionsStorageWithoutBatching
-{
+> implements TaskExecutionsStorageWithoutBatching {
   private readonly db: MySqlDatabase<TQueryResult, TPreparedQueryHKT, TFullSchema, TSchema>
   private readonly taskExecutionsTable: TaskExecutionsMySqlTable
   private readonly getAffectedRowsCount: (
@@ -291,7 +294,8 @@ class MySqlTaskExecutionsStorage<
       .from(this.taskExecutionsTable)
       .where(getByIdWhereCondition(this.taskExecutionsTable, executionId, filters))
       .limit(1)
-    return rows.length > 0 ? taskExecutionDBValueToStorageValue(rows[0]!) : undefined
+    const [row] = rows
+    return row ? taskExecutionDBValueToStorageValue(row) : undefined
   }
 
   async getBySleepingTaskUniqueId({
@@ -304,7 +308,8 @@ class MySqlTaskExecutionsStorage<
       .from(this.taskExecutionsTable)
       .where(eq(this.taskExecutionsTable.sleepingTaskUniqueId, sleepingTaskUniqueId))
       .limit(1)
-    return rows.length > 0 ? taskExecutionDBValueToStorageValue(rows[0]!) : undefined
+    const [row] = rows
+    return row ? taskExecutionDBValueToStorageValue(row) : undefined
   }
 
   async updateById({
@@ -338,7 +343,8 @@ class MySqlTaskExecutionsStorage<
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
     if (childrenTaskExecutionsToInsertIfAnyUpdated.length === 0) {
-      return await this.updateById({ executionId, filters, update })
+      await this.updateById({ executionId, filters, update })
+      return
     }
 
     const rowsToInsert = childrenTaskExecutionsToInsertIfAnyUpdated.map((execution) =>
@@ -520,7 +526,7 @@ class MySqlTaskExecutionsStorage<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(
+    return this.db.transaction(
       async (tx) => {
         const rows = await tx
           .select({ executionId: this.taskExecutionsTable.executionId })
@@ -567,7 +573,7 @@ class MySqlTaskExecutionsStorage<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(
+    return this.db.transaction(
       async (tx) => {
         const rows = await tx
           .select({ executionId: this.taskExecutionsTable.executionId })
@@ -613,7 +619,7 @@ class MySqlTaskExecutionsStorage<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(
+    return this.db.transaction(
       async (tx) => {
         const rows = await tx
           .select({ executionId: this.taskExecutionsTable.executionId })
@@ -738,7 +744,7 @@ class MySqlTaskExecutionsStorage<
   }): Promise<number> {
     const dbUpdate = taskExecutionStorageUpdateToDBUpdate(update)
 
-    return await this.db.transaction(
+    return this.db.transaction(
       async (tx) => {
         const rows = await tx
           .select()
@@ -775,7 +781,10 @@ class MySqlTaskExecutionsStorage<
           }
 
           if (parentExecutionIdToDecrementValueMap.size > 0) {
-            const parentIds = [...parentExecutionIdToDecrementValueMap.keys()].sort()
+            const parentIds = parentExecutionIdToDecrementValueMap
+              .keys()
+              .toArray()
+              .toSorted(compareStringsByCodeUnits)
             const caseStatements = parentIds.map(
               (parentId) =>
                 sql`WHEN ${parentId} THEN ${parentExecutionIdToDecrementValueMap.get(parentId)}`,

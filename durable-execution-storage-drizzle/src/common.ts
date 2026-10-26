@@ -1,13 +1,13 @@
-import {
-  applyTaskExecutionStorageUpdate,
-  type DurableExecutionErrorStorageValue,
-  type TaskExecutionCloseStatus,
-  type TaskExecutionOnChildrenFinishedProcessingStatus,
-  type TaskExecutionStatus,
-  type TaskExecutionStorageUpdate,
-  type TaskExecutionStorageValue,
-  type TaskExecutionSummary,
-  type TaskRetryOptions,
+import { applyTaskExecutionStorageUpdate } from 'durable-execution'
+import type {
+  DurableExecutionErrorStorageValue,
+  TaskExecutionCloseStatus,
+  TaskExecutionOnChildrenFinishedProcessingStatus,
+  TaskExecutionStatus,
+  TaskExecutionStorageUpdate,
+  TaskExecutionStorageValue,
+  TaskExecutionSummary,
+  TaskRetryOptions,
 } from 'durable-execution'
 
 import { omitUndefinedValues } from '@gpahal/std/objects'
@@ -96,6 +96,28 @@ export type TaskExecutionDBUpdate = {
   updatedAt: number
 }
 
+function isNonEmptyString(value: string | null | undefined): value is string {
+  return value != null && value !== ''
+}
+
+function isTruthyNumber(value: number | null | undefined): value is number {
+  return value != null && value !== 0 && !Number.isNaN(value)
+}
+
+/**
+ * Compares two strings by their UTF-16 code units, as `Array#sort()` does without a compare
+ * function.
+ */
+export function compareStringsByCodeUnits(a: string, b: string): number {
+  if (a < b) {
+    return -1
+  }
+  if (a > b) {
+    return 1
+  }
+  return 0
+}
+
 export function taskExecutionStorageValueToDBValue(
   value: TaskExecutionStorageValue,
 ): TaskExecutionDBValue {
@@ -170,14 +192,14 @@ export function taskExecutionDBValueToStorageValue(
     updatedAt: dbValue.updatedAt,
   }
 
-  if (dbValue.rootTaskId && dbValue.rootExecutionId) {
+  if (isNonEmptyString(dbValue.rootTaskId) && isNonEmptyString(dbValue.rootExecutionId)) {
     value.root = {
       taskId: dbValue.rootTaskId,
       executionId: dbValue.rootExecutionId,
     }
   }
 
-  if (dbValue.parentTaskId && dbValue.parentExecutionId) {
+  if (isNonEmptyString(dbValue.parentTaskId) && isNonEmptyString(dbValue.parentExecutionId)) {
     value.parent = {
       taskId: dbValue.parentTaskId,
       executionId: dbValue.parentExecutionId,
@@ -187,7 +209,7 @@ export function taskExecutionDBValueToStorageValue(
     }
   }
 
-  if (dbValue.executorId) {
+  if (isNonEmptyString(dbValue.executorId)) {
     value.executorId = dbValue.executorId
   }
 
@@ -207,27 +229,27 @@ export function taskExecutionDBValueToStorageValue(
     value.error = dbValue.error
   }
 
-  if (dbValue.startedAt) {
+  if (isTruthyNumber(dbValue.startedAt)) {
     value.startedAt = dbValue.startedAt
   }
 
-  if (dbValue.expiresAt) {
+  if (isTruthyNumber(dbValue.expiresAt)) {
     value.expiresAt = dbValue.expiresAt
   }
 
-  if (dbValue.waitingForChildrenStartedAt) {
+  if (isTruthyNumber(dbValue.waitingForChildrenStartedAt)) {
     value.waitingForChildrenStartedAt = dbValue.waitingForChildrenStartedAt
   }
 
-  if (dbValue.waitingForFinalizeStartedAt) {
+  if (isTruthyNumber(dbValue.waitingForFinalizeStartedAt)) {
     value.waitingForFinalizeStartedAt = dbValue.waitingForFinalizeStartedAt
   }
 
-  if (dbValue.expiresAt) {
+  if (isTruthyNumber(dbValue.expiresAt)) {
     value.expiresAt = dbValue.expiresAt
   }
 
-  if (dbValue.finishedAt) {
+  if (isTruthyNumber(dbValue.finishedAt)) {
     value.finishedAt = dbValue.finishedAt
   }
 
@@ -235,11 +257,11 @@ export function taskExecutionDBValueToStorageValue(
     value.children = dbValue.children
   }
 
-  if (dbValue.onChildrenFinishedProcessingExpiresAt) {
+  if (isTruthyNumber(dbValue.onChildrenFinishedProcessingExpiresAt)) {
     value.onChildrenFinishedProcessingExpiresAt = dbValue.onChildrenFinishedProcessingExpiresAt
   }
 
-  if (dbValue.onChildrenFinishedProcessingFinishedAt) {
+  if (isTruthyNumber(dbValue.onChildrenFinishedProcessingFinishedAt)) {
     value.onChildrenFinishedProcessingFinishedAt = dbValue.onChildrenFinishedProcessingFinishedAt
   }
 
@@ -247,11 +269,11 @@ export function taskExecutionDBValueToStorageValue(
     value.finalize = dbValue.finalize
   }
 
-  if (dbValue.closeExpiresAt) {
+  if (isTruthyNumber(dbValue.closeExpiresAt)) {
     value.closeExpiresAt = dbValue.closeExpiresAt
   }
 
-  if (dbValue.closedAt) {
+  if (isTruthyNumber(dbValue.closedAt)) {
     value.closedAt = dbValue.closedAt
   }
 
@@ -265,14 +287,13 @@ export function taskExecutionStorageUpdateToDBUpdate(
 ): TaskExecutionDBUpdate {
   const dbUpdate = omitUndefinedValues({
     ...update,
-    children: update.children as Array<TaskExecutionSummary>,
+    children: update.children ? [...update.children] : undefined,
     unset: undefined,
   })
 
-  const updateUnset: TaskExecutionStorageUpdate['unset'] = update.unset
+  const updateUnset: Partial<Record<string, boolean>> | undefined = update.unset
   if (updateUnset) {
     for (const key in updateUnset) {
-      // @ts-expect-error - This is safe because we know the key is valid
       if (updateUnset[key]) {
         // @ts-expect-error - This is safe because we know the key is valid
         dbUpdate[key] = null

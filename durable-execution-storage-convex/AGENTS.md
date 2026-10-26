@@ -42,7 +42,7 @@ This project provides a Convex storage implementation for the `durable-execution
 
 - TypeScript with strict type checking enabled
 - ESM modules (`"type": "module"`)
-- Uses `@gpahal/eslint-config/base` for linting rules
+- Lints with `@gpahal/eslint-config`'s `defineConfig`, in `eslint.config.mjs`
 - Filename case rules disabled for Convex compatibility
 - Test files use `.test.ts` suffix in the `tests/` directory
 - Vitest with edge-runtime environment for testing
@@ -53,11 +53,11 @@ This project provides a Convex storage implementation for the `durable-execution
 
 - `convex` - Convex platform SDK
 - `durable-execution` - Core durable execution library
+- `effect` - Effect 4, for Schema validation
 
 ### Key Dependencies
 
 - `@gpahal/std` - Standard utilities
-- `effect` - Schema validation
 
 ## Testing Conventions
 
@@ -71,4 +71,5 @@ This project provides a Convex storage implementation for the `durable-execution
 - The project exports both client code and Convex component configuration
 - Component source files are exposed via `@convex-dev/component-source` for live reloading
 - Generated Convex files are ignored by ESLint (`**/_generated/**`)
+- `src/component/_generated/` holds TypeScript that the Convex CLI generates, including `component.ts` with the `ComponentApi` type. The package exports it as `./_generated/component.js`, which apps' generated `api.d.ts` imports. Regenerate it, and `test/convex/_generated/`, with `pnpm convex-dev` after changing the component's functions or schema
 - Build output goes to `build/` directory with separate client and component builds

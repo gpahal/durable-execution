@@ -1,14 +1,17 @@
-import { Effect, Exit, Runtime, Schema, Scope } from 'effect'
+import type { Context } from 'effect'
+import { Effect, Exit, Schema, Scope } from 'effect'
 
-import { childTask, makeEffectDurableExecutor, type EffectDurableExecutor } from '../src'
+import { childTask, makeEffectDurableExecutor } from '../src'
+import type { EffectDurableExecutor } from '../src'
 import { InMemoryTaskExecutionsStorage } from '../src/in-memory-storage'
-import { TaskExecutionsStorageService, type TaskExecutionsStorage } from '../src/storage'
+import { TaskExecutionsStorageService } from '../src/storage'
+import type { TaskExecutionsStorage } from '../src/storage'
 
 describe('effectExecutor', () => {
   let storage: TaskExecutionsStorage
   let effectExecutor: EffectDurableExecutor
-  let scope: Scope.CloseableScope
-  let runtime: Runtime.Runtime<never>
+  let scope: Scope.Closeable
+  let runtime: Context.Context<never>
 
   beforeEach(async () => {
     storage = new InMemoryTaskExecutionsStorage()
@@ -23,7 +26,7 @@ describe('effectExecutor', () => {
         const effectExecutorLocal = yield* effect.pipe(
           Effect.provideService(Scope.Scope, scopeLocal),
         )
-        const runtimeLocal = yield* Effect.runtime<never>()
+        const runtimeLocal = yield* Effect.context()
         return { effectExecutorLocal, scopeLocal, runtimeLocal }
       }),
     )
@@ -32,22 +35,23 @@ describe('effectExecutor', () => {
     scope = scopeLocal
     runtime = runtimeLocal
 
-    await Runtime.runPromise(runtimeLocal, effectExecutorLocal.start)
+    await Effect.runPromiseWith(runtimeLocal)(effectExecutorLocal.start)
   })
 
   afterEach(async () => {
-    if (effectExecutor) {
-      await Runtime.runPromise(runtime, effectExecutor.shutdown)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- beforeEach can fail before it assigns this
+    if (effectExecutor !== undefined) {
+      await Effect.runPromiseWith(runtime)(effectExecutor.shutdown)
     }
-    if (scope) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- beforeEach can fail before it assigns this
+    if (scope !== undefined) {
       await Effect.runPromise(Scope.close(scope, Exit.void))
     }
   })
 
   it('should complete simple task', async () => {
     let executionCount = 0
-    const task = Runtime.runSync(
-      runtime,
+    const task = Effect.runSyncWith(runtime)(
       effectExecutor.inputSchema(Schema.Struct({ name: Schema.String })).task({
         id: 'test',
         timeoutMs: 1000,
@@ -58,13 +62,11 @@ describe('effectExecutor', () => {
       }),
     )
 
-    const handle = await Runtime.runPromise(
-      runtime,
+    const handle = await Effect.runPromiseWith(runtime)(
       effectExecutor.enqueueTask(task, { name: 'test' }),
     )
 
-    const finishedExecution = await Runtime.runPromise(
-      runtime,
+    const finishedExecution = await Effect.runPromiseWith(runtime)(
       handle.waitAndGetFinishedExecution({
         pollingIntervalMs: 100,
       }),
@@ -83,21 +85,18 @@ describe('effectExecutor', () => {
   })
 
   it('should complete sleeping task', async () => {
-    const sleepingTask = Runtime.runSync(
-      runtime,
+    const sleepingTask = Effect.runSyncWith(runtime)(
       effectExecutor.sleepingTask<string>({
         id: 'test',
         timeoutMs: 1000,
       }),
     )
 
-    const handle = await Runtime.runPromise(
-      runtime,
+    const handle = await Effect.runPromiseWith(runtime)(
       effectExecutor.enqueueTask(sleepingTask, 'test_unique_id'),
     )
 
-    let finishedExecution = await Runtime.runPromise(
-      runtime,
+    let finishedExecution = await Effect.runPromiseWith(runtime)(
       effectExecutor.wakeupSleepingTaskExecution(sleepingTask, 'test_unique_id', {
         status: 'completed',
         output: 'test_output',
@@ -107,8 +106,7 @@ describe('effectExecutor', () => {
     assert(finishedExecution.status === 'completed')
     expect(finishedExecution.output).toBe('test_output')
 
-    finishedExecution = await Runtime.runPromise(
-      runtime,
+    finishedExecution = await Effect.runPromiseWith(runtime)(
       handle.waitAndGetFinishedExecution({
         pollingIntervalMs: 100,
       }),
@@ -125,8 +123,7 @@ describe('effectExecutor', () => {
 
   it('should complete parent task', async () => {
     let executionCount = 0
-    const child = Runtime.runSync(
-      runtime,
+    const child = Effect.runSyncWith(runtime)(
       effectExecutor.inputSchema(Schema.Struct({ name: Schema.String })).task({
         id: 'child',
         timeoutMs: 1000,
@@ -137,8 +134,7 @@ describe('effectExecutor', () => {
       }),
     )
 
-    const parentTask = Runtime.runSync(
-      runtime,
+    const parentTask = Effect.runSyncWith(runtime)(
       effectExecutor.inputSchema(Schema.Struct({ name: Schema.String })).parentTask({
         id: 'parent',
         timeoutMs: 1000,
@@ -158,13 +154,11 @@ describe('effectExecutor', () => {
       }),
     )
 
-    const handle = await Runtime.runPromise(
-      runtime,
+    const handle = await Effect.runPromiseWith(runtime)(
       effectExecutor.enqueueTask(parentTask, { name: 'test' }),
     )
 
-    const finishedExecution = await Runtime.runPromise(
-      runtime,
+    const finishedExecution = await Effect.runPromiseWith(runtime)(
       handle.waitAndGetFinishedExecution({
         pollingIntervalMs: 100,
       }),
@@ -184,8 +178,7 @@ describe('effectExecutor', () => {
 
   it('should complete sequential tasks', async () => {
     let executionCount = 0
-    const task1 = Runtime.runSync(
-      runtime,
+    const task1 = Effect.runSyncWith(runtime)(
       effectExecutor.inputSchema(Schema.String).task({
         id: 'task1',
         timeoutMs: 1000,
@@ -196,8 +189,7 @@ describe('effectExecutor', () => {
       }),
     )
 
-    const task2 = Runtime.runSync(
-      runtime,
+    const task2 = Effect.runSyncWith(runtime)(
       effectExecutor.inputSchema(Schema.Int).task({
         id: 'task2',
         timeoutMs: 1000,
@@ -208,8 +200,7 @@ describe('effectExecutor', () => {
       }),
     )
 
-    const task3 = Runtime.runSync(
-      runtime,
+    const task3 = Effect.runSyncWith(runtime)(
       effectExecutor.inputSchema(Schema.Boolean).task({
         id: 'task3',
         timeoutMs: 1000,
@@ -220,18 +211,15 @@ describe('effectExecutor', () => {
       }),
     )
 
-    const sequentialTask = Runtime.runSync(
-      runtime,
+    const sequentialTask = Effect.runSyncWith(runtime)(
       effectExecutor.sequentialTasks('seq', [task1, task2, task3]),
     )
 
-    let handle = await Runtime.runPromise(
-      runtime,
+    let handle = await Effect.runPromiseWith(runtime)(
       effectExecutor.enqueueTask(sequentialTask, 'test'),
     )
 
-    let finishedExecution = await Runtime.runPromise(
-      runtime,
+    let finishedExecution = await Effect.runPromiseWith(runtime)(
       handle.waitAndGetFinishedExecution({
         pollingIntervalMs: 100,
       }),
@@ -246,13 +234,11 @@ describe('effectExecutor', () => {
       finishedExecution.startedAt.getTime(),
     )
 
-    handle = await Runtime.runPromise(
-      runtime,
+    handle = await Effect.runPromiseWith(runtime)(
       effectExecutor.enqueueTask(sequentialTask, 'test_longer'),
     )
 
-    finishedExecution = await Runtime.runPromise(
-      runtime,
+    finishedExecution = await Effect.runPromiseWith(runtime)(
       handle.waitAndGetFinishedExecution({
         pollingIntervalMs: 100,
       }),
@@ -274,8 +260,7 @@ describe('effectExecutor', () => {
       value = 10
     }, 500)
 
-    const iterationTask = Runtime.runSync(
-      runtime,
+    const iterationTask = Effect.runSyncWith(runtime)(
       effectExecutor.task({
         id: 'iteration',
         timeoutMs: 1000,
@@ -294,15 +279,13 @@ describe('effectExecutor', () => {
       }),
     )
 
-    const loopingTask = Runtime.runSync(
-      runtime,
+    const loopingTask = Effect.runSyncWith(runtime)(
       effectExecutor.loopingTask('looping', iterationTask, 50),
     )
 
-    const handle = await Runtime.runPromise(runtime, effectExecutor.enqueueTask(loopingTask))
+    const handle = await Effect.runPromiseWith(runtime)(effectExecutor.enqueueTask(loopingTask))
 
-    const finishedExecution = await Runtime.runPromise(
-      runtime,
+    const finishedExecution = await Effect.runPromiseWith(runtime)(
       handle.waitAndGetFinishedExecution({
         pollingIntervalMs: 100,
       }),

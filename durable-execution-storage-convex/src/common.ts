@@ -1,14 +1,15 @@
-import { v, type Infer } from 'convex/values'
-import {
-  applyTaskExecutionStorageUpdate,
-  type DurableExecutionErrorStorageValue,
-  type TaskExecutionCloseStatus,
-  type TaskExecutionOnChildrenFinishedProcessingStatus,
-  type TaskExecutionStatus,
-  type TaskExecutionStorageGetByIdFilters,
-  type TaskExecutionStorageUpdate,
-  type TaskExecutionStorageValue,
-  type TaskExecutionSummary,
+import { v } from 'convex/values'
+import type { Infer } from 'convex/values'
+import { applyTaskExecutionStorageUpdate } from 'durable-execution'
+import type {
+  DurableExecutionErrorStorageValue,
+  TaskExecutionCloseStatus,
+  TaskExecutionOnChildrenFinishedProcessingStatus,
+  TaskExecutionStatus,
+  TaskExecutionStorageGetByIdFilters,
+  TaskExecutionStorageUpdate,
+  TaskExecutionStorageValue,
+  TaskExecutionSummary,
 } from 'durable-execution'
 
 import { omitUndefinedValues } from '@gpahal/std/objects'
@@ -19,8 +20,8 @@ import {
   vTaskExecutionCloseStatus,
   vTaskExecutionOnChildrenFinishedProcessingStatus,
   vTaskExecutionStatus,
-  type TaskExecutionDBInsertValue,
 } from './component/schema'
+import type { TaskExecutionDBInsertValue } from './component/schema'
 
 export type TaskExecutionDBValue = Doc<'taskExecutions'>
 
@@ -158,6 +159,28 @@ export function taskExecutionStorageValueToDBInsertValue(
   }
 }
 
+export function isNonEmptyString(value: string | null | undefined): value is string {
+  return value != null && value !== ''
+}
+
+export function isTruthyNumber(value: number | null | undefined): value is number {
+  return value != null && value !== 0 && !Number.isNaN(value)
+}
+
+/**
+ * Compares two strings by their UTF-16 code units, as `Array#sort()` does without a compare
+ * function.
+ */
+export function compareStringsByCodeUnits(a: string, b: string): number {
+  if (a < b) {
+    return -1
+  }
+  if (a > b) {
+    return 1
+  }
+  return 0
+}
+
 export function taskExecutionDBValueToStorageValue(
   dbValue: TaskExecutionDBValue,
   update?: TaskExecutionStorageUpdate,
@@ -200,14 +223,14 @@ export function taskExecutionDBValueToStorageValue(
     updatedAt: dbValue.updatedAt,
   }
 
-  if (dbValue.rootTaskId && dbValue.rootExecutionId) {
+  if (isNonEmptyString(dbValue.rootTaskId) && isNonEmptyString(dbValue.rootExecutionId)) {
     value.root = {
       taskId: dbValue.rootTaskId,
       executionId: dbValue.rootExecutionId,
     }
   }
 
-  if (dbValue.parentTaskId && dbValue.parentExecutionId) {
+  if (isNonEmptyString(dbValue.parentTaskId) && isNonEmptyString(dbValue.parentExecutionId)) {
     value.parent = {
       taskId: dbValue.parentTaskId,
       executionId: dbValue.parentExecutionId,
@@ -239,7 +262,7 @@ export function taskExecutionStorageUpdateToDBUpdateRequest(
     waitingForChildrenStartedAt: update.waitingForChildrenStartedAt,
     waitingForFinalizeStartedAt: update.waitingForFinalizeStartedAt,
     finishedAt: update.finishedAt,
-    children: update.children as Array<TaskExecutionSummary>,
+    children: update.children ? [...update.children] : undefined,
     acc: update.activeChildrenCount,
     ocfpStatus: update.onChildrenFinishedProcessingStatus,
     ocfpExpiresAt: update.onChildrenFinishedProcessingExpiresAt,
@@ -271,10 +294,9 @@ export function taskExecutionStorageUpdateRequestToDBUpdate(
     unset: undefined,
   })
 
-  const updateUnset: TaskExecutionStorageUpdate['unset'] = update.unset
+  const updateUnset: Partial<Record<string, boolean>> | undefined = update.unset
   if (updateUnset) {
     for (const key in updateUnset) {
-      // @ts-expect-error - This is safe because we know the key is valid
       if (updateUnset[key]) {
         // @ts-expect-error - This is safe because we know the key is valid
         dbUpdate[key] = undefined

@@ -8,8 +8,8 @@ export type FiberPoolOptions = {
   readonly shutdownTimeoutMs?: number
 }
 
-export const makeFiberPool = Effect.fn((options: FiberPoolOptions) =>
-  Effect.acquireRelease(
+export const makeFiberPool = Effect.fn(function* (options: FiberPoolOptions) {
+  return yield* Effect.acquireRelease(
     Effect.gen(function* () {
       const stateRef = yield* Ref.make({
         isShutdown: false,
@@ -82,7 +82,7 @@ export const makeFiberPool = Effect.fn((options: FiberPoolOptions) =>
               Effect.ignore,
             )
           } else {
-            yield* Effect.yieldNow()
+            yield* Effect.yieldNow
           }
         }
 
@@ -92,7 +92,7 @@ export const makeFiberPool = Effect.fn((options: FiberPoolOptions) =>
       return { fork, shutdown }
     }),
     (fiberPool) => fiberPool.shutdown,
-  ),
-)
+  )
+})
 
-export type FiberPool = Effect.Effect.Success<ReturnType<typeof makeFiberPool>>
+export type FiberPool = Effect.Success<ReturnType<typeof makeFiberPool>>

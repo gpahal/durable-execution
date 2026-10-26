@@ -1,12 +1,12 @@
 import { Effect } from 'effect'
 
-import { makeSerializerInternal, type SerializerInternal } from '../src/serializer'
+import { makeSerializerInternal } from '../src/serializer'
+import type { SerializerInternal } from '../src/serializer'
 import {
   convertTaskExecutionStorageValueToTaskExecution,
   TaskExecutionsStorageWithMutex,
-  type TaskExecutionsStorage,
-  type TaskExecutionStorageValue,
 } from '../src/storage'
+import type { TaskExecutionsStorage, TaskExecutionStorageValue } from '../src/storage'
 import { getTaskExecutionStorageUpdate } from '../src/storage-internal'
 
 describe('getTaskExecutionStorageUpdate', () => {
@@ -388,7 +388,7 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
   let nowDate: Date
   let serializerInternal: SerializerInternal
   let serializer: {
-    serialize: <T>(value: T) => Promise<string>
+    serialize: (value: unknown) => Promise<string>
     deserialize: <T>(value: string) => Promise<T>
   }
 
@@ -397,8 +397,8 @@ describe('convertTaskExecutionStorageValueToTaskExecution', () => {
     nowDate = new Date(now)
     serializerInternal = await Effect.runPromise(makeSerializerInternal)
     serializer = {
-      serialize: <T>(value: T) => Effect.runPromise(serializerInternal.serialize(value)),
-      deserialize: <T>(value: string) =>
+      serialize: async (value: unknown) => Effect.runPromise(serializerInternal.serialize(value)),
+      deserialize: async <T>(value: string) =>
         Effect.runPromise(serializerInternal.deserialize<T>(value)),
     }
   })

@@ -16,7 +16,8 @@ describe('taskHandle', () => {
   })
 
   afterEach(async () => {
-    if (executor) {
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- beforeEach can fail before it assigns this
+    if (executor !== undefined) {
       await executor.shutdown()
     }
   })
@@ -118,13 +119,9 @@ describe('taskHandle', () => {
     expect(handle.taskId).toBe('test')
     expect(handle.executionId).toBeDefined()
 
-    const abortController = new AbortController()
-    setTimeout(() => {
-      abortController.abort()
-    }, 500)
     await expect(
       handle.waitAndGetFinishedExecution({
-        signal: abortController.signal,
+        signal: AbortSignal.timeout(500),
         pollingIntervalMs: 1000,
       }),
     ).rejects.toThrow('Task execution cancelled')
@@ -196,13 +193,21 @@ describe('taskHandle', () => {
     })
 
     // @ts-expect-error - Testing invalid input
-    await expect(executor.enqueueTask(task, undefined)).rejects.toThrow()
+    await expect(executor.enqueueTask(task, undefined)).rejects.toThrow(
+      'A unique id string is required to enqueue a sleeping task',
+    )
 
     // @ts-expect-error - Testing invalid input
-    await expect(executor.enqueueTask(task, 10)).rejects.toThrow()
+    await expect(executor.enqueueTask(task, 10)).rejects.toThrow(
+      'Input must be a unique id string for sleeping task',
+    )
 
-    await expect(executor.enqueueTask(task, '')).rejects.toThrow()
+    await expect(executor.enqueueTask(task, '')).rejects.toThrow(
+      'A non-empty unique id string is required for sleeping task',
+    )
 
-    await expect(executor.enqueueTask(task, 'a'.repeat(300))).rejects.toThrow()
+    await expect(executor.enqueueTask(task, 'a'.repeat(300))).rejects.toThrow(
+      'The unique id string must be shorter than 256 characters for sleeping task',
+    )
   })
 })

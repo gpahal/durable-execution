@@ -9,27 +9,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
+      # Installs the version in package.json's packageManager field
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: '10.15.0'
+        uses: pnpm/action-setup@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version-file: .node-version
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install -r
+        run: pnpm install --frozen-lockfile
 
       - name: Run tests
         run: pnpm test-coverage
 
       - name: Upload durable-execution coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: durable-execution/coverage/coverage-final.json
           flags: durable-execution
@@ -39,7 +38,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload durable-execution-orpc-utils coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: durable-execution-orpc-utils/coverage/coverage-final.json
           flags: durable-execution-orpc-utils
@@ -49,7 +48,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload durable-execution-storage-test-utils coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: durable-execution-storage-test-utils/coverage/coverage-final.json
           flags: durable-execution-storage-test-utils
@@ -59,7 +58,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Upload durable-execution-storage-drizzle coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: durable-execution-storage-drizzle/coverage/coverage-final.json
           flags: durable-execution-storage-drizzle

@@ -38,12 +38,10 @@ describe('fiberPool', () => {
 
           expect(Exit.isSuccess(result1)).toBe(true)
           expect(Exit.isSuccess(result2)).toBe(true)
-          if (Exit.isSuccess(result1)) {
-            expect(result1.value).toBe('result1')
-          }
-          if (Exit.isSuccess(result2)) {
-            expect(result2.value).toBe('result2')
-          }
+          assert(Exit.isSuccess(result1))
+          expect(result1.value).toBe('result1')
+          assert(Exit.isSuccess(result2))
+          expect(result2.value).toBe('result2')
 
           const count = yield* Ref.get(counter)
           expect(count).toBe(11)
@@ -65,13 +63,15 @@ describe('fiberPool', () => {
 
           yield* pool.shutdown
 
-          const result = yield* pool.fork(Effect.succeed('test')).pipe(Effect.either)
+          const result = yield* pool.fork(Effect.succeed('test')).pipe(Effect.result)
 
-          expect(result._tag).toBe('Left')
-          if (result._tag === 'Left') {
-            expect(result.left).toBeInstanceOf(DurableExecutionError)
-            expect(result.left.message).toContain('Fiber pool shutdown')
+          expect(result._tag).toBe('Failure')
+          if (result._tag !== 'Failure') {
+            return
           }
+
+          expect(result.failure).toBeInstanceOf(DurableExecutionError)
+          expect(result.failure.message).toContain('Fiber pool shutdown')
         }),
       ),
     )
@@ -124,13 +124,13 @@ describe('fiberPool', () => {
           yield* pool.fork(
             Effect.gen(function* () {
               yield* Ref.set(startedRef, true)
-              yield* Effect.yieldNow()
+              yield* Effect.yieldNow
               yield* Effect.sleep('10 millis')
               yield* Ref.set(completedRef, true)
             }),
           )
 
-          const shutdownFiber = yield* pool.shutdown.pipe(Effect.fork)
+          const shutdownFiber = yield* pool.shutdown.pipe(Effect.forkChild)
 
           yield* Effect.sleep('100 millis')
 
@@ -249,9 +249,8 @@ describe('fiberPool', () => {
           for (let i = 0; i < 10; i++) {
             const result = results[i]!
             expect(Exit.isSuccess(result)).toBe(true)
-            if (Exit.isSuccess(result)) {
-              expect(result.value).toBe(i)
-            }
+            assert(Exit.isSuccess(result))
+            expect(result.value).toBe(i)
           }
 
           const count = yield* Ref.get(counter)

@@ -1,4 +1,4 @@
-import { Effect, Either } from 'effect'
+import { Effect, Result } from 'effect'
 
 import { createSuperjsonSerializer, DurableExecutionError } from '../src'
 import { makeSerializerInternal, SerializerService } from '../src/serializer'
@@ -16,6 +16,7 @@ describe('serializer', () => {
             }
             throw new Error('serialize error')
           },
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters -- the serializer must match the generic signature of `Serializer['deserialize']`
           deserialize: <T>(value: string): T => {
             executionCount++
             if (value === '1') {
@@ -100,15 +101,15 @@ describe('serializer', () => {
       ),
     )
 
-    const result1 = await serializer.serialize('test').pipe(Effect.either, Effect.runPromise)
-    expect(Either.isLeft(result1)).toBe(true)
-    assert(Either.isLeft(result1))
-    expect(result1.left).toStrictEqual(originalError)
+    const result1 = await serializer.serialize('test').pipe(Effect.result, Effect.runPromise)
+    expect(Result.isFailure(result1)).toBe(true)
+    assert(Result.isFailure(result1))
+    expect(result1.failure).toStrictEqual(originalError)
 
-    const result2 = await serializer.deserialize('test').pipe(Effect.either, Effect.runPromise)
-    expect(Either.isLeft(result2)).toBe(true)
-    assert(Either.isLeft(result2))
-    expect(result2.left).toStrictEqual(originalError)
+    const result2 = await serializer.deserialize('test').pipe(Effect.result, Effect.runPromise)
+    expect(Result.isFailure(result2)).toBe(true)
+    assert(Result.isFailure(result2))
+    expect(result2.failure).toStrictEqual(originalError)
   })
 
   it('should handle undefined max size in serializer', async () => {

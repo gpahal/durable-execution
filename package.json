@@ -1,21 +1,21 @@
 {
-  "private": true,
   "name": "durable-execution-monorepo",
+  "private": true,
   "scripts": {
-    "pre-commit": "pnpm type-check && pnpm lint && pnpm fmt-check && pnpm build",
-    "cs": "changeset && changeset version",
-    "cs-publish": "run-p lint fmt-check && turbo run test && changeset publish && git tag | xargs -n 1 -I% git tag -d %",
+    "bench": "turbo bench",
     "build": "turbo build",
     "build-docs": "pnpm -F durable-execution build-docs",
     "clean": "turbo clean",
-    "test": "turbo test",
-    "test-coverage": "turbo test-coverage",
-    "bench": "turbo bench",
-    "type-check": "turbo type-check",
+    "cs": "changeset && changeset version",
+    "cs-publish": "run-p lint fmt-check && turbo run test && changeset publish && git tag | xargs -n 1 -I% git tag -d %",
+    "fmt": "prettier \"**/*.{js,mjs,cjs,jsx,ts,tsx,json}\" --write",
+    "fmt-check": "prettier \"**/*.{js,mjs,cjs,jsx,ts,tsx,json}\" --check",
     "lint": "turbo lint",
     "lint-fix": "turbo lint-fix",
-    "fmt": "prettier \"**/*.{js,mjs,cjs,jsx,ts,tsx,json}\" --write",
-    "fmt-check": "prettier \"**/*.{js,mjs,cjs,jsx,ts,tsx,json}\" --check"
+    "pre-commit": "pnpm type-check && pnpm lint && pnpm fmt-check && pnpm build",
+    "test": "turbo test",
+    "test-coverage": "turbo test-coverage",
+    "type-check": "turbo type-check"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm pre-commit",
@@ -44,8 +44,8 @@
     "typescript": "catalog:dev",
     "vitest": "catalog:dev"
   },
-  "packageManager": "pnpm@10.15.0",
+  "packageManager": "pnpm@12.15.0",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=24.22.0"
   }
 }

@@ -29,6 +29,8 @@ sequenceDiagram
 
 ## Installation
 
+Requires Node.js 24.22 or later and `effect` 4.
+
 - npm
 
 ```bash
@@ -141,11 +143,11 @@ import { os } from '@orpc/server'
 import { Schema } from 'effect'
 
 const processOrder = os
-  .input(Schema.standardSchemaV1(Schema.Struct({
+  .input(Schema.toStandardSchemaV1(Schema.Struct({
     orderId: Schema.String,
     amount: Schema.Number,
   })))
-  .output(Schema.standardSchemaV1(Schema.Struct({
+  .output(Schema.toStandardSchemaV1(Schema.Struct({
     transactionId: Schema.String,
   })))
   .handler(async ({ input }) => {

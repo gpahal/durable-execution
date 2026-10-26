@@ -22,8 +22,8 @@ describe('concurrentScenarios', () => {
   })
 
   afterEach(async () => {
-    await executor1?.shutdown()
-    await executor2?.shutdown()
+    await executor1.shutdown()
+    await executor2.shutdown()
   })
 
   it('should handle concurrent parent task child completions correctly', async () => {
@@ -158,7 +158,7 @@ describe('concurrentScenarios', () => {
     ])
 
     const results = await Promise.all(
-      handles.map((handle) =>
+      handles.map(async (handle) =>
         handle.waitAndGetFinishedExecution({
           pollingIntervalMs: 100,
         }),

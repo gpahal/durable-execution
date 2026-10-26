@@ -1,8 +1,11 @@
-import { defineConfig, type Options } from 'tsup'
+import { defineConfig } from 'tsup'
+import type { Options } from 'tsup'
 
 export default defineConfig((options: Options): Options => {
   const env =
-    process.env.ENV === 'production' || process.env.NODE_ENV === 'production' || !!options.watch
+    process.env.ENV === 'production' ||
+    process.env.NODE_ENV === 'production' ||
+    Boolean(options.watch)
       ? 'production'
       : 'development'
   const isDevEnv = env === 'development'

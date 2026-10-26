@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from 'convex/server'
-import { v, type Infer } from 'convex/values'
+import { v } from 'convex/values'
+import type { Infer } from 'convex/values'
 
 export const vDurableExecutionErrorType = v.union(
   v.literal('generic'),

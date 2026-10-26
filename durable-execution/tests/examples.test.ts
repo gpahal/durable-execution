@@ -7,9 +7,8 @@ import {
   DurableExecutionError,
   DurableExecutor,
   InMemoryTaskExecutionsStorage,
-  type CompletedChildTaskExecution,
-  type Task,
 } from '../src'
+import type { CompletedChildTaskExecution, Task } from '../src'
 
 describe('examples', () => {
   let storage: InMemoryTaskExecutionsStorage
@@ -262,14 +261,15 @@ describe('examples', () => {
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.output).toBeDefined()
     expect(finishedExecution.output.output).toBe('Hello from parent task, world!')
-    expect(finishedExecution.output.children[0]!.status).toBe('completed')
-    assert(finishedExecution.output.children[0]!.status === 'completed')
-    expect(finishedExecution.output.children[0]!.output).toBe('Hello from task A, world!')
-    expect(finishedExecution.output.children[1]!.status).toBe('completed')
-    assert(finishedExecution.output.children[1]!.status === 'completed')
-    expect(finishedExecution.output.children[1]!.output).toBe('Hello from task B, world!')
-    assert(finishedExecution.output.children[0]!.output === 'Hello from task A, world!')
-    assert(finishedExecution.output.children[1]!.output === 'Hello from task B, world!')
+    const [finishedChild1, finishedChild2] = finishedExecution.output.children
+    expect(finishedChild1!.status).toBe('completed')
+    assert(finishedChild1!.status === 'completed')
+    expect(finishedChild1!.output).toBe('Hello from task A, world!')
+    expect(finishedChild2!.status).toBe('completed')
+    assert(finishedChild2!.status === 'completed')
+    expect(finishedChild2!.output).toBe('Hello from task B, world!')
+    assert(finishedChild1!.output === 'Hello from task A, world!')
+    assert(finishedChild2!.output === 'Hello from task B, world!')
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -404,9 +404,9 @@ describe('examples', () => {
     expect(finishedExecution.taskId).toBe('parent')
     expect(finishedExecution.executionId).toMatch(/^te_/)
     expect(finishedExecution.error).toBeDefined()
-    expect(finishedExecution.error?.message).toContain('Children failed')
-    expect(finishedExecution.error?.errorType).toBe('generic')
-    expect(finishedExecution.error?.isRetryable).toBe(false)
+    expect(finishedExecution.error.message).toContain('Children failed')
+    expect(finishedExecution.error.errorType).toBe('generic')
+    expect(finishedExecution.error.isRetryable).toBe(false)
     expect(finishedExecution.startedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt).toBeInstanceOf(Date)
     expect(finishedExecution.finishedAt.getTime()).toBeGreaterThanOrEqual(
@@ -446,7 +446,7 @@ describe('examples', () => {
           const results = children.map((child, index) => ({
             index,
             success: child.status === 'completed',
-            result: child.status === 'completed' ? child.output : child.error?.message,
+            result: child.status === 'completed' ? child.output : child.error.message,
           }))
 
           const successfulResults = results.filter((r) => r.success)
@@ -946,7 +946,7 @@ describe('examples', () => {
 
   it('should complete recursive task', async () => {
     const recursiveTask: Task<{ index: number }, { count: number }> = executor
-      .inputSchema(Schema.Struct({ index: Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)) }))
+      .inputSchema(Schema.Struct({ index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) }))
       .parentTask({
         id: 'recursive',
         timeoutMs: 1000,
@@ -1046,7 +1046,7 @@ describe('examples', () => {
     }, 1000)
 
     const loopingTask: Task<{ prevCount: number }, { count: number; value: number }> = executor
-      .inputSchema(Schema.Struct({ prevCount: Schema.Int.pipe(Schema.greaterThanOrEqualTo(0)) }))
+      .inputSchema(Schema.Struct({ prevCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) }))
       .parentTask({
         id: 'looping',
         sleepMsBeforeRun: 100,
@@ -1150,7 +1150,7 @@ describe('examples', () => {
     })
 
     const handle = await executor.enqueueTask(parentTask)
-    while (true) {
+    for (;;) {
       const execution = await handle.getExecution()
       if (execution.status === 'waiting_for_children') {
         break
